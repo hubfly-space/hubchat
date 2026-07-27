@@ -1,0 +1,1872 @@
+/**
+ * Fixture dataset.
+ *
+ * The dashboard is built against this rather than a live API so the interface
+ * can be reviewed before the Go services exist. It is deliberately shaped like
+ * the real payloads (see @hubchat/shared/types) — when the API lands, the
+ * swap is `data/fixtures` → `data/client`, and no component changes.
+ *
+ * Everything is seeded from a fixed clock so screenshots and visual diffs are
+ * stable across runs.
+ */
+
+import type {
+  ApiKey,
+  Article,
+  ArticleCollection,
+  AuditLog,
+  AutomationExecution,
+  AutomationRule,
+  BusinessHoursCalendar,
+  Company,
+  Conversation,
+  Customer,
+  CustomerEvent,
+  FeedbackBoard,
+  FeedbackItem,
+  FieldDefinition,
+  Form,
+  Inbox,
+  Job,
+  Macro,
+  Member,
+  Message,
+  MetricPoint,
+  Notification,
+  Portal,
+  SavedReply,
+  SavedView,
+  SlaPolicy,
+  Survey,
+  Tag,
+  Team,
+  Ticket,
+  Timestamp,
+  WebhookDelivery,
+  WebhookEndpoint,
+  Widget,
+  Workspace,
+} from "@hubchat/shared";
+
+/** Fixed "now" so relative timestamps never drift between renders. */
+export const NOW = new Date("2026-07-26T14:20:00Z");
+
+function ago(minutes: number): Timestamp {
+  return new Date(NOW.getTime() - minutes * 60_000).toISOString();
+}
+
+function ahead(minutes: number): Timestamp {
+  return new Date(NOW.getTime() + minutes * 60_000).toISOString();
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Workspaces                                                                 */
+/* -------------------------------------------------------------------------- */
+
+export const workspaces: Workspace[] = [
+  {
+    id: "wrk_01hq7x",
+    name: "Northwind Cloud",
+    slug: "northwind",
+    logo_url: null,
+    icon_url: null,
+    default_language: "en",
+    timezone: "Europe/Lisbon",
+    ticket_prefix: "SUP",
+    created_at: ago(60 * 24 * 420),
+  },
+  {
+    id: "wrk_01hq8b",
+    name: "Meridian Labs",
+    slug: "meridian",
+    logo_url: null,
+    icon_url: null,
+    default_language: "en",
+    timezone: "America/New_York",
+    ticket_prefix: "MER",
+    created_at: ago(60 * 24 * 96),
+  },
+];
+
+export const currentWorkspace = workspaces[0]!;
+
+/* -------------------------------------------------------------------------- */
+/*  Members & teams                                                            */
+/* -------------------------------------------------------------------------- */
+
+export const members: Member[] = [
+  {
+    id: "mem_ada",
+    workspace_id: currentWorkspace.id,
+    user_id: "usr_ada",
+    name: "Ada Mwangi",
+    email: "ada@northwind.cloud",
+    avatar_url: null,
+    role: "owner",
+    capabilities: [
+      "conversation.read",
+      "conversation.reply",
+      "conversation.assign",
+      "conversation.delete",
+      "customer.read",
+      "customer.read_sensitive",
+      "customer.merge",
+      "ticket.manage",
+      "widget.manage",
+      "portal.manage",
+      "feedback.moderate",
+      "knowledgebase.manage",
+      "automation.manage",
+      "sla.manage",
+      "integration.manage",
+      "report.read",
+      "audit.read",
+      "member.manage",
+      "workspace.manage",
+      "workspace.manage_security",
+    ],
+    teams: ["team_core", "team_billing"],
+    presence: "online",
+    accepting_conversations: true,
+    last_seen_at: ago(1),
+    created_at: ago(60 * 24 * 420),
+  },
+  {
+    id: "mem_rui",
+    workspace_id: currentWorkspace.id,
+    user_id: "usr_rui",
+    name: "Rui Ferreira",
+    email: "rui@northwind.cloud",
+    avatar_url: null,
+    role: "manager",
+    capabilities: ["conversation.read", "conversation.reply", "conversation.assign", "customer.read", "ticket.manage", "report.read"],
+    teams: ["team_core"],
+    presence: "online",
+    accepting_conversations: true,
+    last_seen_at: ago(3),
+    created_at: ago(60 * 24 * 310),
+  },
+  {
+    id: "mem_sara",
+    workspace_id: currentWorkspace.id,
+    user_id: "usr_sara",
+    name: "Sara Lindqvist",
+    email: "sara@northwind.cloud",
+    avatar_url: null,
+    role: "agent",
+    capabilities: ["conversation.read", "conversation.reply", "customer.read"],
+    teams: ["team_core"],
+    presence: "busy",
+    accepting_conversations: true,
+    last_seen_at: ago(8),
+    created_at: ago(60 * 24 * 180),
+  },
+  {
+    id: "mem_tomas",
+    workspace_id: currentWorkspace.id,
+    user_id: "usr_tomas",
+    name: "Tomás Oliveira",
+    email: "tomas@northwind.cloud",
+    avatar_url: null,
+    role: "agent",
+    capabilities: ["conversation.read", "conversation.reply", "customer.read"],
+    teams: ["team_billing"],
+    presence: "away",
+    accepting_conversations: false,
+    last_seen_at: ago(45),
+    created_at: ago(60 * 24 * 120),
+  },
+  {
+    id: "mem_priya",
+    workspace_id: currentWorkspace.id,
+    user_id: "usr_priya",
+    name: "Priya Raman",
+    email: "priya@northwind.cloud",
+    avatar_url: null,
+    role: "developer",
+    capabilities: ["integration.manage", "report.read"],
+    teams: [],
+    presence: "online",
+    accepting_conversations: false,
+    last_seen_at: ago(12),
+    created_at: ago(60 * 24 * 88),
+  },
+  {
+    id: "mem_kofi",
+    workspace_id: currentWorkspace.id,
+    user_id: "usr_kofi",
+    name: "Kofi Boateng",
+    email: "kofi@northwind.cloud",
+    avatar_url: null,
+    role: "admin",
+    capabilities: ["conversation.read", "conversation.reply", "member.manage", "widget.manage", "portal.manage", "audit.read"],
+    teams: ["team_core", "team_billing"],
+    presence: "offline",
+    accepting_conversations: false,
+    last_seen_at: ago(60 * 20),
+    created_at: ago(60 * 24 * 260),
+  },
+];
+
+export const currentMember = members[0]!;
+
+export const teams: Team[] = [
+  {
+    id: "team_core",
+    workspace_id: currentWorkspace.id,
+    name: "Product Support",
+    description: "Front line for the platform and API.",
+    lead_id: "mem_rui",
+    member_ids: ["mem_ada", "mem_rui", "mem_sara", "mem_kofi"],
+    inbox_ids: ["inb_support", "inb_api"],
+    routing_strategy: "least_active",
+    created_at: ago(60 * 24 * 400),
+  },
+  {
+    id: "team_billing",
+    workspace_id: currentWorkspace.id,
+    name: "Billing & Accounts",
+    description: "Invoices, plans, refunds, and account changes.",
+    lead_id: "mem_tomas",
+    member_ids: ["mem_ada", "mem_tomas", "mem_kofi"],
+    inbox_ids: ["inb_billing"],
+    routing_strategy: "round_robin",
+    created_at: ago(60 * 24 * 300),
+  },
+];
+
+/* -------------------------------------------------------------------------- */
+/*  Inboxes, tags, views                                                       */
+/* -------------------------------------------------------------------------- */
+
+export const inboxes: Inbox[] = [
+  {
+    id: "inb_support",
+    workspace_id: currentWorkspace.id,
+    name: "Support",
+    slug: "support",
+    description: "General product support from the widget and portal.",
+    channels: ["widget", "portal", "email"],
+    team_ids: ["team_core"],
+    is_default: true,
+    sla_policy_id: "sla_standard",
+    open_count: 34,
+    created_at: ago(60 * 24 * 400),
+  },
+  {
+    id: "inb_billing",
+    workspace_id: currentWorkspace.id,
+    name: "Billing",
+    slug: "billing",
+    description: "Invoices, plan changes, and refunds.",
+    channels: ["portal", "email", "form"],
+    team_ids: ["team_billing"],
+    is_default: false,
+    sla_policy_id: "sla_priority",
+    open_count: 11,
+    created_at: ago(60 * 24 * 300),
+  },
+  {
+    id: "inb_api",
+    workspace_id: currentWorkspace.id,
+    name: "API & Integrations",
+    slug: "api",
+    description: "Developer-facing questions routed from the docs widget.",
+    channels: ["widget", "api", "email"],
+    team_ids: ["team_core"],
+    is_default: false,
+    sla_policy_id: "sla_standard",
+    open_count: 7,
+    created_at: ago(60 * 24 * 150),
+  },
+];
+
+export const tags: Tag[] = [
+  { id: "tag_bug", workspace_id: currentWorkspace.id, name: "bug", color: 6, usage_count: 214 },
+  { id: "tag_billing", workspace_id: currentWorkspace.id, name: "billing", color: 5, usage_count: 168 },
+  { id: "tag_onboarding", workspace_id: currentWorkspace.id, name: "onboarding", color: 1, usage_count: 132 },
+  { id: "tag_api", workspace_id: currentWorkspace.id, name: "api", color: 2, usage_count: 97 },
+  { id: "tag_enterprise", workspace_id: currentWorkspace.id, name: "enterprise", color: 4, usage_count: 61 },
+  { id: "tag_churn_risk", workspace_id: currentWorkspace.id, name: "churn-risk", color: 6, usage_count: 23 },
+  { id: "tag_feature", workspace_id: currentWorkspace.id, name: "feature-request", color: 3, usage_count: 88 },
+];
+
+export const savedViews: SavedView[] = [
+  {
+    id: "view_urgent_eu",
+    workspace_id: currentWorkspace.id,
+    name: "Urgent · EU customers",
+    icon: "flame",
+    scope: "team",
+    filters: {
+      match: "all",
+      conditions: [
+        { field: "priority", operator: "in", value: ["high", "urgent"] },
+        { field: "customer.region", operator: "is", value: "eu" },
+      ],
+    },
+    sort: { field: "last_message_at", direction: "asc" },
+    count: 6,
+  },
+  {
+    id: "view_enterprise",
+    workspace_id: currentWorkspace.id,
+    name: "Enterprise accounts",
+    icon: "building",
+    scope: "workspace",
+    filters: {
+      match: "all",
+      conditions: [{ field: "company.tier", operator: "is", value: "enterprise" }],
+    },
+    sort: { field: "last_message_at", direction: "desc" },
+    count: 12,
+  },
+  {
+    id: "view_no_reply",
+    workspace_id: currentWorkspace.id,
+    name: "Awaiting first reply",
+    icon: "clock",
+    scope: "personal",
+    filters: {
+      match: "all",
+      conditions: [{ field: "sla.first_response", operator: "is_set", value: null }],
+    },
+    sort: { field: "created_at", direction: "asc" },
+    count: 4,
+  },
+];
+
+/* -------------------------------------------------------------------------- */
+/*  Customers & companies                                                      */
+/* -------------------------------------------------------------------------- */
+
+export const companies: Company[] = [
+  {
+    id: "cmp_atlas",
+    workspace_id: currentWorkspace.id,
+    name: "Atlas Freight",
+    domain: "atlasfreight.com",
+    external_id: "acct_8814",
+    tier: "enterprise",
+    owner_id: "mem_rui",
+    attributes: { seats: 240, mrr: 8400, region: "eu" },
+    tag_ids: ["tag_enterprise"],
+    sla_policy_id: "sla_priority",
+    customer_count: 18,
+    open_ticket_count: 4,
+    created_at: ago(60 * 24 * 380),
+  },
+  {
+    id: "cmp_verity",
+    workspace_id: currentWorkspace.id,
+    name: "Verity Health",
+    domain: "verityhealth.io",
+    external_id: "acct_9021",
+    tier: "growth",
+    owner_id: "mem_tomas",
+    attributes: { seats: 62, mrr: 1900, region: "us" },
+    tag_ids: [],
+    sla_policy_id: "sla_standard",
+    customer_count: 7,
+    open_ticket_count: 2,
+    created_at: ago(60 * 24 * 210),
+  },
+  {
+    id: "cmp_lumen",
+    workspace_id: currentWorkspace.id,
+    name: "Lumen Studio",
+    domain: "lumen.studio",
+    external_id: "acct_7712",
+    tier: "starter",
+    owner_id: null,
+    attributes: { seats: 6, mrr: 120, region: "eu" },
+    tag_ids: [],
+    sla_policy_id: null,
+    customer_count: 3,
+    open_ticket_count: 1,
+    created_at: ago(60 * 24 * 64),
+  },
+  {
+    id: "cmp_orbital",
+    workspace_id: currentWorkspace.id,
+    name: "Orbital Systems",
+    domain: "orbital.dev",
+    external_id: "acct_6650",
+    tier: "enterprise",
+    owner_id: "mem_ada",
+    attributes: { seats: 410, mrr: 14200, region: "apac" },
+    tag_ids: ["tag_enterprise", "tag_churn_risk"],
+    sla_policy_id: "sla_priority",
+    customer_count: 26,
+    open_ticket_count: 6,
+    created_at: ago(60 * 24 * 500),
+  },
+];
+
+export const customers: Customer[] = [
+  {
+    id: "cus_mariana",
+    workspace_id: currentWorkspace.id,
+    name: "Mariana Costa",
+    email: "mariana@atlasfreight.com",
+    phone: "+351 912 000 118",
+    avatar_url: null,
+    external_id: "u_44192",
+    verification: "verified",
+    company_ids: ["cmp_atlas"],
+    language: "pt",
+    timezone: "Europe/Lisbon",
+    attributes: {
+      plan: "enterprise",
+      account_status: "active",
+      app_version: "4.12.2",
+      region: "eu",
+      seats: 240,
+      feature_flags: ["new_billing", "sso"],
+    },
+    tag_ids: ["tag_enterprise"],
+    owner_id: "mem_rui",
+    presence: "online",
+    current_url: "https://app.atlasfreight.com/billing/invoices",
+    first_seen_at: ago(60 * 24 * 370),
+    last_seen_at: ago(2),
+    last_contacted_at: ago(6),
+  },
+  {
+    id: "cus_dan",
+    workspace_id: currentWorkspace.id,
+    name: "Daniel Osei",
+    email: "d.osei@orbital.dev",
+    phone: null,
+    avatar_url: null,
+    external_id: "u_88103",
+    verification: "verified",
+    company_ids: ["cmp_orbital"],
+    language: "en",
+    timezone: "Asia/Singapore",
+    attributes: {
+      plan: "enterprise",
+      account_status: "past_due",
+      app_version: "4.9.0",
+      region: "apac",
+      seats: 410,
+    },
+    tag_ids: ["tag_enterprise", "tag_churn_risk"],
+    owner_id: "mem_ada",
+    presence: "offline",
+    current_url: null,
+    first_seen_at: ago(60 * 24 * 480),
+    last_seen_at: ago(60 * 9),
+    last_contacted_at: ago(60 * 3),
+  },
+  {
+    id: "cus_hannah",
+    workspace_id: currentWorkspace.id,
+    name: "Hannah Weiss",
+    email: "hannah@verityhealth.io",
+    phone: null,
+    avatar_url: null,
+    external_id: "u_23771",
+    verification: "verified",
+    company_ids: ["cmp_verity"],
+    language: "en",
+    timezone: "America/New_York",
+    attributes: { plan: "growth", account_status: "active", app_version: "4.12.2", region: "us" },
+    tag_ids: [],
+    owner_id: "mem_tomas",
+    presence: "online",
+    current_url: "https://app.verityhealth.io/settings/team",
+    first_seen_at: ago(60 * 24 * 190),
+    last_seen_at: ago(4),
+    last_contacted_at: ago(28),
+  },
+  {
+    id: "cus_luca",
+    workspace_id: currentWorkspace.id,
+    name: "Luca Bianchi",
+    email: "luca@lumen.studio",
+    phone: null,
+    avatar_url: null,
+    external_id: null,
+    verification: "unverified",
+    company_ids: ["cmp_lumen"],
+    language: "it",
+    timezone: "Europe/Rome",
+    attributes: { plan: "starter", account_status: "trialing", region: "eu" },
+    tag_ids: ["tag_onboarding"],
+    owner_id: null,
+    presence: "away",
+    current_url: "https://lumen.studio/pricing",
+    first_seen_at: ago(60 * 24 * 12),
+    last_seen_at: ago(35),
+    last_contacted_at: ago(90),
+  },
+  {
+    id: "cus_anon_1",
+    workspace_id: currentWorkspace.id,
+    name: null,
+    email: null,
+    phone: null,
+    avatar_url: null,
+    external_id: null,
+    verification: "anonymous",
+    company_ids: [],
+    language: "en",
+    timezone: null,
+    attributes: { region: "us", current_route: "/pricing" },
+    tag_ids: [],
+    owner_id: null,
+    presence: "online",
+    current_url: "https://northwind.cloud/pricing",
+    first_seen_at: ago(22),
+    last_seen_at: ago(1),
+    last_contacted_at: ago(18),
+  },
+  {
+    id: "cus_yuki",
+    workspace_id: currentWorkspace.id,
+    name: "Yuki Tanaka",
+    email: "yuki.tanaka@orbital.dev",
+    phone: null,
+    avatar_url: null,
+    external_id: "u_88420",
+    verification: "verified",
+    company_ids: ["cmp_orbital"],
+    language: "ja",
+    timezone: "Asia/Tokyo",
+    attributes: { plan: "enterprise", account_status: "active", app_version: "4.12.1", region: "apac" },
+    tag_ids: ["tag_enterprise"],
+    owner_id: "mem_ada",
+    presence: "offline",
+    current_url: null,
+    first_seen_at: ago(60 * 24 * 300),
+    last_seen_at: ago(60 * 14),
+    last_contacted_at: ago(60 * 26),
+  },
+];
+
+/* -------------------------------------------------------------------------- */
+/*  Conversations                                                              */
+/* -------------------------------------------------------------------------- */
+
+export const conversations: Conversation[] = [
+  {
+    id: "cnv_9001",
+    workspace_id: currentWorkspace.id,
+    inbox_id: "inb_support",
+    channel: "widget",
+    subject: "Webhook deliveries stopped after 4.12 upgrade",
+    state: "open",
+    priority: "urgent",
+    customer_id: "cus_mariana",
+    assignee_id: "mem_ada",
+    team_id: "team_core",
+    tag_ids: ["tag_bug", "tag_api", "tag_enterprise"],
+    ticket_id: "tkt_4471",
+    unread: true,
+    message_count: 9,
+    last_message_preview:
+      "We're seeing 100% failure on the order.created endpoint since Tuesday. Nothing changed on our side.",
+    last_message_at: ago(4),
+    last_customer_at: ago(4),
+    snoozed_until: null,
+    sla: {
+      policy_id: "sla_priority",
+      state: "approaching",
+      first_response_remaining: null,
+      next_response_remaining: 780,
+      resolution_remaining: 9_600,
+      paused_reason: null,
+    },
+    viewers: ["mem_rui"],
+    created_at: ago(190),
+  },
+  {
+    id: "cnv_9002",
+    workspace_id: currentWorkspace.id,
+    inbox_id: "inb_billing",
+    channel: "email",
+    subject: "Invoice INV-2291 charged twice",
+    state: "waiting_for_support",
+    priority: "high",
+    customer_id: "cus_dan",
+    assignee_id: null,
+    team_id: "team_billing",
+    tag_ids: ["tag_billing", "tag_churn_risk"],
+    ticket_id: "tkt_4468",
+    unread: true,
+    message_count: 4,
+    last_message_preview:
+      "Following up — this is the second time this quarter. I need confirmation before the board review on Friday.",
+    last_message_at: ago(37),
+    last_customer_at: ago(37),
+    snoozed_until: null,
+    sla: {
+      policy_id: "sla_priority",
+      state: "breached",
+      first_response_remaining: -1_920,
+      next_response_remaining: -1_920,
+      resolution_remaining: 4_200,
+      paused_reason: null,
+    },
+    viewers: [],
+    created_at: ago(310),
+  },
+  {
+    id: "cnv_9003",
+    workspace_id: currentWorkspace.id,
+    inbox_id: "inb_support",
+    channel: "widget",
+    subject: null,
+    state: "new",
+    priority: "normal",
+    customer_id: "cus_anon_1",
+    assignee_id: null,
+    team_id: null,
+    tag_ids: [],
+    ticket_id: null,
+    unread: true,
+    message_count: 1,
+    last_message_preview: "Hi — does the Team plan include the audit log export?",
+    last_message_at: ago(2),
+    last_customer_at: ago(2),
+    snoozed_until: null,
+    sla: {
+      policy_id: "sla_standard",
+      state: "active",
+      first_response_remaining: 1_680,
+      next_response_remaining: null,
+      resolution_remaining: 84_600,
+      paused_reason: null,
+    },
+    viewers: [],
+    created_at: ago(2),
+  },
+  {
+    id: "cnv_9004",
+    workspace_id: currentWorkspace.id,
+    inbox_id: "inb_support",
+    channel: "portal",
+    subject: "SSO metadata URL rejected",
+    state: "pending",
+    priority: "normal",
+    customer_id: "cus_hannah",
+    assignee_id: "mem_sara",
+    team_id: "team_core",
+    tag_ids: ["tag_onboarding"],
+    ticket_id: "tkt_4465",
+    unread: false,
+    message_count: 12,
+    last_message_preview: "Thanks — I've asked our IT team for the signing certificate. Will report back.",
+    last_message_at: ago(96),
+    last_customer_at: ago(96),
+    snoozed_until: null,
+    sla: {
+      policy_id: "sla_standard",
+      state: "paused",
+      first_response_remaining: null,
+      next_response_remaining: null,
+      resolution_remaining: 52_000,
+      paused_reason: "Waiting for customer",
+    },
+    viewers: [],
+    created_at: ago(60 * 30),
+  },
+  {
+    id: "cnv_9005",
+    workspace_id: currentWorkspace.id,
+    inbox_id: "inb_api",
+    channel: "widget",
+    subject: "Rate limit headers missing on /v1/events",
+    state: "open",
+    priority: "normal",
+    customer_id: "cus_yuki",
+    assignee_id: "mem_rui",
+    team_id: "team_core",
+    tag_ids: ["tag_api"],
+    ticket_id: null,
+    unread: false,
+    message_count: 6,
+    last_message_preview: "Confirmed on our side — the header is only emitted once you cross 80% of the window.",
+    last_message_at: ago(52),
+    last_customer_at: ago(140),
+    snoozed_until: null,
+    sla: {
+      policy_id: "sla_standard",
+      state: "active",
+      first_response_remaining: null,
+      next_response_remaining: 6_400,
+      resolution_remaining: 40_000,
+      paused_reason: null,
+    },
+    viewers: [],
+    created_at: ago(60 * 8),
+  },
+  {
+    id: "cnv_9006",
+    workspace_id: currentWorkspace.id,
+    inbox_id: "inb_support",
+    channel: "widget",
+    subject: "Trial data import stuck at 40%",
+    state: "open",
+    priority: "high",
+    customer_id: "cus_luca",
+    assignee_id: null,
+    team_id: null,
+    tag_ids: ["tag_onboarding"],
+    ticket_id: null,
+    unread: true,
+    message_count: 3,
+    last_message_preview: "It's been sitting at 40% for about an hour now. Anything I can do to restart it?",
+    last_message_at: ago(18),
+    last_customer_at: ago(18),
+    snoozed_until: null,
+    sla: {
+      policy_id: "sla_standard",
+      state: "approaching",
+      first_response_remaining: 420,
+      next_response_remaining: null,
+      resolution_remaining: 70_000,
+      paused_reason: null,
+    },
+    viewers: ["mem_sara"],
+    created_at: ago(64),
+  },
+  {
+    id: "cnv_9007",
+    workspace_id: currentWorkspace.id,
+    inbox_id: "inb_billing",
+    channel: "form",
+    subject: "Request: annual invoicing for 240 seats",
+    state: "snoozed",
+    priority: "low",
+    customer_id: "cus_mariana",
+    assignee_id: "mem_tomas",
+    team_id: "team_billing",
+    tag_ids: ["tag_billing", "tag_enterprise"],
+    ticket_id: "tkt_4452",
+    unread: false,
+    message_count: 5,
+    last_message_preview: "Snoozed until the finance team confirms the PO number.",
+    last_message_at: ago(60 * 26),
+    last_customer_at: ago(60 * 30),
+    snoozed_until: ahead(60 * 18),
+    sla: {
+      policy_id: "sla_standard",
+      state: "paused",
+      first_response_remaining: null,
+      next_response_remaining: null,
+      resolution_remaining: 120_000,
+      paused_reason: "Snoozed",
+    },
+    viewers: [],
+    created_at: ago(60 * 40),
+  },
+  {
+    id: "cnv_9008",
+    workspace_id: currentWorkspace.id,
+    inbox_id: "inb_support",
+    channel: "email",
+    subject: "Thanks for the quick fix",
+    state: "resolved",
+    priority: "low",
+    customer_id: "cus_hannah",
+    assignee_id: "mem_sara",
+    team_id: "team_core",
+    tag_ids: [],
+    ticket_id: "tkt_4440",
+    unread: false,
+    message_count: 8,
+    last_message_preview: "Perfect, that did it. Appreciate the fast turnaround.",
+    last_message_at: ago(60 * 20),
+    last_customer_at: ago(60 * 20),
+    snoozed_until: null,
+    sla: {
+      policy_id: "sla_standard",
+      state: "met",
+      first_response_remaining: null,
+      next_response_remaining: null,
+      resolution_remaining: null,
+      paused_reason: null,
+    },
+    viewers: [],
+    created_at: ago(60 * 44),
+  },
+];
+
+/* -------------------------------------------------------------------------- */
+/*  Messages                                                                   */
+/* -------------------------------------------------------------------------- */
+
+export const messagesByConversation: Record<string, Message[]> = {
+  cnv_9001: [
+    msg("msg_1", "cnv_9001", "customer", "cus_mariana", "Mariana Costa",
+      "Morning — since we upgraded to 4.12 on Tuesday every webhook to our order.created endpoint is failing. We're getting nothing at all on our side.",
+      ago(190), 1),
+    msg("msg_2", "cnv_9001", "system", null, "System",
+      "", ago(189), 2, { kind: "event", event_type: "conversation.assigned", event_data: { to: "Ada Mwangi", by: "Routing rule · Enterprise → Core" } }),
+    msg("msg_3", "cnv_9001", "agent", "mem_ada", "Ada Mwangi",
+      "Hi Mariana — thanks for flagging this so quickly. I can see the delivery failures on our side too. Before I dig in: did your endpoint URL or its TLS certificate change recently?",
+      ago(178), 3),
+    msg("msg_4", "cnv_9001", "customer", "cus_mariana", "Mariana Costa",
+      "No changes at all. Same URL, same cert, renewed back in April.",
+      ago(170), 4),
+    msg("msg_5", "cnv_9001", "agent", "mem_ada", "Ada Mwangi",
+      "Understood. I'm pulling the delivery log for your endpoint now.",
+      ago(166), 5, { kind: "note" }),
+    msg("msg_6", "cnv_9001", "agent", "mem_ada", "Ada Mwangi",
+      "Found it — every attempt is returning 421 Misdirected Request. That points at SNI handling on your load balancer rather than the payload itself. Attaching the last ten delivery attempts so your infra team has the raw responses.",
+      ago(120), 6, {
+        attachments: [
+          { id: "att_1", name: "deliveries-2026-07-24.json", mime_type: "application/json", size_bytes: 18_402, url: "#", thumbnail_url: null },
+        ],
+      }),
+    msg("msg_7", "cnv_9001", "automation", null, "SLA policy · Priority",
+      "", ago(60), 7, { kind: "event", event_type: "sla.approaching", event_data: { target: "Next response", remaining: "13m" } }),
+    msg("msg_8", "cnv_9001", "customer", "cus_mariana", "Mariana Costa",
+      "Passing that to infra now. One question — is there a way to replay the failed deliveries once we fix the LB, or do we lose that window entirely?",
+      ago(22), 8),
+    msg("msg_9", "cnv_9001", "customer", "cus_mariana", "Mariana Costa",
+      "We're seeing 100% failure on the order.created endpoint since Tuesday. Nothing changed on our side.",
+      ago(4), 9),
+  ],
+  cnv_9003: [
+    msg("msg_20", "cnv_9003", "customer", "cus_anon_1", "Anonymous visitor",
+      "Hi — does the Team plan include the audit log export?", ago(2), 1),
+  ],
+  cnv_9006: [
+    msg("msg_30", "cnv_9006", "customer", "cus_luca", "Luca Bianchi",
+      "Hey, I started a CSV import of about 12k contacts and it's been stuck at 40% for a while.", ago(64), 1),
+    msg("msg_31", "cnv_9006", "system", null, "System", "", ago(63), 2, {
+      kind: "event",
+      event_type: "customer.event",
+      event_data: { type: "import.stalled", rows: 12_400, elapsed: "58m" },
+    }),
+    msg("msg_32", "cnv_9006", "customer", "cus_luca", "Luca Bianchi",
+      "It's been sitting at 40% for about an hour now. Anything I can do to restart it?", ago(18), 3),
+  ],
+};
+
+function msg(
+  id: string,
+  conversationId: string,
+  authorType: Message["author_type"],
+  authorId: string | null,
+  authorName: string,
+  body: string,
+  createdAt: Timestamp,
+  sequence: number,
+  extra: Partial<Message> = {},
+): Message {
+  return {
+    id,
+    client_id: null,
+    conversation_id: conversationId,
+    workspace_id: currentWorkspace.id,
+    kind: "reply",
+    author_type: authorType,
+    author_id: authorId,
+    author_name: authorName,
+    author_avatar_url: null,
+    body,
+    event_type: null,
+    event_data: null,
+    attachments: [],
+    quoted_message_id: null,
+    delivery: "read",
+    edited_at: null,
+    redacted_at: null,
+    sequence,
+    created_at: createdAt,
+    ...extra,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Tickets                                                                    */
+/* -------------------------------------------------------------------------- */
+
+export const tickets: Ticket[] = [
+  ticket("tkt_4471", 4471, "Webhook deliveries failing with 421 after 4.12 upgrade", "open", "urgent", "cus_mariana", "cmp_atlas", "mem_ada", "cnv_9001", ["tag_bug", "tag_api"], ago(190), ahead(160)),
+  ticket("tkt_4468", 4468, "Duplicate charge on invoice INV-2291", "open", "high", "cus_dan", "cmp_orbital", null, "cnv_9002", ["tag_billing"], ago(310), ago(32)),
+  ticket("tkt_4465", 4465, "SSO metadata URL rejected during setup", "pending", "normal", "cus_hannah", "cmp_verity", "mem_sara", "cnv_9004", ["tag_onboarding"], ago(60 * 30), ahead(60 * 14)),
+  ticket("tkt_4452", 4452, "Annual invoicing for 240 seats", "on_hold", "low", "cus_mariana", "cmp_atlas", "mem_tomas", "cnv_9007", ["tag_billing"], ago(60 * 40), ahead(60 * 60)),
+  ticket("tkt_4440", 4440, "Attachment previews not rendering in Safari", "resolved", "normal", "cus_hannah", "cmp_verity", "mem_sara", "cnv_9008", ["tag_bug"], ago(60 * 44), null),
+  ticket("tkt_4436", 4436, "Export request under GDPR Article 15", "new", "high", "cus_yuki", "cmp_orbital", null, null, [], ago(60 * 6), ahead(60 * 40)),
+  ticket("tkt_4431", 4431, "Increase API rate limit for batch ingestion", "open", "normal", "cus_dan", "cmp_orbital", "mem_rui", null, ["tag_api", "tag_enterprise"], ago(60 * 52), ahead(60 * 20)),
+  ticket("tkt_4429", 4429, "Refund request — duplicate seat purchase", "closed", "low", "cus_luca", "cmp_lumen", "mem_tomas", null, ["tag_billing"], ago(60 * 96), null),
+];
+
+function ticket(
+  id: string,
+  number: number,
+  title: string,
+  status: Ticket["status"],
+  priority: Ticket["priority"],
+  customerId: string,
+  companyId: string,
+  assigneeId: string | null,
+  conversationId: string | null,
+  tagIds: string[],
+  createdAt: Timestamp,
+  dueAt: Timestamp | null,
+): Ticket {
+  return {
+    id,
+    workspace_id: currentWorkspace.id,
+    number,
+    prefix: currentWorkspace.ticket_prefix,
+    title,
+    description: title,
+    status,
+    priority,
+    type: null,
+    customer_id: customerId,
+    company_id: companyId,
+    inbox_id: "inb_support",
+    channel: "widget",
+    assignee_id: assigneeId,
+    team_id: "team_core",
+    conversation_id: conversationId,
+    parent_id: null,
+    child_ids: [],
+    linked_ticket_ids: [],
+    tag_ids: tagIds,
+    field_values: {},
+    sla: null,
+    due_at: dueAt,
+    created_at: createdAt,
+    updated_at: createdAt,
+    resolved_at: status === "resolved" || status === "closed" ? ago(60 * 18) : null,
+    closed_at: status === "closed" ? ago(60 * 16) : null,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Customer events                                                            */
+/* -------------------------------------------------------------------------- */
+
+export const customerEvents: CustomerEvent[] = [
+  ev("evt_1", "cus_mariana", "webhook.delivery_failed", { endpoint: "https://api.atlasfreight.com/hooks/hubchat", status: 421 }, ago(6)),
+  ev("evt_2", "cus_mariana", "page.viewed", { path: "/billing/invoices" }, ago(9)),
+  ev("evt_3", "cus_mariana", "deployment.completed", { version: "4.12.2", env: "production" }, ago(60 * 50)),
+  ev("evt_4", "cus_mariana", "account.upgraded", { from: "growth", to: "enterprise" }, ago(60 * 24 * 40)),
+  ev("evt_5", "cus_mariana", "invoice.payment_succeeded", { invoice: "INV-2288", amount: 8400 }, ago(60 * 24 * 26)),
+];
+
+function ev(
+  id: string,
+  customerId: string,
+  type: string,
+  payload: Record<string, unknown>,
+  occurredAt: Timestamp,
+): CustomerEvent {
+  return {
+    id,
+    workspace_id: currentWorkspace.id,
+    customer_id: customerId,
+    session_id: "ses_1",
+    type,
+    source: "js_sdk",
+    url: null,
+    payload,
+    occurred_at: occurredAt,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Surfaces: widgets, portals, forms                                          */
+/* -------------------------------------------------------------------------- */
+
+export const widgets: Widget[] = [
+  {
+    id: "wgt_main",
+    workspace_id: currentWorkspace.id,
+    name: "Product app",
+    public_key: "pk_live_8f2a41cd9b7e",
+    inbox_id: "inb_support",
+    modes: ["chat", "knowledge_base", "ticket_form"],
+    appearance: {
+      accent: "#3B6EF6",
+      theme: "auto",
+      logo_url: null,
+      avatar_url: null,
+      launcher_shape: "circle",
+      launcher_size: "md",
+      launcher_label: null,
+      position: "bottom-right",
+      offset_x: 20,
+      offset_y: 20,
+      mobile_offset_y: 16,
+      panel_width: 384,
+      panel_height: 620,
+      radius: 14,
+      header_style: "solid",
+      bubble_style: "rounded",
+      font: "system",
+      z_index: 2_147_483_000,
+      hide_branding: false,
+      custom_css_vars: {},
+    },
+    content: {
+      title: "Northwind Support",
+      subtitle: "We usually reply in under 10 minutes",
+      welcome_message: "Hi there 👋 How can we help today?",
+      input_placeholder: "Write a message…",
+      online_message: "We're online right now",
+      offline_message: "We're offline — leave a message and we'll reply by email.",
+      response_time_text: "Typically replies in 10 minutes",
+      consent_text: null,
+    },
+    behavior: {
+      trigger: "delay",
+      delay_seconds: 8,
+      scroll_percent: 0,
+      trigger_event: null,
+      include_urls: ["https://app.northwind.cloud/*"],
+      exclude_urls: ["https://app.northwind.cloud/checkout/*"],
+      devices: ["desktop", "mobile", "tablet"],
+      outside_hours: "show_form",
+      pre_chat_form_id: null,
+      post_chat_survey_id: "srv_csat",
+      allow_anonymous: true,
+      require_identity: false,
+      sound: true,
+      unread_badge: true,
+      persist_conversation: true,
+    },
+    domains: ["app.northwind.cloud", "northwind.cloud"],
+    environment: "production",
+    rollout_percent: 100,
+    version: 14,
+    enabled: true,
+    updated_at: ago(60 * 30),
+  },
+  {
+    id: "wgt_docs",
+    workspace_id: currentWorkspace.id,
+    name: "Developer docs",
+    public_key: "pk_live_2b91ce40af13",
+    inbox_id: "inb_api",
+    modes: ["knowledge_base", "chat"],
+    appearance: {
+      accent: "#0F6E68",
+      theme: "dark",
+      logo_url: null,
+      avatar_url: null,
+      launcher_shape: "pill",
+      launcher_size: "md",
+      launcher_label: "Ask a dev",
+      position: "bottom-right",
+      offset_x: 24,
+      offset_y: 24,
+      mobile_offset_y: 16,
+      panel_width: 400,
+      panel_height: 600,
+      radius: 10,
+      header_style: "minimal",
+      bubble_style: "square",
+      font: "system",
+      z_index: 2_147_483_000,
+      hide_branding: true,
+      custom_css_vars: {},
+    },
+    content: {
+      title: "Developer support",
+      subtitle: "API, SDK, and webhook questions",
+      welcome_message: "Search the docs or ask us directly.",
+      input_placeholder: "Describe the issue…",
+      online_message: "Engineers are online",
+      offline_message: "Leave a message — we reply within one business day.",
+      response_time_text: "Typically replies in 1 hour",
+      consent_text: null,
+    },
+    behavior: {
+      trigger: "manual",
+      delay_seconds: 0,
+      scroll_percent: 0,
+      trigger_event: null,
+      include_urls: ["https://docs.northwind.cloud/*"],
+      exclude_urls: [],
+      devices: ["desktop"],
+      outside_hours: "show_offline",
+      pre_chat_form_id: null,
+      post_chat_survey_id: null,
+      allow_anonymous: true,
+      require_identity: false,
+      sound: false,
+      unread_badge: true,
+      persist_conversation: true,
+    },
+    domains: ["docs.northwind.cloud"],
+    environment: "production",
+    rollout_percent: 100,
+    version: 6,
+    enabled: true,
+    updated_at: ago(60 * 24 * 6),
+  },
+  {
+    id: "wgt_staging",
+    workspace_id: currentWorkspace.id,
+    name: "Staging sandbox",
+    public_key: "pk_test_5d3fa17b0c98",
+    inbox_id: "inb_support",
+    modes: ["hub"],
+    appearance: {
+      accent: "#3B6EF6",
+      theme: "light",
+      logo_url: null,
+      avatar_url: null,
+      launcher_shape: "rounded",
+      launcher_size: "sm",
+      launcher_label: null,
+      position: "bottom-left",
+      offset_x: 16,
+      offset_y: 16,
+      mobile_offset_y: 12,
+      panel_width: 360,
+      panel_height: 560,
+      radius: 12,
+      header_style: "gradient",
+      bubble_style: "rounded",
+      font: "system",
+      z_index: 999_999,
+      hide_branding: false,
+      custom_css_vars: {},
+    },
+    content: {
+      title: "Sandbox",
+      subtitle: "Test environment",
+      welcome_message: "This is a test widget.",
+      input_placeholder: "Say something…",
+      online_message: "Online",
+      offline_message: "Offline",
+      response_time_text: "",
+      consent_text: null,
+    },
+    behavior: {
+      trigger: "immediate",
+      delay_seconds: 0,
+      scroll_percent: 0,
+      trigger_event: null,
+      include_urls: [],
+      exclude_urls: [],
+      devices: ["desktop", "mobile", "tablet"],
+      outside_hours: "show_offline",
+      pre_chat_form_id: null,
+      post_chat_survey_id: null,
+      allow_anonymous: true,
+      require_identity: false,
+      sound: false,
+      unread_badge: false,
+      persist_conversation: false,
+    },
+    domains: ["staging.northwind.cloud", "localhost"],
+    environment: "test",
+    rollout_percent: 100,
+    version: 2,
+    enabled: false,
+    updated_at: ago(60 * 24 * 20),
+  },
+];
+
+export const portals: Portal[] = [
+  {
+    id: "por_main",
+    workspace_id: currentWorkspace.id,
+    name: "Northwind Help Centre",
+    subdomain: "northwind",
+    custom_domain: "help.northwind.cloud",
+    domain_status: "active",
+    theme: {
+      accent: "#3B6EF6",
+      mode: "auto",
+      logo_url: null,
+      favicon_url: null,
+      headline: "How can we help?",
+      subheadline: "Search our guides, track your tickets, or start a conversation.",
+      footer_links: [
+        { label: "Status", url: "https://status.northwind.cloud" },
+        { label: "Privacy", url: "https://northwind.cloud/privacy" },
+      ],
+      custom_css_vars: {},
+    },
+    navigation: [
+      { id: "nav_1", label: "Guides", href: "/kb", external: false },
+      { id: "nav_2", label: "Tickets", href: "/tickets", external: false },
+      { id: "nav_3", label: "Roadmap", href: "/feedback", external: false },
+      { id: "nav_4", label: "Changelog", href: "/changelog", external: false },
+    ],
+    features: { tickets: true, knowledge_base: true, feedback: true, changelog: true, announcements: true },
+    auth_methods: ["magic_link", "sso_token", "ticket_link"],
+    permissions: {
+      view_tickets_by_email: true,
+      view_company_tickets: true,
+      reopen_resolved: true,
+      edit_fields: false,
+      add_participants: true,
+      download_transcript: true,
+    },
+    enabled: true,
+    updated_at: ago(60 * 24 * 3),
+  },
+];
+
+export const forms: Form[] = [
+  {
+    id: "frm_bug",
+    workspace_id: currentWorkspace.id,
+    name: "Bug report",
+    slug: "bug-report",
+    purpose: "ticket",
+    fields: [
+      { id: "ff_1", key: "summary", label: "What went wrong?", type: "string", placeholder: "One line summary", description: null, options: null, required: true, default_value: null, condition: null, validation: { max_length: 120 } },
+      { id: "ff_2", key: "steps", label: "Steps to reproduce", type: "text", placeholder: null, description: "Number each step if you can.", options: null, required: true, default_value: null, condition: null, validation: null },
+      { id: "ff_3", key: "severity", label: "Severity", type: "enum", placeholder: null, description: null, options: ["Blocking", "Major", "Minor", "Cosmetic"], required: true, default_value: "Major", condition: null, validation: null },
+      { id: "ff_4", key: "affected_users", label: "How many users are affected?", type: "integer", placeholder: null, description: null, options: null, required: false, default_value: null, condition: { field: "severity", operator: "in", value: ["Blocking", "Major"] }, validation: { min: 1 } },
+      { id: "ff_5", key: "screenshot", label: "Screenshot or recording", type: "file", placeholder: null, description: "PNG, JPG, or MP4 up to 25 MB.", options: null, required: false, default_value: null, condition: null, validation: null },
+    ],
+    routing: { inbox_id: "inb_support", team_id: "team_core", tag_ids: ["tag_bug"], priority: "high" },
+    confirmation: { title: "Thanks — we're on it", body: "You'll get an email with your ticket number in a moment.", redirect_url: null },
+    access: "public",
+    spam_protection: true,
+    submission_count: 342,
+    enabled: true,
+    updated_at: ago(60 * 24 * 9),
+  },
+  {
+    id: "frm_refund",
+    workspace_id: currentWorkspace.id,
+    name: "Refund request",
+    slug: "refund",
+    purpose: "ticket",
+    fields: [
+      { id: "rf_1", key: "invoice", label: "Invoice number", type: "string", placeholder: "INV-0000", description: null, options: null, required: true, default_value: null, condition: null, validation: { pattern: "^INV-\\d{4}$" } },
+      { id: "rf_2", key: "reason", label: "Reason", type: "enum", placeholder: null, description: null, options: ["Duplicate charge", "Cancelled early", "Wrong plan", "Other"], required: true, default_value: null, condition: null, validation: null },
+    ],
+    routing: { inbox_id: "inb_billing", team_id: "team_billing", tag_ids: ["tag_billing"], priority: "normal" },
+    confirmation: { title: "Request received", body: "Billing reviews refunds within two business days.", redirect_url: null },
+    access: "authenticated",
+    spam_protection: true,
+    submission_count: 87,
+    enabled: true,
+    updated_at: ago(60 * 24 * 21),
+  },
+  {
+    id: "frm_access",
+    workspace_id: currentWorkspace.id,
+    name: "Data access request",
+    slug: "data-access",
+    purpose: "ticket",
+    fields: [],
+    routing: { inbox_id: "inb_support", team_id: null, tag_ids: [], priority: "high" },
+    confirmation: { title: "Submitted", body: "We respond to data requests within 30 days.", redirect_url: null },
+    access: "authenticated",
+    spam_protection: true,
+    submission_count: 12,
+    enabled: false,
+    updated_at: ago(60 * 24 * 60),
+  },
+];
+
+/* -------------------------------------------------------------------------- */
+/*  Feedback                                                                   */
+/* -------------------------------------------------------------------------- */
+
+export const feedbackBoards: FeedbackBoard[] = [
+  { id: "fbb_product", workspace_id: currentWorkspace.id, name: "Product ideas", slug: "product", description: "Public board for feature requests.", visibility: "public", allow_comments: true, allow_voting: true, votes_per_customer: 10, moderation: "post", item_count: 148, created_at: ago(60 * 24 * 300) },
+  { id: "fbb_api", workspace_id: currentWorkspace.id, name: "API & SDK", slug: "api", description: "Developer-facing requests.", visibility: "public", allow_comments: true, allow_voting: true, votes_per_customer: null, moderation: "none", item_count: 62, created_at: ago(60 * 24 * 200) },
+  { id: "fbb_internal", workspace_id: currentWorkspace.id, name: "Internal backlog", slug: "internal", description: "Agent-submitted friction, not customer visible.", visibility: "private", allow_comments: true, allow_voting: false, votes_per_customer: null, moderation: "pre", item_count: 31, created_at: ago(60 * 24 * 120) },
+];
+
+export const feedbackItems: FeedbackItem[] = [
+  fb("fbi_1", "fbb_product", "Bulk reassign conversations from the inbox", "Selecting 20 threads and reassigning them one at a time is painful during handover.", "in_progress", 214, 63, 18, "cus_mariana", "cmp_atlas", ago(60 * 24 * 40)),
+  fb("fbi_2", "fbb_product", "Scheduled reports by email", "Send the weekly SLA summary to our ops channel automatically.", "planned", 176, 51, 9, "cus_dan", "cmp_orbital", ago(60 * 24 * 62)),
+  fb("fbi_3", "fbb_api", "Webhook replay from the dashboard", "When our endpoint is down we want to replay the window, not lose it.", "reviewing", 143, 44, 22, "cus_yuki", "cmp_orbital", ago(60 * 24 * 12)),
+  fb("fbi_4", "fbb_product", "Dark mode for the customer portal", "Our users have asked for this repeatedly.", "completed", 98, 30, 6, "cus_hannah", "cmp_verity", ago(60 * 24 * 150)),
+  fb("fbi_5", "fbb_api", "Official Go SDK", "We'd rather not hand-roll the HTTP client.", "open", 87, 26, 14, "cus_yuki", "cmp_orbital", ago(60 * 24 * 8)),
+  fb("fbi_6", "fbb_product", "Merge duplicate customers automatically", "", "declined", 12, 3, 8, "cus_luca", "cmp_lumen", ago(60 * 24 * 90)),
+];
+
+function fb(
+  id: string,
+  boardId: string,
+  title: string,
+  description: string,
+  status: FeedbackItem["status"],
+  votes: number,
+  subscribers: number,
+  comments: number,
+  submitterId: string,
+  companyId: string,
+  createdAt: Timestamp,
+): FeedbackItem {
+  return {
+    id,
+    workspace_id: currentWorkspace.id,
+    board_id: boardId,
+    title,
+    description,
+    type: "feature_request",
+    status,
+    visibility: "public",
+    submitter_id: submitterId,
+    company_id: companyId,
+    product_area: null,
+    vote_count: votes,
+    subscriber_count: subscribers,
+    comment_count: comments,
+    viewer_has_voted: false,
+    tag_ids: [],
+    priority: null,
+    linked_conversation_ids: [],
+    linked_ticket_ids: [],
+    merged_into_id: null,
+    created_at: createdAt,
+    updated_at: createdAt,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Knowledge base                                                             */
+/* -------------------------------------------------------------------------- */
+
+export const collections: ArticleCollection[] = [
+  { id: "col_start", knowledge_base_id: "kb_main", name: "Getting started", slug: "getting-started", description: "Install, configure, and send your first message.", icon: "rocket", article_count: 12, position: 0 },
+  { id: "col_widget", knowledge_base_id: "kb_main", name: "Widget & portal", slug: "widget", description: "Everything customers see.", icon: "layout", article_count: 19, position: 1 },
+  { id: "col_api", knowledge_base_id: "kb_main", name: "API & webhooks", slug: "api", description: "Integrate Hubchat with your stack.", icon: "code", article_count: 24, position: 2 },
+  { id: "col_billing", knowledge_base_id: "kb_main", name: "Billing", slug: "billing", description: "Plans, invoices, and limits.", icon: "receipt", article_count: 8, position: 3 },
+];
+
+export const articles: Article[] = [
+  art("art_1", "col_api", "Verifying webhook signatures", "published", 4_812, 214, 6, ago(60 * 24 * 14)),
+  art("art_2", "col_start", "Installing the widget with a script tag", "published", 9_204, 402, 11, ago(60 * 24 * 40)),
+  art("art_3", "col_widget", "Restricting the widget to specific domains", "published", 2_140, 96, 3, ago(60 * 24 * 22)),
+  art("art_4", "col_api", "Identifying customers with a signed token", "published", 3_318, 188, 4, ago(60 * 24 * 9)),
+  art("art_5", "col_billing", "Understanding monthly active contacts", "in_review", 0, 0, 0, ago(60 * 6)),
+  art("art_6", "col_start", "Inviting your team", "draft", 0, 0, 0, ago(60 * 30)),
+  art("art_7", "col_widget", "Customising portal colours and logo", "scheduled", 0, 0, 0, ago(60 * 2)),
+];
+
+function art(
+  id: string,
+  collectionId: string,
+  title: string,
+  state: Article["state"],
+  views: number,
+  helpful: number,
+  unhelpful: number,
+  updatedAt: Timestamp,
+): Article {
+  return {
+    id,
+    workspace_id: currentWorkspace.id,
+    knowledge_base_id: "kb_main",
+    collection_id: collectionId,
+    title,
+    slug: title.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+    excerpt: "",
+    body: "",
+    state,
+    language: "en",
+    author_id: "mem_rui",
+    tag_ids: [],
+    related_ids: [],
+    seo: { title: null, description: null },
+    view_count: views,
+    helpful_count: helpful,
+    unhelpful_count: unhelpful,
+    version: 3,
+    published_at: state === "published" ? updatedAt : null,
+    scheduled_at: state === "scheduled" ? ahead(60 * 20) : null,
+    updated_at: updatedAt,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Automation, SLA, surveys                                                   */
+/* -------------------------------------------------------------------------- */
+
+export const automationRules: AutomationRule[] = [
+  {
+    id: "rul_enterprise",
+    workspace_id: currentWorkspace.id,
+    name: "Enterprise → Core team, high priority",
+    description: "Any conversation from an enterprise-tier company jumps the queue.",
+    trigger: "conversation.created",
+    conditions: { match: "all", conditions: [{ field: "company.tier", operator: "is", value: "enterprise" }] },
+    actions: [
+      { id: "act_1", type: "assign_team", params: { team_id: "team_core" } },
+      { id: "act_2", type: "set_priority", params: { priority: "high" } },
+      { id: "act_3", type: "add_tag", params: { tag_id: "tag_enterprise" } },
+    ],
+    enabled: true,
+    version: 4,
+    run_count_24h: 38,
+    last_run_at: ago(12),
+    error_count_24h: 0,
+    updated_at: ago(60 * 24 * 11),
+  },
+  {
+    id: "rul_past_due",
+    workspace_id: currentWorkspace.id,
+    name: "Past-due accounts → Billing",
+    description: null,
+    trigger: "customer.identified",
+    conditions: { match: "all", conditions: [{ field: "customer.account_status", operator: "is", value: "past_due" }] },
+    actions: [
+      { id: "act_4", type: "move_inbox", params: { inbox_id: "inb_billing" } },
+      { id: "act_5", type: "add_tag", params: { tag_id: "tag_billing" } },
+    ],
+    enabled: true,
+    version: 2,
+    run_count_24h: 6,
+    last_run_at: ago(180),
+    error_count_24h: 0,
+    updated_at: ago(60 * 24 * 30),
+  },
+  {
+    id: "rul_idle_close",
+    workspace_id: currentWorkspace.id,
+    name: "Auto-resolve idle threads after 5 days",
+    description: "Only applies to conversations waiting on the customer.",
+    trigger: "conversation.idle",
+    conditions: { match: "all", conditions: [{ field: "state", operator: "is", value: "waiting_for_customer" }] },
+    actions: [
+      { id: "act_6", type: "send_message", params: { template: "idle_nudge" } },
+      { id: "act_7", type: "set_state", params: { state: "resolved" } },
+    ],
+    enabled: true,
+    version: 7,
+    run_count_24h: 14,
+    last_run_at: ago(45),
+    error_count_24h: 2,
+    updated_at: ago(60 * 24 * 4),
+  },
+  {
+    id: "rul_sla_escalate",
+    workspace_id: currentWorkspace.id,
+    name: "Escalate on SLA breach",
+    description: null,
+    trigger: "sla.breached",
+    conditions: { match: "any", conditions: [{ field: "priority", operator: "in", value: ["high", "urgent"] }] },
+    actions: [
+      { id: "act_8", type: "assign_member", params: { member_id: "mem_rui" } },
+      { id: "act_9", type: "invoke_webhook", params: { endpoint_id: "whk_ops" } },
+    ],
+    enabled: false,
+    version: 1,
+    run_count_24h: 0,
+    last_run_at: null,
+    error_count_24h: 0,
+    updated_at: ago(60 * 24 * 2),
+  },
+];
+
+export const automationExecutions: AutomationExecution[] = [
+  exec("exe_1", "rul_enterprise", "conversation", "cnv_9001", "matched", 3, 42, null, ago(12)),
+  exec("exe_2", "rul_idle_close", "conversation", "cnv_9004", "failed", 1, 118, "send_message: template 'idle_nudge' not found", ago(45)),
+  exec("exe_3", "rul_past_due", "customer", "cus_dan", "matched", 2, 31, null, ago(180)),
+  exec("exe_4", "rul_enterprise", "conversation", "cnv_9005", "skipped", 0, 8, null, ago(220)),
+  exec("exe_5", "rul_idle_close", "conversation", "cnv_9008", "matched", 2, 96, null, ago(300)),
+];
+
+function exec(
+  id: string,
+  ruleId: string,
+  subjectType: string,
+  subjectId: string,
+  outcome: AutomationExecution["outcome"],
+  actionsApplied: number,
+  durationMs: number,
+  error: string | null,
+  occurredAt: Timestamp,
+): AutomationExecution {
+  return {
+    id,
+    rule_id: ruleId,
+    rule_version: 4,
+    subject_type: subjectType,
+    subject_id: subjectId,
+    outcome,
+    depth: 1,
+    causation_id: null,
+    actions_applied: actionsApplied,
+    error,
+    duration_ms: durationMs,
+    occurred_at: occurredAt,
+  };
+}
+
+export const macros: Macro[] = [
+  { id: "mac_1", workspace_id: currentWorkspace.id, name: "Escalate to engineering", folder: "Escalation", scope: "workspace", body: "I've escalated this to our engineering team and will update you within 4 hours.", actions: [{ id: "a1", type: "set_priority", params: { priority: "urgent" } }, { id: "a2", type: "add_tag", params: { tag_id: "tag_bug" } }], usage_count: 412, updated_at: ago(60 * 24 * 5) },
+  { id: "mac_2", workspace_id: currentWorkspace.id, name: "Request reproduction steps", folder: "Triage", scope: "workspace", body: "Could you share the exact steps and the time you saw this? It helps us pin down the request in our logs.", actions: [{ id: "a3", type: "set_state", params: { state: "waiting_for_customer" } }], usage_count: 968, updated_at: ago(60 * 24 * 12) },
+  { id: "mac_3", workspace_id: currentWorkspace.id, name: "Close as resolved", folder: null, scope: "workspace", body: "Glad that sorted it — I'll close this out. Reply any time to reopen.", actions: [{ id: "a4", type: "set_state", params: { state: "resolved" } }], usage_count: 2_104, updated_at: ago(60 * 24 * 40) },
+];
+
+export const savedReplies: SavedReply[] = [
+  { id: "rep_1", workspace_id: currentWorkspace.id, name: "Business hours", shortcut: "/hours", folder: "General", scope: "workspace", body: "Our team is online Monday to Friday, 09:00–18:00 WEST.", usage_count: 340 },
+  { id: "rep_2", workspace_id: currentWorkspace.id, name: "Refund policy", shortcut: "/refund", folder: "Billing", scope: "team", body: "We refund unused time on annual plans within 30 days of purchase.", usage_count: 122 },
+  { id: "rep_3", workspace_id: currentWorkspace.id, name: "API key rotation", shortcut: "/rotate", folder: "Developers", scope: "workspace", body: "You can rotate a key from Settings → API keys. The old key stays valid for 24 hours.", usage_count: 78 },
+];
+
+export const slaPolicies: SlaPolicy[] = [
+  {
+    id: "sla_priority",
+    workspace_id: currentWorkspace.id,
+    name: "Priority (Enterprise)",
+    description: "Applies to enterprise-tier companies across every inbox.",
+    calendar_id: "cal_eu",
+    targets: [
+      { priority: "urgent", first_response_minutes: 15, next_response_minutes: 30, resolution_minutes: 240 },
+      { priority: "high", first_response_minutes: 30, next_response_minutes: 60, resolution_minutes: 480 },
+      { priority: "normal", first_response_minutes: 120, next_response_minutes: 240, resolution_minutes: 1_440 },
+      { priority: "low", first_response_minutes: 480, next_response_minutes: 960, resolution_minutes: 4_320 },
+    ],
+    pause_states: ["waiting_for_customer", "snoozed"],
+    warning_threshold_percent: 80,
+    escalation_actions: [{ id: "esc_1", type: "assign_member", params: { member_id: "mem_rui" } }],
+    applies_to: { match: "all", conditions: [{ field: "company.tier", operator: "is", value: "enterprise" }] },
+    enabled: true,
+    compliance_30d: 0.943,
+  },
+  {
+    id: "sla_standard",
+    workspace_id: currentWorkspace.id,
+    name: "Standard",
+    description: "Default policy for everyone else.",
+    calendar_id: "cal_eu",
+    targets: [
+      { priority: "urgent", first_response_minutes: 60, next_response_minutes: 120, resolution_minutes: 720 },
+      { priority: "high", first_response_minutes: 120, next_response_minutes: 240, resolution_minutes: 1_440 },
+      { priority: "normal", first_response_minutes: 480, next_response_minutes: 960, resolution_minutes: 2_880 },
+      { priority: "low", first_response_minutes: 1_440, next_response_minutes: 2_880, resolution_minutes: 7_200 },
+    ],
+    pause_states: ["waiting_for_customer", "snoozed", "pending"],
+    warning_threshold_percent: 80,
+    escalation_actions: [],
+    applies_to: { match: "all", conditions: [] },
+    enabled: true,
+    compliance_30d: 0.887,
+  },
+];
+
+export const calendars: BusinessHoursCalendar[] = [
+  {
+    id: "cal_eu",
+    workspace_id: currentWorkspace.id,
+    name: "Europe · Mon–Fri",
+    timezone: "Europe/Lisbon",
+    weekly: [
+      [{ start: "09:00", end: "18:00" }],
+      [{ start: "09:00", end: "18:00" }],
+      [{ start: "09:00", end: "18:00" }],
+      [{ start: "09:00", end: "18:00" }],
+      [{ start: "09:00", end: "17:00" }],
+      [],
+      [],
+    ],
+    holidays: [
+      { date: "2026-12-25", label: "Christmas Day" },
+      { date: "2026-01-01", label: "New Year's Day" },
+    ],
+    is_default: true,
+  },
+  {
+    id: "cal_follow",
+    workspace_id: currentWorkspace.id,
+    name: "Follow the sun",
+    timezone: "UTC",
+    weekly: [
+      [{ start: "00:00", end: "23:59" }],
+      [{ start: "00:00", end: "23:59" }],
+      [{ start: "00:00", end: "23:59" }],
+      [{ start: "00:00", end: "23:59" }],
+      [{ start: "00:00", end: "23:59" }],
+      [{ start: "00:00", end: "23:59" }],
+      [{ start: "00:00", end: "23:59" }],
+    ],
+    holidays: [],
+    is_default: false,
+  },
+];
+
+export const surveys: Survey[] = [
+  {
+    id: "srv_csat",
+    workspace_id: currentWorkspace.id,
+    name: "Post-resolution CSAT",
+    type: "csat",
+    questions: [
+      { id: "q1", prompt: "How would you rate the support you received?", type: "stars", options: null, required: true, condition: null },
+      { id: "q2", prompt: "What could we have done better?", type: "text", options: null, required: false, condition: null },
+    ],
+    delivery: ["widget", "email"],
+    trigger: "on_resolve",
+    response_count: 1_284,
+    average_score: 4.6,
+    response_rate: 0.32,
+    enabled: true,
+    expires_at: null,
+  },
+  {
+    id: "srv_nps",
+    workspace_id: currentWorkspace.id,
+    name: "Quarterly NPS",
+    type: "nps",
+    questions: [
+      { id: "q3", prompt: "How likely are you to recommend Northwind?", type: "number", options: null, required: true, condition: null },
+    ],
+    delivery: ["email", "link"],
+    trigger: "scheduled",
+    response_count: 402,
+    average_score: 41,
+    response_rate: 0.18,
+    enabled: true,
+    expires_at: ahead(60 * 24 * 30),
+  },
+  {
+    id: "srv_ces",
+    workspace_id: currentWorkspace.id,
+    name: "Onboarding effort",
+    type: "ces",
+    questions: [],
+    delivery: ["portal"],
+    trigger: "manual",
+    response_count: 0,
+    average_score: null,
+    response_rate: null,
+    enabled: false,
+    expires_at: null,
+  },
+];
+
+/* -------------------------------------------------------------------------- */
+/*  Developer surfaces                                                         */
+/* -------------------------------------------------------------------------- */
+
+export const apiKeys: ApiKey[] = [
+  { id: "key_1", workspace_id: currentWorkspace.id, name: "Production backend", prefix: "hc_live_9f2a", scopes: ["conversation.read", "conversation.reply", "customer.read", "ticket.manage"], last_used_at: ago(3), expires_at: null, created_by: "mem_priya", created_at: ago(60 * 24 * 180), revoked_at: null },
+  { id: "key_2", workspace_id: currentWorkspace.id, name: "Analytics sync (read-only)", prefix: "hc_live_2c81", scopes: ["report.read", "customer.read"], last_used_at: ago(120), expires_at: ahead(60 * 24 * 60), created_by: "mem_priya", created_at: ago(60 * 24 * 90), revoked_at: null },
+  { id: "key_3", workspace_id: currentWorkspace.id, name: "Old migration script", prefix: "hc_live_77bd", scopes: ["customer.read"], last_used_at: ago(60 * 24 * 200), expires_at: null, created_by: "mem_ada", created_at: ago(60 * 24 * 300), revoked_at: ago(60 * 24 * 150) },
+];
+
+export const webhookEndpoints: WebhookEndpoint[] = [
+  { id: "whk_ops", workspace_id: currentWorkspace.id, url: "https://ops.northwind.cloud/hooks/hubchat", description: "Pages the on-call engineer on SLA breach.", events: ["ticket.sla_breached", "conversation.created"], secret_hint: "whsec_…4f2a", enabled: true, auto_disabled_at: null, success_24h: 1_284, failure_24h: 0, created_at: ago(60 * 24 * 120) },
+  { id: "whk_crm", workspace_id: currentWorkspace.id, url: "https://crm.internal.northwind.cloud/hubchat", description: "Mirrors customer records into the CRM.", events: ["customer.created", "customer.updated", "feedback.created"], secret_hint: "whsec_…9b17", enabled: true, auto_disabled_at: null, success_24h: 402, failure_24h: 11, created_at: ago(60 * 24 * 60) },
+  { id: "whk_legacy", workspace_id: currentWorkspace.id, url: "https://legacy.northwind.cloud/webhook", description: null, events: ["message.created"], secret_hint: "whsec_…0c33", enabled: false, auto_disabled_at: ago(60 * 40), success_24h: 0, failure_24h: 96, created_at: ago(60 * 24 * 240) },
+];
+
+export const webhookDeliveries: WebhookDelivery[] = [
+  del("dlv_1", "whk_crm", "customer.updated", "succeeded", 1, 200, 142, null, ago(4)),
+  del("dlv_2", "whk_crm", "customer.created", "failed", 3, 503, 30_000, "upstream timeout", ago(18)),
+  del("dlv_3", "whk_ops", "ticket.sla_breached", "succeeded", 1, 204, 88, null, ago(37)),
+  del("dlv_4", "whk_legacy", "message.created", "dead", 6, 404, 61, "endpoint disabled after 6 consecutive failures", ago(60 * 40)),
+  del("dlv_5", "whk_crm", "feedback.created", "pending", 2, null, null, null, ago(1)),
+];
+
+function del(
+  id: string,
+  endpointId: string,
+  eventType: string,
+  status: WebhookDelivery["status"],
+  attempt: number,
+  responseStatus: number | null,
+  durationMs: number | null,
+  error: string | null,
+  createdAt: Timestamp,
+): WebhookDelivery {
+  return {
+    id,
+    endpoint_id: endpointId,
+    event_id: `evt_${id}`,
+    event_type: eventType,
+    status,
+    attempt,
+    response_status: responseStatus,
+    duration_ms: durationMs,
+    error,
+    next_attempt_at: status === "pending" ? ahead(2) : null,
+    created_at: createdAt,
+  };
+}
+
+export const fieldDefinitions: FieldDefinition[] = [
+  fld("fd_plan", "plan", "Subscription plan", "enum", ["starter", "growth", "enterprise"], true, false),
+  fld("fd_seats", "seats", "Seat count", "integer", null, true, false),
+  fld("fd_status", "account_status", "Account status", "enum", ["trialing", "active", "past_due", "cancelled"], true, false),
+  fld("fd_version", "app_version", "App version", "string", null, false, false),
+  fld("fd_region", "region", "Region", "enum", ["eu", "us", "apac"], true, false),
+  fld("fd_tax", "tax_id", "Tax identifier", "string", null, false, true),
+  fld("fd_flags", "feature_flags", "Feature flags", "string_list", null, false, false),
+];
+
+function fld(
+  id: string,
+  key: string,
+  label: string,
+  type: FieldDefinition["type"],
+  options: string[] | null,
+  searchable: boolean,
+  sensitive: boolean,
+): FieldDefinition {
+  return {
+    id,
+    workspace_id: currentWorkspace.id,
+    key,
+    label,
+    type,
+    description: null,
+    options,
+    required: false,
+    visibility: "internal",
+    sensitive,
+    searchable,
+    allowed_sources: ["js_sdk", "rest_api", "identity_token"],
+    required_capability: sensitive ? "customer.read_sensitive" : null,
+    validation: null,
+    created_at: ago(60 * 24 * 100),
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Operations                                                                 */
+/* -------------------------------------------------------------------------- */
+
+export const auditLogs: AuditLog[] = [
+  aud("aud_1", "mem_ada", "Ada Mwangi", "widget.updated", "widget", "wgt_main", { field: "behavior.trigger", from: "immediate", to: "delay" }, ago(30)),
+  aud("aud_2", "mem_priya", "Priya Raman", "api_key.created", "api_key", "key_2", { name: "Analytics sync (read-only)" }, ago(60 * 8)),
+  aud("aud_3", "mem_kofi", "Kofi Boateng", "member.role_changed", "member", "mem_sara", { from: "agent", to: "agent" }, ago(60 * 26)),
+  aud("aud_4", "mem_ada", "Ada Mwangi", "customer.merged", "customer", "cus_mariana", { merged: "cus_old_4412", strategy: "verified_email" }, ago(60 * 40)),
+  aud("aud_5", null, "System", "webhook.auto_disabled", "webhook_endpoint", "whk_legacy", { consecutive_failures: 6 }, ago(60 * 40)),
+  aud("aud_6", "mem_ada", "Ada Mwangi", "workspace.export_started", "workspace", "wrk_01hq7x", { scope: "full" }, ago(60 * 60)),
+];
+
+function aud(
+  id: string,
+  actorId: string | null,
+  actorName: string,
+  action: string,
+  entityType: string,
+  entityId: string,
+  metadata: Record<string, unknown>,
+  occurredAt: Timestamp,
+): AuditLog {
+  return {
+    id,
+    workspace_id: currentWorkspace.id,
+    actor_type: actorId ? "member" : "system",
+    actor_id: actorId,
+    actor_name: actorName,
+    action,
+    entity_type: entityType,
+    entity_id: entityId,
+    request_id: `req_${id}`,
+    ip: actorId ? "203.0.113.44" : null,
+    metadata,
+    occurred_at: occurredAt,
+  };
+}
+
+export const jobs: Job[] = [
+  job("job_1", "webhooks", "webhook.deliver", "running", 1, ago(0)),
+  job("job_2", "email", "email.send", "pending", 0, ahead(1)),
+  job("job_3", "exports", "workspace.export", "running", 1, ago(58)),
+  job("job_4", "webhooks", "webhook.deliver", "failed", 3, ago(18)),
+  job("job_5", "analytics", "analytics.rollup_hourly", "succeeded", 1, ago(22)),
+  job("job_6", "retention", "retention.purge_events", "dead", 5, ago(60 * 26)),
+];
+
+function job(
+  id: string,
+  queue: string,
+  type: string,
+  state: Job["state"],
+  attempt: number,
+  scheduledAt: Timestamp,
+): Job {
+  return {
+    id,
+    workspace_id: currentWorkspace.id,
+    queue,
+    type,
+    state,
+    attempt,
+    max_attempts: 5,
+    scheduled_at: scheduledAt,
+    started_at: state === "pending" ? null : scheduledAt,
+    finished_at: state === "succeeded" || state === "failed" || state === "dead" ? scheduledAt : null,
+    error: state === "failed" ? "dial tcp: i/o timeout" : state === "dead" ? "exceeded max attempts" : null,
+  };
+}
+
+export const notifications: Notification[] = [
+  { id: "ntf_1", workspace_id: currentWorkspace.id, type: "sla_breach", title: "SLA breached", body: "Invoice INV-2291 charged twice · Orbital Systems", entity_type: "conversation", entity_id: "cnv_9002", read_at: null, created_at: ago(32) },
+  { id: "ntf_2", workspace_id: currentWorkspace.id, type: "mention", title: "Rui mentioned you", body: "\"@ada can you confirm the 421 is on their LB?\"", entity_type: "conversation", entity_id: "cnv_9001", read_at: null, created_at: ago(58) },
+  { id: "ntf_3", workspace_id: currentWorkspace.id, type: "assignment", title: "Assigned to you", body: "Webhook deliveries stopped after 4.12 upgrade", entity_type: "conversation", entity_id: "cnv_9001", read_at: ago(120), created_at: ago(189) },
+  { id: "ntf_4", workspace_id: currentWorkspace.id, type: "system", title: "Webhook endpoint disabled", body: "legacy.northwind.cloud disabled after 6 consecutive failures", entity_type: "webhook_endpoint", entity_id: "whk_legacy", read_at: ago(60 * 30), created_at: ago(60 * 40) },
+];
+
+/* -------------------------------------------------------------------------- */
+/*  Analytics series                                                           */
+/* -------------------------------------------------------------------------- */
+
+function series(days: number, base: number, variance: number, seed = 1): MetricPoint[] {
+  const points: MetricPoint[] = [];
+  let value = base;
+  for (let i = days - 1; i >= 0; i--) {
+    // Deterministic pseudo-random so charts never re-roll between renders.
+    const noise = Math.sin((i + seed) * 1.7) * variance + Math.cos((i + seed) * 0.6) * (variance / 2);
+    value = Math.max(0, Math.round(base + noise));
+    const date = new Date(NOW.getTime() - i * 86_400_000);
+    points.push({ t: date.toISOString().slice(0, 10), v: value });
+  }
+  return points;
+}
+
+export const analytics = {
+  conversations: series(30, 142, 34, 1),
+  tickets: series(30, 61, 18, 3),
+  firstResponse: series(30, 640, 180, 5),
+  resolution: series(30, 12_400, 3_200, 7),
+  csat: series(30, 92, 5, 9),
+  backlog: series(30, 48, 14, 11),
+  widgetOpens: series(30, 2_140, 420, 13),
+  articleViews: series(30, 880, 220, 15),
+  /** Volume by weekday (rows) × 2-hour bucket (columns). */
+  heatmap: Array.from({ length: 7 }, (_, day) =>
+    Array.from({ length: 12 }, (_, slot) => {
+      if (day >= 5) return Math.round(Math.max(0, 6 + Math.sin(slot) * 4));
+      const peak = Math.exp(-Math.pow(slot - 6, 2) / 8);
+      return Math.round(peak * 48 + Math.abs(Math.sin(slot * day)) * 8);
+    }),
+  ),
+  channelSplit: [
+    { key: "widget", label: "Widget chat", value: 2_140, tone: 1 as const },
+    { key: "email", label: "Email", value: 980, tone: 2 as const },
+    { key: "portal", label: "Portal", value: 604, tone: 3 as const },
+    { key: "form", label: "Forms", value: 214, tone: 4 as const },
+    { key: "api", label: "API", value: 62, tone: 5 as const },
+  ],
+  agentWorkload: [
+    { t: "Ada Mwangi", v: 148 },
+    { t: "Rui Ferreira", v: 132 },
+    { t: "Sara Lindqvist", v: 119 },
+    { t: "Tomás Oliveira", v: 86 },
+    { t: "Kofi Boateng", v: 41 },
+  ],
+  topArticles: [
+    { t: "Installing the widget", v: 9_204 },
+    { t: "Verifying webhook signatures", v: 4_812 },
+    { t: "Signed identity tokens", v: 3_318 },
+    { t: "Domain allowlists", v: 2_140 },
+    { t: "Monthly active contacts", v: 1_602 },
+  ],
+  noResultSearches: [
+    { t: "delete workspace", v: 84 },
+    { t: "slack integration", v: 62 },
+    { t: "ai summary", v: 51 },
+    { t: "phone support", v: 38 },
+    { t: "sla pause rules", v: 29 },
+  ],
+};
