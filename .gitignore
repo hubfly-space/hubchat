@@ -1,0 +1,37 @@
+# Node
+node_modules/
+.pnpm-store/
+*.tsbuildinfo
+
+# Frontend build output (regenerated into embedded/ at release time)
+web/*/dist/
+embedded/assets/dashboard/
+embedded/assets/portal/
+embedded/assets/widget/
+
+# Go
+/bin/
+/dist/
+hubchat
+*.test
+*.out
+coverage.*
+
+# Local runtime data
+/data/
+*.db
+
+# Config & secrets
+.env
+.env.*
+!.env.example
+hubchat.yaml
+!hubchat.example.yaml
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
