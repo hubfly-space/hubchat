@@ -146,8 +146,8 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 
 // CookieSecure and CookieDomain expose the resolved cookie policy so the HTTP
 // layer can set the cookie without importing config itself.
-func (s *Service) CookieSecure() bool     { return s.session.CookieSecure }
-func (s *Service) CookieDomain() string   { return s.session.CookieDomain }
+func (s *Service) CookieSecure() bool             { return s.session.CookieSecure }
+func (s *Service) CookieDomain() string           { return s.session.CookieDomain }
 func (s *Service) SessionLifetime() time.Duration { return s.session.Lifetime }
 
 func normalizeEmail(email string) string {
