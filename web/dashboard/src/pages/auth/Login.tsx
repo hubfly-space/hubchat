@@ -1,24 +1,67 @@
-import { Button, Callout, Field, Input, Separator } from "@hubchat/shared";
+import {
+  api,
+  ApiError,
+  Button,
+  Callout,
+  clearQueryCache,
+  Field,
+  Input,
+  Separator,
+  useMutation,
+} from "@hubchat/shared";
 import { Github, Mail } from "lucide-react";
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+
+type Credentials = { email: string; password: string };
 
 export default function Login() {
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(false);
+  const [params] = useSearchParams();
   const [error, setError] = useState<string | null>(null);
 
-  const submit = (event: React.FormEvent) => {
+  const signIn = useMutation<Credentials, unknown>(
+    (credentials) => api.post("/auth/login", credentials),
+    {
+      onSuccess: () => {
+        // Anything cached belongs to whoever was signed in before. Clearing it
+        // before navigating means the next screen cannot render the previous
+        // user's workspace for a frame.
+        clearQueryCache();
+        // `next` carries the page the session expired on, so an agent lands
+        // back in the conversation they were reading (§7.5).
+        navigate(params.get("next") ?? "/overview", { replace: true });
+      },
+      onError: (caught) => {
+        // Deliberately not distinguishing "no such account" from "wrong
+        // password": telling them apart is an account-enumeration oracle
+        // (§11.4), and the server declines to either.
+        setError(
+          caught instanceof ApiError
+            ? caught.message
+            : "Could not reach the server. Check your connection and try again.",
+        );
+      },
+    },
+  );
+
+  const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setLoading(true);
     setError(null);
-    // The real handler posts to /api/v1/auth/login and follows the challenge
-    // response — a 2FA challenge redirects to /two-factor with a scoped token.
-    window.setTimeout(() => {
-      setLoading(false);
-      navigate("/overview");
-    }, 500);
+
+    const form = new FormData(event.currentTarget);
+    void signIn
+      .mutate({
+        email: String(form.get("email") ?? ""),
+        password: String(form.get("password") ?? ""),
+      })
+      .catch(() => {
+        // Surfaced through onError; swallowed here so a failed sign-in is not
+        // also an unhandled rejection in the console.
+      });
   };
+
+  const loading = signIn.isPending;
 
   return (
     <>
@@ -93,14 +136,6 @@ export default function Login() {
           Create one
         </Link>
       </p>
-
-      <button
-        type="button"
-        onClick={() => setError("That email and password combination did not match.")}
-        className="sr-only"
-      >
-        Simulate error
-      </button>
     </>
   );
 }
