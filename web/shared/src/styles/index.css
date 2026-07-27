@@ -1,0 +1,226 @@
+/* =============================================================================
+   Hubchat — stylesheet entry point
+   Every app imports exactly this file. Import order is load-bearing.
+   ============================================================================= */
+
+@import "tailwindcss";
+@import "./tokens.css";
+@import "./theme.css";
+@import "./base.css";
+
+/* Scan the shared library too — it lives outside each app's own root. */
+@source "../../../shared/src";
+
+/* -----------------------------------------------------------------------------
+   Variants
+   -------------------------------------------------------------------------- */
+
+/* Theme is an explicit attribute, never a media query. The workspace, the
+   portal visitor, and the widget host page can each disagree about theme, and
+   an attribute lets them nest. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+@custom-variant light (&:where([data-theme="light"], [data-theme="light"] *));
+@custom-variant compact (&:where([data-density="compact"], [data-density="compact"] *));
+
+/* Frequently-needed state variants that Tailwind does not ship by default. */
+@custom-variant selected (&[data-selected="true"], &[aria-selected="true"]);
+@custom-variant active-item (&[data-active="true"]);
+@custom-variant unread (&[data-unread="true"]);
+@custom-variant open-state (&[data-state="open"]);
+@custom-variant closed-state (&[data-state="closed"]);
+@custom-variant hocus (&:hover, &:focus-visible);
+
+/* -----------------------------------------------------------------------------
+   Scale → Tailwind namespaces
+   Non-inline: these are emitted to :root so plain CSS can use them too, and
+   they do not need to change per theme subtree.
+   -------------------------------------------------------------------------- */
+@theme {
+  --font-sans: var(--ff-sans);
+  --font-mono: var(--ff-mono);
+
+  --text-2xs: var(--fs-2xs);
+  --text-2xs--line-height: 1.4;
+  --text-xs: var(--fs-xs);
+  --text-xs--line-height: 1.45;
+  --text-sm: var(--fs-sm);
+  --text-sm--line-height: 1.5;
+  --text-base: var(--fs-base);
+  --text-base--line-height: 1.55;
+  --text-md: var(--fs-md);
+  --text-md--line-height: 1.5;
+  --text-lg: var(--fs-lg);
+  --text-lg--line-height: 1.4;
+  --text-xl: var(--fs-xl);
+  --text-xl--line-height: 1.32;
+  --text-2xl: var(--fs-2xl);
+  --text-2xl--line-height: 1.24;
+  --text-3xl: var(--fs-3xl);
+  --text-3xl--line-height: 1.18;
+  --text-4xl: var(--fs-4xl);
+  --text-4xl--line-height: 1.12;
+
+  --leading-tight: var(--lh-tight);
+  --leading-snug: var(--lh-snug);
+  --leading-normal: var(--lh-normal);
+  --leading-relaxed: var(--lh-relaxed);
+
+  --tracking-tighter: var(--ls-tighter);
+  --tracking-tight: var(--ls-tight);
+  --tracking-normal: var(--ls-normal);
+  --tracking-wide: var(--ls-wide);
+  --tracking-caps: var(--ls-caps);
+
+  --font-weight-normal: var(--fw-normal);
+  --font-weight-medium: var(--fw-medium);
+  --font-weight-semibold: var(--fw-semibold);
+  --font-weight-bold: var(--fw-bold);
+
+  --radius-xs: var(--rad-xs);
+  --radius-sm: var(--rad-sm);
+  --radius-md: var(--rad-md);
+  --radius-lg: var(--rad-lg);
+  --radius-xl: var(--rad-xl);
+  --radius-2xl: var(--rad-2xl);
+  --radius-full: var(--rad-pill);
+
+  --spacing: 4px;
+
+  --ease-out: var(--ease-out);
+  --ease-spring: var(--ease-spring);
+
+  --default-transition-duration: var(--dur-fast);
+  --default-transition-timing-function: var(--ease-out);
+
+  /* Shell geometry, exposed as sizing utilities (w-rail, w-sidebar, …). */
+  --spacing-rail: var(--hc-rail-w);
+  --spacing-sidebar: var(--hc-sidebar-w);
+  --spacing-list: var(--hc-list-w);
+  --spacing-context: var(--hc-context-w);
+  --spacing-topbar: var(--hc-topbar-h);
+  --spacing-row: var(--hc-row-h);
+  --spacing-control-xs: var(--hc-control-h-xs);
+  --spacing-control-sm: var(--hc-control-h-sm);
+  --spacing-control-md: var(--hc-control-h-md);
+  --spacing-control-lg: var(--hc-control-h-lg);
+
+  /* Prose measure. Long-form reading (articles, changelogs) caps here. */
+  --spacing-measure: 68ch;
+  --spacing-measure-narrow: 52ch;
+}
+
+/* -----------------------------------------------------------------------------
+   Semantic colours & elevation → Tailwind namespaces
+   `inline` is required: utilities must emit `var(--hc-*)` so that a nested
+   [data-theme] or [data-branded] subtree re-resolves them at runtime.
+   -------------------------------------------------------------------------- */
+@theme inline {
+  /* surfaces */
+  --color-sunken: var(--hc-sunken);
+  --color-canvas: var(--hc-canvas);
+  --color-surface: var(--hc-surface);
+  --color-surface-hover: var(--hc-surface-hover);
+  --color-raised: var(--hc-raised);
+  --color-raised-hover: var(--hc-raised-hover);
+  --color-overlay: var(--hc-overlay);
+  --color-inset: var(--hc-inset);
+  --color-scrim: var(--hc-scrim);
+
+  /* hairlines */
+  --color-line-subtle: var(--hc-border-subtle);
+  --color-line: var(--hc-border);
+  --color-line-strong: var(--hc-border-strong);
+  --color-line-loud: var(--hc-border-loud);
+
+  /* foreground */
+  --color-fg: var(--hc-text);
+  --color-fg-secondary: var(--hc-text-secondary);
+  --color-fg-muted: var(--hc-text-muted);
+  --color-fg-disabled: var(--hc-text-disabled);
+  --color-fg-inverse: var(--hc-text-inverse);
+
+  /* accent */
+  --color-accent: var(--hc-accent);
+  --color-accent-hover: var(--hc-accent-hover);
+  --color-accent-active: var(--hc-accent-active);
+  --color-accent-fg: var(--hc-accent-fg);
+  --color-accent-text: var(--hc-accent-text);
+  --color-accent-subtle: var(--hc-accent-subtle);
+  --color-accent-subtle-hover: var(--hc-accent-subtle-hover);
+  --color-accent-border: var(--hc-accent-border);
+
+  /* neutral interactive fills */
+  --color-fill: var(--hc-fill);
+  --color-fill-hover: var(--hc-fill-hover);
+  --color-fill-active: var(--hc-fill-active);
+
+  /* status */
+  --color-success: var(--hc-success);
+  --color-success-text: var(--hc-success-text);
+  --color-success-subtle: var(--hc-success-subtle);
+  --color-success-border: var(--hc-success-border);
+
+  --color-warning: var(--hc-warning);
+  --color-warning-text: var(--hc-warning-text);
+  --color-warning-subtle: var(--hc-warning-subtle);
+  --color-warning-border: var(--hc-warning-border);
+
+  --color-danger: var(--hc-danger);
+  --color-danger-hover: var(--hc-danger-hover);
+  --color-danger-text: var(--hc-danger-text);
+  --color-danger-fg: var(--hc-danger-fg);
+  --color-danger-subtle: var(--hc-danger-subtle);
+  --color-danger-border: var(--hc-danger-border);
+
+  --color-info: var(--hc-info);
+  --color-info-text: var(--hc-info-text);
+  --color-info-subtle: var(--hc-info-subtle);
+  --color-info-border: var(--hc-info-border);
+
+  --color-system: var(--hc-system);
+  --color-system-subtle: var(--hc-system-subtle);
+  --color-system-border: var(--hc-system-border);
+
+  --color-live: var(--hc-live);
+
+  /* charts */
+  --color-chart-1: var(--hc-chart-1);
+  --color-chart-2: var(--hc-chart-2);
+  --color-chart-3: var(--hc-chart-3);
+  --color-chart-4: var(--hc-chart-4);
+  --color-chart-5: var(--hc-chart-5);
+  --color-chart-6: var(--hc-chart-6);
+  --color-chart-grid: var(--hc-chart-grid);
+  --color-chart-track: var(--hc-chart-track);
+
+  /* elevation */
+  --shadow-1: var(--hc-shadow-1);
+  --shadow-2: var(--hc-shadow-2);
+  --shadow-3: var(--hc-shadow-3);
+  --shadow-4: var(--hc-shadow-4);
+  --inset-shadow-highlight: var(--hc-highlight);
+
+  /* animation */
+  --animate-fade: hc-fade var(--dur-base) var(--ease-out) both;
+  --animate-fade-up: hc-fade-up var(--dur-base) var(--ease-out) both;
+  --animate-zoom-in: hc-zoom-in var(--dur-fast) var(--ease-out) both;
+  --animate-slide-right: hc-slide-from-right var(--dur-slow) var(--ease-out) both;
+  --animate-slide-bottom: hc-slide-from-bottom var(--dur-slow) var(--ease-out) both;
+  --animate-pulse-ring: hc-pulse-ring 2s var(--ease-out) infinite;
+  --animate-shimmer: hc-shimmer 1.6s linear infinite;
+  --animate-spin: hc-spin 0.7s linear infinite;
+  --animate-indeterminate: hc-indeterminate 1.1s var(--ease-in-out) infinite;
+}
+
+/* -----------------------------------------------------------------------------
+   Defaults Tailwind cannot infer
+   -------------------------------------------------------------------------- */
+@layer base {
+  /* Tailwind's `border` utility defaults to currentColor; ours defaults to the
+     hairline token so `border` alone is always correct. */
+  *,
+  ::after,
+  ::before {
+    --tw-border-style: solid;
+  }
+}

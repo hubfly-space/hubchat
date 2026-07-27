@@ -1,0 +1,278 @@
+/* =============================================================================
+   Hubchat — Semantic tokens
+   -----------------------------------------------------------------------------
+   The contract between design and code. Components reference ONLY these.
+   Swapping a theme, a density, or the accent hue happens here and nowhere else.
+
+   Naming: --hc-<role>[-<variant>][-<state>]
+   ============================================================================= */
+
+/* -----------------------------------------------------------------------------
+   Dark — the default. Agents live in the inbox for eight hours at a stretch.
+   -------------------------------------------------------------------------- */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Surfaces — five depths, and that is the whole vocabulary.
+     sunken < canvas < surface < raised < overlay */
+  --hc-sunken: var(--ink-1000);
+  --hc-canvas: var(--ink-950);
+  --hc-surface: var(--ink-900);
+  --hc-surface-hover: var(--ink-850);
+  --hc-raised: var(--ink-850);
+  --hc-raised-hover: var(--ink-800);
+  --hc-overlay: var(--ink-850);
+  --hc-inset: color-mix(in oklab, var(--ink-1000) 60%, transparent);
+  --hc-scrim: color-mix(in oklab, var(--ink-1000) 72%, transparent);
+
+  /* Borders — hairlines. If a border is visible from across the room it is
+     doing too much; structure should come from spacing first, tone second. */
+  --hc-border-subtle: color-mix(in oklab, var(--ink-0) 5%, transparent);
+  --hc-border: color-mix(in oklab, var(--ink-0) 9%, transparent);
+  --hc-border-strong: color-mix(in oklab, var(--ink-0) 15%, transparent);
+  --hc-border-loud: color-mix(in oklab, var(--ink-0) 24%, transparent);
+
+  /* Text — four levels. More than four and hierarchy stops meaning anything. */
+  --hc-text: var(--ink-75);
+  --hc-text-secondary: var(--ink-250);
+  --hc-text-muted: var(--ink-350);
+  --hc-text-disabled: var(--ink-450);
+  --hc-text-inverse: var(--ink-950);
+
+  /* Accent — primary action, live/realtime state, focus, selection. Nothing else.
+     If you are reaching for the accent for a fifth reason, reconsider. */
+  --hc-accent: var(--cobalt-500);
+  --hc-accent-hover: var(--cobalt-400);
+  --hc-accent-active: var(--cobalt-600);
+  --hc-accent-fg: var(--ink-0);
+  --hc-accent-text: var(--cobalt-300);
+  --hc-accent-subtle: color-mix(in oklab, var(--cobalt-500) 16%, transparent);
+  --hc-accent-subtle-hover: color-mix(in oklab, var(--cobalt-500) 24%, transparent);
+  --hc-accent-border: color-mix(in oklab, var(--cobalt-500) 42%, transparent);
+
+  /* Neutral interactive fills (secondary buttons, toggles, chips) */
+  --hc-fill: color-mix(in oklab, var(--ink-0) 7%, transparent);
+  --hc-fill-hover: color-mix(in oklab, var(--ink-0) 11%, transparent);
+  --hc-fill-active: color-mix(in oklab, var(--ink-0) 15%, transparent);
+
+  /* Status */
+  --hc-success: var(--green-500);
+  --hc-success-text: var(--green-300);
+  --hc-success-subtle: color-mix(in oklab, var(--green-500) 18%, transparent);
+  --hc-success-border: color-mix(in oklab, var(--green-500) 40%, transparent);
+
+  --hc-warning: var(--amber-500);
+  --hc-warning-text: var(--amber-300);
+  --hc-warning-subtle: color-mix(in oklab, var(--amber-500) 18%, transparent);
+  --hc-warning-border: color-mix(in oklab, var(--amber-500) 40%, transparent);
+
+  --hc-danger: var(--red-500);
+  --hc-danger-hover: var(--red-400);
+  --hc-danger-text: var(--red-300);
+  --hc-danger-fg: var(--ink-0);
+  --hc-danger-subtle: color-mix(in oklab, var(--red-500) 18%, transparent);
+  --hc-danger-border: color-mix(in oklab, var(--red-500) 40%, transparent);
+
+  --hc-info: var(--cobalt-400);
+  --hc-info-text: var(--cobalt-300);
+  --hc-info-subtle: color-mix(in oklab, var(--cobalt-500) 15%, transparent);
+  --hc-info-border: color-mix(in oklab, var(--cobalt-500) 38%, transparent);
+
+  /* System / automation authorship — visually distinct from both humans and
+     status, so a rule-generated timeline entry is never mistaken for an agent. */
+  --hc-system: var(--violet-400);
+  --hc-system-subtle: color-mix(in oklab, var(--violet-500) 18%, transparent);
+  --hc-system-border: color-mix(in oklab, var(--violet-500) 40%, transparent);
+
+  /* Elevation. Dark UI reads depth from a light top edge more than from shadow,
+     so every raised surface gets a 1px inner highlight alongside its shadow. */
+  --hc-highlight: inset 0 1px 0 0 color-mix(in oklab, var(--ink-0) 6%, transparent);
+  --hc-shadow-1: 0 1px 2px -1px rgb(0 0 0 / 0.5);
+  --hc-shadow-2: 0 2px 4px -2px rgb(0 0 0 / 0.5), 0 4px 12px -4px rgb(0 0 0 / 0.4);
+  --hc-shadow-3: 0 4px 8px -3px rgb(0 0 0 / 0.5), 0 12px 32px -8px rgb(0 0 0 / 0.5);
+  --hc-shadow-4: 0 8px 16px -6px rgb(0 0 0 / 0.55), 0 28px 64px -12px rgb(0 0 0 / 0.6);
+
+  /* Focus — one ring, everywhere, always visible on keyboard. */
+  --hc-focus: var(--cobalt-500);
+  --hc-focus-ring: 0 0 0 2px var(--hc-canvas), 0 0 0 4px color-mix(in oklab, var(--cobalt-500) 70%, transparent);
+
+  /* Selection & realtime */
+  --hc-selection: color-mix(in oklab, var(--cobalt-500) 32%, transparent);
+  --hc-live: var(--cobalt-400);
+
+  /* Data visualisation. Sequential cobalt ramp first; categorical series only
+     borrow other hues once a chart genuinely needs more than three classes. */
+  --hc-chart-1: var(--cobalt-500);
+  --hc-chart-2: color-mix(in oklab, var(--cobalt-300) 85%, var(--ink-300));
+  --hc-chart-3: var(--ink-400);
+  --hc-chart-4: var(--green-500);
+  --hc-chart-5: var(--amber-500);
+  --hc-chart-6: var(--red-500);
+  --hc-chart-grid: color-mix(in oklab, var(--ink-0) 7%, transparent);
+  --hc-chart-track: color-mix(in oklab, var(--ink-0) 5%, transparent);
+}
+
+/* -----------------------------------------------------------------------------
+   Light — same structure, re-pointed. Never hand-tuned per component.
+   -------------------------------------------------------------------------- */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --hc-sunken: var(--ink-50);
+  --hc-canvas: var(--ink-25);
+  --hc-surface: var(--ink-0);
+  --hc-surface-hover: var(--ink-25);
+  --hc-raised: var(--ink-0);
+  --hc-raised-hover: var(--ink-25);
+  --hc-overlay: var(--ink-0);
+  --hc-inset: color-mix(in oklab, var(--ink-950) 4%, transparent);
+  --hc-scrim: color-mix(in oklab, var(--ink-700) 35%, transparent);
+
+  --hc-border-subtle: color-mix(in oklab, var(--ink-950) 7%, transparent);
+  --hc-border: color-mix(in oklab, var(--ink-950) 12%, transparent);
+  --hc-border-strong: color-mix(in oklab, var(--ink-950) 20%, transparent);
+  --hc-border-loud: color-mix(in oklab, var(--ink-950) 32%, transparent);
+
+  --hc-text: var(--ink-950);
+  --hc-text-secondary: var(--ink-450);
+  --hc-text-muted: var(--ink-400);
+  --hc-text-disabled: var(--ink-250);
+  --hc-text-inverse: var(--ink-0);
+
+  --hc-accent: var(--cobalt-600);
+  --hc-accent-hover: var(--cobalt-500);
+  --hc-accent-active: var(--cobalt-700);
+  --hc-accent-fg: var(--ink-0);
+  --hc-accent-text: var(--cobalt-700);
+  --hc-accent-subtle: color-mix(in oklab, var(--cobalt-500) 11%, transparent);
+  --hc-accent-subtle-hover: color-mix(in oklab, var(--cobalt-500) 17%, transparent);
+  --hc-accent-border: color-mix(in oklab, var(--cobalt-500) 38%, transparent);
+
+  --hc-fill: color-mix(in oklab, var(--ink-950) 5%, transparent);
+  --hc-fill-hover: color-mix(in oklab, var(--ink-950) 8%, transparent);
+  --hc-fill-active: color-mix(in oklab, var(--ink-950) 12%, transparent);
+
+  --hc-success: var(--green-600);
+  --hc-success-text: var(--green-600);
+  --hc-success-subtle: color-mix(in oklab, var(--green-500) 14%, transparent);
+  --hc-success-border: color-mix(in oklab, var(--green-600) 36%, transparent);
+
+  --hc-warning: var(--amber-600);
+  --hc-warning-text: var(--amber-600);
+  --hc-warning-subtle: color-mix(in oklab, var(--amber-500) 16%, transparent);
+  --hc-warning-border: color-mix(in oklab, var(--amber-600) 36%, transparent);
+
+  --hc-danger: var(--red-600);
+  --hc-danger-hover: var(--red-500);
+  --hc-danger-text: var(--red-600);
+  --hc-danger-fg: var(--ink-0);
+  --hc-danger-subtle: color-mix(in oklab, var(--red-500) 13%, transparent);
+  --hc-danger-border: color-mix(in oklab, var(--red-600) 34%, transparent);
+
+  --hc-info: var(--cobalt-600);
+  --hc-info-text: var(--cobalt-700);
+  --hc-info-subtle: color-mix(in oklab, var(--cobalt-500) 11%, transparent);
+  --hc-info-border: color-mix(in oklab, var(--cobalt-600) 34%, transparent);
+
+  --hc-system: var(--violet-500);
+  --hc-system-subtle: color-mix(in oklab, var(--violet-500) 12%, transparent);
+  --hc-system-border: color-mix(in oklab, var(--violet-500) 34%, transparent);
+
+  --hc-highlight: none;
+  --hc-shadow-1: 0 1px 2px 0 rgb(16 20 28 / 0.06);
+  --hc-shadow-2: 0 1px 2px 0 rgb(16 20 28 / 0.05), 0 4px 10px -3px rgb(16 20 28 / 0.09);
+  --hc-shadow-3: 0 2px 4px -1px rgb(16 20 28 / 0.06), 0 12px 28px -6px rgb(16 20 28 / 0.13);
+  --hc-shadow-4: 0 4px 8px -2px rgb(16 20 28 / 0.08), 0 24px 56px -10px rgb(16 20 28 / 0.18);
+
+  --hc-focus: var(--cobalt-600);
+  --hc-focus-ring: 0 0 0 2px var(--hc-surface), 0 0 0 4px color-mix(in oklab, var(--cobalt-600) 60%, transparent);
+
+  --hc-selection: color-mix(in oklab, var(--cobalt-500) 22%, transparent);
+  --hc-live: var(--cobalt-600);
+
+  --hc-chart-1: var(--cobalt-600);
+  --hc-chart-2: var(--cobalt-300);
+  --hc-chart-3: var(--ink-250);
+  --hc-chart-4: var(--green-600);
+  --hc-chart-5: var(--amber-600);
+  --hc-chart-6: var(--red-600);
+  --hc-chart-grid: color-mix(in oklab, var(--ink-950) 8%, transparent);
+  --hc-chart-track: color-mix(in oklab, var(--ink-950) 5%, transparent);
+}
+
+/* -----------------------------------------------------------------------------
+   Density — §6.2 requires compact and comfortable list modes. Density is a
+   spacing concern only; it must never change colour, weight, or affordance.
+   -------------------------------------------------------------------------- */
+:root,
+[data-density="comfortable"] {
+  --hc-row-h: 40px;
+  --hc-row-px: var(--space-3);
+  --hc-list-item-py: var(--space-2-5);
+  --hc-section-gap: var(--space-6);
+  --hc-card-p: var(--space-5);
+  --hc-table-cell-py: var(--space-2-5);
+  --hc-shell-gap: 0px;
+  --hc-shell-pad: 0px;
+  --hc-page-px: var(--space-6);
+  --hc-page-py: var(--space-6);
+  --hc-sidebar-pad: var(--space-2);
+  --hc-sidebar-group-gap: var(--space-4);
+  --hc-float-radius: 0px;
+  --hc-float-shadow: none;
+}
+
+[data-density="compact"] {
+  --hc-row-h: 32px;
+  --hc-row-px: var(--space-2-5);
+  --hc-list-item-py: var(--space-1-5);
+  --hc-section-gap: var(--space-4);
+  --hc-card-p: var(--space-4);
+  --hc-table-cell-py: var(--space-1-5);
+  --hc-shell-gap: var(--space-2);
+  --hc-shell-pad: var(--space-2);
+  --hc-page-px: var(--space-4);
+  --hc-page-py: var(--space-4);
+  --hc-sidebar-pad: var(--space-1-5);
+  --hc-sidebar-group-gap: var(--space-3);
+  --hc-float-radius: var(--rad-lg);
+  --hc-float-shadow: var(--hc-shadow-2);
+}
+
+/* Control heights are fixed across densities — hit targets are an
+   accessibility floor, not a preference. */
+:root {
+  --hc-control-h-xs: 22px;
+  --hc-control-h-sm: 28px;
+  --hc-control-h-md: 32px;
+  --hc-control-h-lg: 38px;
+
+  /* Shell geometry — shared by the app chrome so panes line up pixel-exact. */
+  --hc-rail-w: 56px;
+  --hc-sidebar-w: 232px;
+  --hc-list-w: 372px;
+  --hc-context-w: 320px;
+  --hc-topbar-h: 48px;
+}
+
+[data-density="compact"] {
+  --hc-rail-w: 52px;
+  --hc-sidebar-w: 216px;
+  --hc-list-w: 340px;
+  --hc-context-w: 292px;
+  --hc-topbar-h: 44px;
+}
+
+/* -----------------------------------------------------------------------------
+   Accent override hook — widgets and portals are workspace-brandable. A tenant
+   sets --hc-accent-brand and the whole surface re-tones without a rebuild.
+   -------------------------------------------------------------------------- */
+[data-branded] {
+  --hc-accent: var(--hc-accent-brand, var(--cobalt-500));
+  --hc-accent-hover: color-mix(in oklab, var(--hc-accent) 82%, var(--ink-0));
+  --hc-accent-active: color-mix(in oklab, var(--hc-accent) 82%, var(--ink-1000));
+  --hc-accent-subtle: color-mix(in oklab, var(--hc-accent) 16%, transparent);
+  --hc-accent-border: color-mix(in oklab, var(--hc-accent) 42%, transparent);
+  --hc-focus: var(--hc-accent);
+}

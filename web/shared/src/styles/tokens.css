@@ -1,0 +1,181 @@
+/* =============================================================================
+   Hubchat — Primitive tokens
+   -----------------------------------------------------------------------------
+   Raw scales only. Nothing in this file describes *intent* — no "button",
+   no "danger", no "border". Components must never reference these directly;
+   they consume the semantic layer in theme.css.
+
+   Palette discipline: two hue families, full stop.
+     · ink    — cool graphite, carries ~95% of every screen
+     · cobalt — the single accent, reserved for primary action + live state
+   Status hues (green/amber/red) are deliberately desaturated so they read as
+   information, never as decoration, and never out-shout the accent.
+   ============================================================================= */
+
+:root {
+  /* ---------------------------------------------------------------- ink
+     Cool near-black through near-white. Slight blue cast (~220deg) so it sits
+     harmoniously beside cobalt instead of fighting it. */
+  --ink-1000: #050608;
+  --ink-975: #08090b;
+  --ink-950: #0a0b0d;
+  --ink-900: #0f1114;
+  --ink-850: #131519;
+  --ink-800: #171a20;
+  --ink-750: #1c2027;
+  --ink-700: #212530;
+  --ink-650: #272c38;
+  --ink-600: #2f3543;
+  --ink-500: #3d4453;
+  --ink-450: #4d5566;
+  --ink-400: #5f6878;
+  --ink-350: #737b8b;
+  --ink-300: #848b99;
+  --ink-250: #99a0ac;
+  --ink-200: #b0b6c0;
+  --ink-150: #c8ccd4;
+  --ink-100: #dee1e6;
+  --ink-75: #e9ebef;
+  --ink-50: #f2f3f5;
+  --ink-25: #f7f8fa;
+  --ink-0: #ffffff;
+
+  /* ---------------------------------------------------------------- cobalt
+     The only saturated hue permitted on a default screen. */
+  --cobalt-50: #eef3ff;
+  --cobalt-100: #dbe5ff;
+  --cobalt-200: #bcceff;
+  --cobalt-300: #93aefb;
+  --cobalt-400: #6b8ef9;
+  --cobalt-500: #3b6ef6;
+  --cobalt-600: #2a57d8;
+  --cobalt-700: #2044ac;
+  --cobalt-800: #1b3782;
+  --cobalt-900: #172c61;
+  --cobalt-950: #101c3c;
+
+  /* ---------------------------------------------------------------- status
+     Muted on purpose. These sit next to body text constantly (SLA timers,
+     ticket states) and must not vibrate. */
+  --green-300: #7fd2a6;
+  --green-400: #55b384;
+  --green-500: #3e9c6d;
+  --green-600: #2f7d57;
+  --green-900: #14301f;
+
+  --amber-300: #e2b877;
+  --amber-400: #cf9d4f;
+  --amber-500: #c08a3e;
+  --amber-600: #9a6b1f;
+  --amber-900: #33240c;
+
+  --red-300: #ec918d;
+  --red-400: #dc706b;
+  --red-500: #d05a55;
+  --red-600: #a93f3a;
+  --red-900: #38191a;
+
+  /* Violet is *not* an accent. It exists solely to distinguish automation /
+     system-authored activity from human activity in timelines. */
+  --violet-400: #9b8afb;
+  --violet-500: #7c66f0;
+  --violet-900: #241f4a;
+
+  /* ---------------------------------------------------------------- radius
+     A tight scale. Nothing in the product is rounder than 10px except pills
+     and avatars — softness reads as consumer, and this is an operations tool.
+
+     Primitives are prefixed (--rad-*, --fs-*, --ff-*) so they never collide
+     with Tailwind's own theme namespaces (--radius-*, --text-*, --font-*),
+     which index.css maps onto these. */
+  --rad-xs: 3px;
+  --rad-sm: 5px;
+  --rad-md: 7px;
+  --rad-lg: 10px;
+  --rad-xl: 14px;
+  --rad-2xl: 20px;
+  --rad-pill: 999px;
+
+  /* ---------------------------------------------------------------- space
+     4px base grid. Half-steps only below 8px. */
+  --space-0: 0px;
+  --space-px: 1px;
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-1-5: 6px;
+  --space-2: 8px;
+  --space-2-5: 10px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+
+  /* ---------------------------------------------------------------- type
+     Two families. `sans` for everything, `mono` for anything a human might
+     need to copy verbatim: IDs, ticket numbers, keys, payloads, timers. */
+  --ff-sans:
+    "InterVariable", "Inter", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --ff-mono:
+    "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  /* Sub-pixel steps on purpose. A dense operations UI needs a 13.5px body and
+     a 12.5px secondary that are distinguishable without a full point of jump. */
+  --fs-2xs: 10.5px;
+  --fs-xs: 11.5px;
+  --fs-sm: 12.5px;
+  --fs-base: 13.5px;
+  --fs-md: 15px;
+  --fs-lg: 17px;
+  --fs-xl: 20px;
+  --fs-2xl: 25px;
+  --fs-3xl: 31px;
+  --fs-4xl: 39px;
+
+  --lh-tight: 1.2;
+  --lh-snug: 1.35;
+  --lh-normal: 1.55;
+  --lh-relaxed: 1.7;
+
+  --ls-tighter: -0.022em;
+  --ls-tight: -0.014em;
+  --ls-normal: -0.006em;
+  --ls-wide: 0.02em;
+  --ls-caps: 0.06em;
+
+  --fw-normal: 400;
+  --fw-medium: 500;
+  --fw-semibold: 560;
+  --fw-bold: 650;
+
+  /* ---------------------------------------------------------------- motion
+     Fast and unfussy. Anything a user triggers dozens of times an hour
+     (menus, rows, tabs) resolves in under 140ms. */
+  --dur-instant: 60ms;
+  --dur-fast: 110ms;
+  --dur-base: 160ms;
+  --dur-slow: 240ms;
+  --dur-slower: 400ms;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.42, 0.64, 1);
+
+  /* ---------------------------------------------------------------- layering */
+  --z-base: 0;
+  --z-sticky: 100;
+  --z-nav: 200;
+  --z-dropdown: 300;
+  --z-overlay: 400;
+  --z-dialog: 500;
+  --z-toast: 600;
+  --z-tooltip: 700;
+}

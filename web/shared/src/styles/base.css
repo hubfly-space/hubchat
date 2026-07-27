@@ -1,0 +1,334 @@
+/* =============================================================================
+   Hubchat — Base layer
+   Resets, document typography, and the handful of global affordances
+   (focus, selection, scrollbars, reduced motion) that must not be
+   re-implemented per component.
+   ============================================================================= */
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    border-width: 0;
+    border-style: solid;
+    border-color: var(--hc-border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--hc-canvas);
+    color: var(--hc-text);
+    font-family: var(--ff-sans);
+    font-size: var(--fs-base);
+    line-height: var(--lh-normal);
+    letter-spacing: var(--ls-normal);
+    font-weight: var(--fw-normal);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* Contextual alternates + disambiguation. Agents read IDs and timers all
+       day; a slashed zero and a straight-legged l prevent real mistakes. */
+    font-feature-settings: "cv05" 1, "cv09" 1, "ss03" 1, "calt" 1;
+    font-variant-ligatures: contextual;
+  }
+
+  /* Headings inherit weight from utilities, not from the user agent. */
+  h1, h2, h3, h4, h5, h6 {
+    margin: 0;
+    font-size: inherit;
+    font-weight: inherit;
+    letter-spacing: var(--ls-tight);
+  }
+
+  p, figure, blockquote, dl, dd {
+    margin: 0;
+  }
+
+  ol, ul, menu {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: inherit;
+  }
+
+  img, svg, video, canvas, audio, iframe, embed, object {
+    display: block;
+    vertical-align: middle;
+  }
+
+  img, video {
+    max-width: 100%;
+    height: auto;
+  }
+
+  button, input, optgroup, select, textarea {
+    font: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    margin: 0;
+    padding: 0;
+    background-color: transparent;
+  }
+
+  button, [role="button"] {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [role="button"][aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+
+  /* Numeric columns must align. Anything that renders a count, a currency, a
+     duration, or an SLA timer opts into tabular figures. */
+  table, [data-numeric], .tabular {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1, "cv05" 1;
+  }
+
+  table {
+    border-collapse: collapse;
+    border-spacing: 0;
+    text-indent: 0;
+  }
+
+  code, kbd, samp, pre {
+    font-family: var(--ff-mono);
+    font-size: 0.92em;
+    font-feature-settings: "calt" 0;
+  }
+
+  hr {
+    border-top-width: 1px;
+    border-color: var(--hc-border);
+  }
+
+  ::placeholder {
+    color: var(--hc-text-disabled);
+    opacity: 1;
+  }
+
+  ::selection {
+    background-color: var(--hc-selection);
+    color: var(--hc-text);
+  }
+
+  /* ------------------------------------------------------------------ focus
+     Pointer interaction stays quiet; keyboard interaction is unmistakable.
+     Every interactive component relies on this — do not re-declare outlines. */
+  :focus {
+    outline: none;
+  }
+
+  :focus-visible {
+    outline: none;
+    box-shadow: var(--hc-focus-ring);
+    border-radius: var(--rad-sm);
+  }
+
+  /* ------------------------------------------------------------- scrollbars
+     Thin, self-coloured, and only prominent while the region is hovered. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--hc-border-strong) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: transparent;
+    border-radius: var(--rad-pill);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    transition: background-color var(--dur-base) var(--ease-out);
+  }
+
+  *:hover > ::-webkit-scrollbar-thumb,
+  *:hover::-webkit-scrollbar-thumb {
+    background-color: var(--hc-border-strong);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--hc-border-loud);
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  /* --------------------------------------------------------- reduced motion
+     §21 accessibility. Movement collapses; opacity changes survive so state
+     transitions remain perceivable. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* ------------------------------------------------------------ forced colors */
+  @media (forced-colors: active) {
+    :focus-visible {
+      outline: 2px solid CanvasText;
+      outline-offset: 2px;
+    }
+  }
+}
+
+@layer components {
+  /* Screen-reader-only, with the standard "reveal on focus" escape hatch used
+     by skip links. */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  .focus\:not-sr-only:focus,
+  .focus-visible\:not-sr-only:focus-visible {
+    position: static;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip-path: none;
+    white-space: normal;
+  }
+}
+
+@layer utilities {
+  /* A raised surface in this system is always: fill + hairline + top highlight.
+     Bundled so the three never drift apart. */
+  .hc-raised {
+    background-color: var(--hc-raised);
+    border: 1px solid var(--hc-border);
+    box-shadow: var(--hc-highlight);
+  }
+
+  /* Fade a scrollable region's edge instead of drawing a hard rule. */
+  .hc-fade-b {
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent 100%);
+  }
+
+  .hc-fade-r {
+    mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent 100%);
+  }
+
+  /* Hides scrollbars on deliberately-chromeless strips (tab rails, chip rows). */
+  .hc-no-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .hc-no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Grid lines used behind empty states and auth screens. Purely structural —
+     no colour beyond the border token. */
+  .hc-grid-bg {
+    background-image:
+      linear-gradient(to right, var(--hc-border-subtle) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--hc-border-subtle) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  .hc-animate-in {
+    animation: hc-fade-up var(--dur-base) var(--ease-out) both;
+  }
+}
+
+@keyframes hc-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes hc-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes hc-zoom-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes hc-slide-from-right {
+  from { transform: translateX(100%); }
+  to { transform: none; }
+}
+
+@keyframes hc-slide-from-bottom {
+  from { transform: translateY(100%); }
+  to { transform: none; }
+}
+
+/* Realtime presence. Two-stage so it reads as a heartbeat rather than a blink. */
+@keyframes hc-pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--hc-live) 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 5px color-mix(in oklab, var(--hc-live) 0%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--hc-live) 0%, transparent);
+  }
+}
+
+@keyframes hc-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@keyframes hc-typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.45; }
+  30% { transform: translateY(-3px); opacity: 1; }
+}
+
+@keyframes hc-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes hc-indeterminate {
+  0% { transform: translateX(-100%) scaleX(0.4); }
+  100% { transform: translateX(340%) scaleX(0.4); }
+}
