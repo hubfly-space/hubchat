@@ -13,6 +13,7 @@ it belongs here.
 | [0003](0003-no-ai-features.md) | No AI features | Accepted |
 | [0004](0004-three-browser-bundles.md) | Three browser bundles, not seven | Accepted |
 | [0005](0005-two-hue-palette.md) | A two-hue palette | Accepted |
+| [0006](0006-one-workspace-event-log.md) | One workspace event log | Accepted |
 
 ## Still open
 

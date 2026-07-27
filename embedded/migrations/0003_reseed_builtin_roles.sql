@@ -25,6 +25,14 @@
 --
 -- Idempotent throughout, so applying it against an already-seeded database
 -- (the common case — it usually runs once, right after 0001) is a no-op.
+--
+-- The conflict arbiter is the primary key, not `roles`' natural
+-- `UNIQUE (workspace_id, key)`. That constraint cannot serve as an arbiter
+-- here: built-in roles carry `workspace_id IS NULL`, and a unique index treats
+-- NULLs as distinct from each other, so `ON CONFLICT (workspace_id, key)`
+-- matches nothing on a seeded database and the insert proceeds into a
+-- `roles_pkey` violation instead. The ids are deterministic literals, so
+-- arbitrating on `id` is both correct and genuinely idempotent.
 
 BEGIN;
 
@@ -35,7 +43,7 @@ INSERT INTO roles (id, workspace_id, key, name, description, is_builtin) VALUES
     ('rol_agent',     NULL, 'agent',     'Agent',     'Reads and replies to conversations in permitted inboxes.',  true),
     ('rol_developer', NULL, 'developer', 'Developer', 'Integrations and technical configuration.',                 true),
     ('rol_analyst',   NULL, 'analyst',   'Analyst',   'Read-only access to reports and records.',                  true)
-ON CONFLICT (workspace_id, key) DO NOTHING;
+ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO role_permissions (role_id, capability) VALUES
     ('rol_admin', 'conversation.read'), ('rol_admin', 'conversation.reply'),
