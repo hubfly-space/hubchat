@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en" data-theme="light" data-density="comfortable">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Help Centre</title>
+    <meta name="description" content="Search guides, track your requests, and contact support." />
+
+    <!--
+      Unlike the dashboard, the portal defaults to light: it is public, often
+      arrived at from a search engine, and read on phones in daylight. The
+      workspace can override this per portal, and the attribute below is
+      rewritten server-side from the portal's stored theme before the response
+      is sent, so there is no flash.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("hubchat.portal.mode");
+          var mode = stored ? JSON.parse(stored) : "auto";
+          if (mode === "auto") {
+            mode = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          }
+          document.documentElement.setAttribute("data-theme", mode);
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
