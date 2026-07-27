@@ -12,11 +12,17 @@ import (
 )
 
 func registerConversationRoutes(mux *http.ServeMux, deps Deps) {
+	idempotent := Idempotency(deps)
+
 	mux.HandleFunc("GET /v1/inboxes/{inboxID}/conversations",
 		requireCapability(deps, authorization.ConversationRead, handleListConversations(deps)))
 
+	// Starting a conversation has no natural idempotency key of its own — two
+	// identical bodies are two legitimate conversations — so the header is the
+	// only thing that can tell a retry from a second request.
 	mux.HandleFunc("POST /v1/conversations",
-		requireCapability(deps, authorization.ConversationReply, handleStartConversation(deps)))
+		requireCapability(deps, authorization.ConversationReply,
+			idempotent(handleStartConversation(deps))))
 
 	mux.HandleFunc("GET /v1/conversations/{id}",
 		requireCapability(deps, authorization.ConversationRead, handleGetConversation(deps)))
@@ -27,8 +33,15 @@ func registerConversationRoutes(mux *http.ServeMux, deps Deps) {
 	// A message is either a public reply or an internal note; both go through
 	// the same endpoint and are distinguished by "kind" in the body, matching
 	// the composer's own reply/note toggle (§6.2).
+	//
+	// Messages have a second, stronger guard: the client_id column, enforced by
+	// a unique index. The header layer catches a retry before the handler runs;
+	// the column catches one that races past it. Both exist because a duplicated
+	// customer reply is visible and embarrassing in a way a duplicated read is
+	// not.
 	mux.HandleFunc("POST /v1/conversations/{id}/messages",
-		requireCapability(deps, authorization.ConversationReply, handlePostMessage(deps)))
+		requireCapability(deps, authorization.ConversationReply,
+			idempotent(handlePostMessage(deps))))
 }
 
 func handleListConversations(deps Deps) http.HandlerFunc {
@@ -201,20 +214,20 @@ func writeConversationError(w http.ResponseWriter, r *http.Request, err error) {
 
 func conversationJSON(c conversation.Conversation) map[string]any {
 	return map[string]any{
-		"id":                    c.ID,
-		"workspace_id":          c.WorkspaceID,
-		"inbox_id":              c.InboxID,
-		"channel":               c.Channel,
-		"subject":               c.Subject,
-		"state":                 c.State,
-		"priority":              c.Priority,
-		"customer_id":           c.CustomerID,
-		"assignee_id":           c.AssigneeID,
-		"team_id":               c.TeamID,
-		"message_count":         c.MessageCount,
-		"last_message_preview":  c.LastMessagePreview,
-		"last_message_at":       c.LastMessageAt,
-		"created_at":            c.CreatedAt,
+		"id":                   c.ID,
+		"workspace_id":         c.WorkspaceID,
+		"inbox_id":             c.InboxID,
+		"channel":              c.Channel,
+		"subject":              c.Subject,
+		"state":                c.State,
+		"priority":             c.Priority,
+		"customer_id":          c.CustomerID,
+		"assignee_id":          c.AssigneeID,
+		"team_id":              c.TeamID,
+		"message_count":        c.MessageCount,
+		"last_message_preview": c.LastMessagePreview,
+		"last_message_at":      c.LastMessageAt,
+		"created_at":           c.CreatedAt,
 	}
 }
 

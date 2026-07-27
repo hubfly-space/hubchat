@@ -92,8 +92,8 @@ func handleMe(deps Deps) http.HandlerFunc {
 		}
 
 		httpserver.WriteJSON(w, http.StatusOK, map[string]any{
-			"member_id":    actor.MemberID,
-			"role":         actor.Role,
+			"member_id": actor.MemberID,
+			"role":      actor.Role,
 			"workspace": map[string]any{
 				"id":   ws.ID,
 				"name": ws.Name,
