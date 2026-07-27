@@ -12,6 +12,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/hubchat/hubchat/internal/audit"
@@ -43,6 +44,11 @@ type Deps struct {
 	Audit  *audit.Log
 	Jobs   *jobs.Client
 
+	// PublicURL is how browsers reach this deployment. Links in outbound email
+	// are built from it rather than from the request Host, which an attacker
+	// controls (§11.4).
+	PublicURL *url.URL
+
 	CookieDomain string
 	CookieSecure bool
 }
@@ -58,6 +64,8 @@ func New(deps Deps) http.Handler {
 	})
 
 	registerAuthRoutes(mux, deps)
+	registerAuthFlowRoutes(mux, deps)
+	registerBootstrapRoutes(mux, deps)
 	registerWorkspaceRoutes(mux, deps)
 	registerConversationRoutes(mux, deps)
 
