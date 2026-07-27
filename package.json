@@ -1,0 +1,23 @@
+{
+  "name": "hubchat",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @hubchat/dashboard dev",
+    "dev:dashboard": "pnpm --filter @hubchat/dashboard dev",
+    "dev:portal": "pnpm --filter @hubchat/portal dev",
+    "dev:widget": "pnpm --filter @hubchat/widget dev",
+    "build": "pnpm -r --filter \"./web/*\" build",
+    "typecheck": "pnpm -r --filter \"./web/*\" typecheck",
+    "lint": "pnpm -r --filter \"./web/*\" lint",
+    "clean": "rm -rf web/*/dist web/*/node_modules node_modules"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
