@@ -1,0 +1,8 @@
+/* The dashboard adds nothing to the design system. Everything it renders comes
+   from web/shared — if a style belongs to more than one screen it belongs in the
+   shared layer, not here.
+
+   Imported by relative path rather than through the package's exports map:
+   Tailwind's CSS resolver does not consult `exports` for @import, and a broken
+   stylesheet path is a confusing failure to debug. */
+@import "../../shared/src/styles/index.css";
