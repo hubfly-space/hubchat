@@ -97,10 +97,17 @@ func New(cfg config.Config, logger *slog.Logger, assets Assets, routes Routes) (
 		})
 	}
 
+	// Rate limiting and CSRF are applied here rather than inside the API
+	// router so that they cover every route it will ever gain, including ones
+	// added later by someone who did not read this file.
+	limiter := NewRateLimiter(cfg.Security.RateLimitRPM)
+
 	mux.Handle("/api/", Chain(
 		http.StripPrefix("/api", apiHandler),
 		SecurityHeaders(SurfaceAPI),
 		MaxBytes(cfg.Server.MaxRequestBytes),
+		RateLimit(limiter, cfg.Security.TrustedProxies),
+		CSRF(cfg.Server.PublicURL, cfg.Security.CSRFEnabled),
 	))
 
 	// ----------------------------------------------------------- realtime
