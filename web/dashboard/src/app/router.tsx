@@ -154,6 +154,9 @@ export const router = createBrowserRouter(
 
     // First-run installation flow (§7.1). Full-screen, its own chrome.
     { path: "/setup", element: page(() => import("../pages/setup/SetupWizard")) },
+    // Diagnostic only — talks to the real API, not fixtures. See its own
+    // header comment for what that means and why it lives outside AppShell.
+    { path: "/dev/live", element: page(() => import("../pages/dev/LiveDemo")) },
     // Post-setup workspace onboarding (§7.2).
     { path: "/onboarding", element: page(() => import("../pages/setup/Onboarding")) },
 

@@ -1,0 +1,189 @@
+package workspace
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/hubchat/hubchat/internal/authorization"
+	"github.com/hubchat/hubchat/internal/database"
+)
+
+var ErrNotFound = errors.New("workspace: not found")
+var ErrSlugTaken = errors.New("workspace: slug already in use")
+
+type Workspace struct {
+	ID              string
+	Name            string
+	Slug            string
+	DefaultLanguage string
+	Timezone        string
+	TicketPrefix    string
+	CreatedAt       time.Time
+}
+
+type Member struct {
+	ID          string
+	WorkspaceID string
+	UserID      string
+	Role        string
+	CreatedAt   time.Time
+}
+
+type repository struct {
+	pool *database.Pool
+}
+
+func (r *repository) insertWorkspace(
+	ctx context.Context, tx pgx.Tx, id, name, slug, ticketPrefix string,
+) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO workspaces (id, name, slug, ticket_prefix)
+		VALUES ($1, $2, $3, $4)
+	`, id, name, slug, ticketPrefix)
+	if err != nil && isUniqueViolation(err) {
+		return ErrSlugTaken
+	}
+	return err
+}
+
+func (r *repository) insertOwnerMember(ctx context.Context, tx pgx.Tx, id, workspaceID, userID string) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO workspace_members (id, workspace_id, user_id, role, presence)
+		VALUES ($1, $2, $3, 'owner', 'online')
+	`, id, workspaceID, userID)
+	return err
+}
+
+func (r *repository) insertDefaultInbox(ctx context.Context, tx pgx.Tx, id, workspaceID string) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO inboxes (id, workspace_id, name, slug, channels, is_default)
+		VALUES ($1, $2, 'Support', 'support', ARRAY['widget','portal','email'], true)
+	`, id, workspaceID)
+	return err
+}
+
+// Inbox is the subset of the inboxes row exposed today. Full inbox management
+// (§6.1) — creating additional inboxes, editing channels, team access — is
+// internal/inbox's territory once that module has a service layer; this
+// method exists only so a caller can discover the id Bootstrap already
+// created, without reaching into the database directly.
+type Inbox struct {
+	ID        string
+	Name      string
+	Slug      string
+	IsDefault bool
+}
+
+func (r *repository) listInboxes(ctx context.Context, workspaceID string) ([]Inbox, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, name, slug, is_default
+		FROM inboxes
+		WHERE workspace_id = $1
+		ORDER BY is_default DESC, name ASC
+	`, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Inbox
+	for rows.Next() {
+		var i Inbox
+		if err := rows.Scan(&i.ID, &i.Name, &i.Slug, &i.IsDefault); err != nil {
+			return nil, err
+		}
+		out = append(out, i)
+	}
+	return out, rows.Err()
+}
+
+func (r *repository) byID(ctx context.Context, id string) (*Workspace, error) {
+	var w Workspace
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, name, slug, default_language, timezone, ticket_prefix, created_at
+		FROM workspaces WHERE id = $1
+	`, id).Scan(&w.ID, &w.Name, &w.Slug, &w.DefaultLanguage, &w.Timezone, &w.TicketPrefix, &w.CreatedAt)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &w, nil
+}
+
+// memberForUser returns the caller's membership row for workspaceID, used
+// both to build the request Actor and to answer "which workspaces am I in".
+func (r *repository) memberForUser(ctx context.Context, workspaceID, userID string) (*Member, error) {
+	var m Member
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, workspace_id, user_id, role, created_at
+		FROM workspace_members
+		WHERE workspace_id = $1 AND user_id = $2
+	`, workspaceID, userID).Scan(&m.ID, &m.WorkspaceID, &m.UserID, &m.Role, &m.CreatedAt)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// firstMembershipWorkspaceID picks a default workspace for a user with
+// exactly one (the common case just after setup). Ordered by creation so the
+// result is stable across calls.
+func (r *repository) firstMembershipWorkspaceID(ctx context.Context, userID string) (string, error) {
+	var workspaceID string
+	err := r.pool.QueryRow(ctx, `
+		SELECT workspace_id FROM workspace_members
+		WHERE user_id = $1
+		ORDER BY created_at ASC
+		LIMIT 1
+	`, userID).Scan(&workspaceID)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return workspaceID, err
+}
+
+// capabilitiesForRole loads the seeded role_permissions for a built-in role
+// key (§0001 migration). Extra per-member grants are unioned in by the
+// caller — kept separate here because role permissions rarely change and are
+// worth a cheap in-process cache later; member grants never are.
+func (r *repository) capabilitiesForRole(ctx context.Context, roleKey string) (map[authorization.Capability]bool, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT rp.capability
+		FROM role_permissions rp
+		JOIN roles r ON r.id = rp.role_id
+		WHERE r.key = $1 AND r.workspace_id IS NULL
+	`, roleKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	caps := make(map[authorization.Capability]bool)
+	for rows.Next() {
+		var capability string
+		if err := rows.Scan(&capability); err != nil {
+			return nil, err
+		}
+		caps[authorization.Capability(capability)] = true
+	}
+	return caps, rows.Err()
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr interface{ SQLState() string }
+	if errors.As(err, &pgErr) {
+		return pgErr.SQLState() == "23505"
+	}
+	return false
+}
