@@ -1,6 +1,7 @@
 import { lazy, Suspense, type ComponentType } from "react";
-import { createBrowserRouter, Navigate, type RouteObject } from "react-router-dom";
+import { createBrowserRouter, Navigate, Outlet, type RouteObject } from "react-router-dom";
 import { AppShell } from "./shell/AppShell";
+import { WorkspaceProvider } from "./workspace-context";
 import { AuthLayout } from "../pages/auth/AuthLayout";
 import { RouteFallback } from "./RouteFallback";
 import { NotFound } from "../pages/NotFound";
@@ -160,7 +161,32 @@ export const router = createBrowserRouter(
     // Post-setup workspace onboarding (§7.2).
     { path: "/onboarding", element: page(() => import("../pages/setup/Onboarding")) },
 
-    { path: "/", element: <AppShell />, children: appRoutes },
+    // Everything below needs a workspace, so the provider wraps this branch
+    // rather than the whole tree. Two reasons it belongs here and not around
+    // the RouterProvider:
+    //
+    //   · /login must not require a workspace. Bootstrapping one before the
+    //     user has signed in guarantees a 401 on the page whose entire job is
+    //     to fix that.
+    //   · the provider redirects (to /login on 401, /onboarding on 403), and
+    //     <Navigate> needs router context to do it.
+    {
+      element: <WorkspaceRoute />,
+      children: [{ path: "/", element: <AppShell />, children: appRoutes }],
+    },
   ],
   { basename: "/app" },
 );
+
+/**
+ * Pathless layout route that supplies workspace context to everything nested
+ * under it. Renders an Outlet rather than AppShell directly, so the shell
+ * stays exactly one route deep and its own children resolve normally.
+ */
+function WorkspaceRoute() {
+  return (
+    <WorkspaceProvider>
+      <Outlet />
+    </WorkspaceProvider>
+  );
+}

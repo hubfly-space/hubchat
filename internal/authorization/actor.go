@@ -61,6 +61,29 @@ const (
 	WorkspaceManageSecurity Capability = "workspace.manage_security"
 )
 
+// allCapabilities is every capability the system defines.
+//
+// Kept adjacent to the constants so adding one without listing it here is a
+// visible omission rather than a silent gap in what an owner is told they can
+// do.
+var allCapabilities = []Capability{
+	ConversationRead, ConversationReply, ConversationAssign, ConversationDelete,
+	CustomerRead, CustomerReadSensitive, CustomerMerge,
+	TicketManage, WidgetManage, PortalManage, KnowledgebaseManage,
+	FeedbackModerate, AutomationManage, SLAManage, IntegrationManage,
+	ReportRead, AuditRead, MemberManage, WorkspaceManage, WorkspaceManageSecurity,
+}
+
+// AllCapabilityNames returns every capability as a string, for the owner role
+// whose permissions are short-circuited rather than enumerated in the database.
+func AllCapabilityNames() []string {
+	names := make([]string, len(allCapabilities))
+	for i, capability := range allCapabilities {
+		names[i] = string(capability)
+	}
+	return names
+}
+
 // Can reports whether the actor holds capability. The owner role is
 // short-circuited rather than enumerated in the database, so adding a new
 // capability can never accidentally leave the owner without it (mirrors the
