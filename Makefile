@@ -36,6 +36,25 @@ install: ## Install frontend + Go dependencies
 
 ## ---------------------------------------------------------------- dev
 
+.PHONY: dev-db
+dev-db: ## Start PostgreSQL, MailHog, and MinIO, then wait for readiness
+	docker compose up -d
+	@echo "==> waiting for PostgreSQL"
+	@until docker compose exec -T postgres pg_isready -U hubchat -d hubchat >/dev/null 2>&1; do sleep 1; done
+	@echo "==> postgres :5432   mailhog http://localhost:8025   minio http://localhost:9001"
+
+.PHONY: dev-db-down
+dev-db-down: ## Stop the dev containers, keeping their data
+	docker compose down
+
+.PHONY: dev-db-reset
+dev-db-reset: ## Stop the dev containers and destroy their data
+	docker compose down -v
+
+.PHONY: dev-db-shell
+dev-db-shell: ## Open psql against the dev database
+	docker compose exec postgres psql -U hubchat -d hubchat
+
 .PHONY: dev
 dev: ## Run Go server + dashboard dev server (proxied)
 	@echo "==> Go API on :8080, dashboard on :5173 (proxying /api and /ws)"
@@ -99,9 +118,19 @@ vet: ## go vet
 test: ## Go unit tests
 	$(GO) test ./... -race -count=1
 
+# Deliberately a separate variable from HUBCHAT_DATABASE_URL: these tests
+# truncate tenant data, so pointing them at a database has to be a choice
+# rather than something a stray export does for you.
+TEST_DATABASE_URL ?= postgres://hubchat:hubchat@localhost:5432/hubchat?sslmode=disable
+
+# -p 1 runs one package at a time. These tests share one database and reset it
+# between cases, so running two packages concurrently has them deleting each
+# other's fixtures mid-test — which shows up as foreign key violations and
+# deadlocks that look like product bugs but are not.
 .PHONY: test-integration
-test-integration: ## Go tests that require a live PostgreSQL
-	$(GO) test ./... -race -count=1 -tags=integration
+test-integration: ## Go tests that require a live PostgreSQL (make dev-db first)
+	HUBCHAT_TEST_DATABASE_URL="$(TEST_DATABASE_URL)" \
+		$(GO) test ./... -race -count=1 -p 1 -tags=integration
 
 .PHONY: fmt
 fmt: ## Format Go sources
