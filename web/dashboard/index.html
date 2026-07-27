@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-density="comfortable">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Hubchat</title>
+
+    <link rel="icon" type="image/svg+xml" href="/app/favicon.svg" />
+
+    <!--
+      Sets the theme attribute before first paint. Without this an agent who
+      chose light mode gets a dark flash on every reload, and vice versa.
+      Kept inline and tiny; the Go template injects a CSP nonce in production.
+    -->
+    <script>
+      (function () {
+        try {
+          var mode = JSON.parse(localStorage.getItem("hubchat.appearance.mode") || '"dark"');
+          var density = JSON.parse(
+            localStorage.getItem("hubchat.appearance.density") || '"comfortable"'
+          );
+          if (mode === "system") {
+            mode = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          }
+          document.documentElement.setAttribute("data-theme", mode);
+          document.documentElement.setAttribute("data-density", density);
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
