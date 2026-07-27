@@ -18,10 +18,12 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/hubchat/hubchat/internal/database"
+	"github.com/hubchat/hubchat/internal/events"
 	"github.com/hubchat/hubchat/internal/ids"
 )
 
@@ -29,38 +31,62 @@ var (
 	ErrEmptyBody = errors.New("conversation: message body must not be empty")
 )
 
-// Broadcaster is the seam between this module and realtime (§14 boundary
-// rules: cross-module work is an explicit call, not a shared table). The
-// realtime gateway implements it; conversation does not know anything about
-// WebSocket connections.
-type Broadcaster interface {
-	BroadcastMessage(workspaceID, conversationID string, message Message)
+// MessageEvent is the payload published when a message is created.
+//
+// It is the wire shape realtime clients and webhook consumers both receive, so
+// the field names are the API's, not the repository's. Anything not in here is
+// not published — a payload is a publication boundary (§12).
+type MessageEvent struct {
+	ConversationID string  `json:"conversation_id"`
+	InboxID        string  `json:"inbox_id"`
+	MessageID      string  `json:"id"`
+	ClientID       *string `json:"client_id,omitempty"`
+	Kind           string  `json:"kind"`
+	AuthorType     string  `json:"author_type"`
+	AuthorID       *string `json:"author_id,omitempty"`
+	AuthorName     string  `json:"author_name"`
+	Body           string  `json:"body"`
+	Sequence       int64   `json:"sequence"`
+	CreatedAt      string  `json:"created_at"`
 }
 
-// noopBroadcaster is used when realtime is disabled, so PostMessage never has
-// to nil-check.
-type noopBroadcaster struct{}
-
-func (noopBroadcaster) BroadcastMessage(string, string, Message) {}
+// ConversationEvent is the payload published when a conversation is created.
+type ConversationEvent struct {
+	ConversationID string  `json:"id"`
+	InboxID        string  `json:"inbox_id"`
+	Channel        string  `json:"channel"`
+	Subject        *string `json:"subject,omitempty"`
+	CustomerID     *string `json:"customer_id,omitempty"`
+	State          string  `json:"state"`
+}
 
 type Service struct {
-	repo        *repository
-	pool        *database.Pool
-	broadcaster Broadcaster
+	repo   *repository
+	pool   *database.Pool
+	events *events.Log
 }
 
-func New(pool *database.Pool) *Service {
-	return &Service{repo: &repository{pool: pool}, pool: pool, broadcaster: noopBroadcaster{}}
+// New returns a Service. eventLog may be nil in tests that do not exercise
+// publication; every publish site nil-checks through appendEvent.
+func New(pool *database.Pool, eventLog *events.Log) *Service {
+	return &Service{repo: &repository{pool: pool}, pool: pool, events: eventLog}
 }
 
-// SetBroadcaster wires the realtime gateway in. Called once at startup from
-// cmd/hubchat, after both modules exist — see the app package's construction
-// order.
-func (s *Service) SetBroadcaster(b Broadcaster) {
-	if b == nil {
-		b = noopBroadcaster{}
+// appendEvent records a state change on the workspace event log inside the
+// caller's transaction.
+//
+// This replaces what used to be a direct call into the realtime gateway. The
+// difference matters: a broadcast reaches whoever happens to be connected to
+// this process right now, while an event is durable, ordered, and readable by
+// every consumer that needs it — realtime resume, webhook delivery, automation
+// triggers, notifications, and analytics. Publishing to five subsystems
+// separately is how they drift; publishing once is how they cannot.
+func (s *Service) appendEvent(ctx context.Context, tx pgx.Tx, event events.Event) error {
+	if s.events == nil {
+		return nil
 	}
-	s.broadcaster = b
+	_, err := s.events.Append(ctx, tx, event)
+	return err
 }
 
 // Start creates a new conversation with its opening message in one
@@ -82,7 +108,7 @@ func (s *Service) Start(
 	var message *Message
 
 	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := s.repo.insert(ctx, conversationID, workspaceID, inboxID, channel, subject, customerID); err != nil {
+		if err := s.repo.insert(ctx, tx, conversationID, workspaceID, inboxID, channel, subject, customerID); err != nil {
 			return err
 		}
 
@@ -104,13 +130,42 @@ func (s *Service) Start(
 			return err
 		}
 
-		return s.repo.touchConversation(ctx, tx, conversationID, preview(body), authorType == "customer", message.CreatedAt)
+		if err := s.repo.touchConversation(ctx, tx, conversationID, preview(body), authorType == "customer", message.CreatedAt); err != nil {
+			return err
+		}
+
+		if err := s.appendEvent(ctx, tx, events.Event{
+			WorkspaceID: workspaceID,
+			Type:        events.ConversationCreated,
+			EntityType:  entityConversation,
+			EntityID:    conversationID,
+			ActorType:   actorTypeFor(authorType),
+			ActorID:     derefOr(customerID, ""),
+			Data: ConversationEvent{
+				ConversationID: conversationID,
+				InboxID:        inboxID,
+				Channel:        channel,
+				Subject:        subject,
+				CustomerID:     customerID,
+				State:          "new",
+			},
+		}); err != nil {
+			return err
+		}
+
+		return s.appendEvent(ctx, tx, events.Event{
+			WorkspaceID: workspaceID,
+			Type:        events.MessageCreated,
+			EntityType:  entityConversation,
+			EntityID:    conversationID,
+			ActorType:   actorTypeFor(authorType),
+			ActorID:     derefOr(customerID, ""),
+			Data:        messagePayload(inboxID, *message),
+		})
 	})
 	if err != nil {
 		return nil, nil, err
 	}
-
-	s.broadcaster.BroadcastMessage(workspaceID, conversationID, *message)
 
 	conv, err := s.repo.byID(ctx, workspaceID, conversationID)
 	return conv, message, err
@@ -142,7 +197,8 @@ func (s *Service) PostMessage(
 	var message *Message
 
 	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := s.repo.lockConversation(ctx, tx, workspaceID, conversationID); err != nil {
+		conv, err := s.repo.lockAndLoad(ctx, tx, workspaceID, conversationID)
+		if err != nil {
 			return err
 		}
 
@@ -152,12 +208,14 @@ func (s *Service) PostMessage(
 				return err
 			}
 			if existing != nil {
+				// Idempotent replay (§9). Publishing again would deliver the
+				// same message twice to every consumer, which is precisely
+				// what the client id exists to prevent.
 				message = existing
-				return nil // idempotent replay — nothing new to broadcast or touch
+				return nil
 			}
 		}
 
-		var err error
 		message, err = s.repo.insertMessage(
 			ctx, tx, ids.New(ids.PrefixMessage), clientID,
 			conversationID, workspaceID, kind, authorType, authorID, authorName, body,
@@ -169,16 +227,70 @@ func (s *Service) PostMessage(
 		// Internal notes never touch the customer-facing preview or state —
 		// they are invisible to the customer by definition (§6.2 composer).
 		if kind == "reply" {
-			return s.repo.touchConversation(ctx, tx, conversationID, preview(body), authorType == "customer", message.CreatedAt)
+			if err := s.repo.touchConversation(ctx, tx, conversationID, preview(body), authorType == "customer", message.CreatedAt); err != nil {
+				return err
+			}
 		}
-		return nil
+
+		return s.appendEvent(ctx, tx, events.Event{
+			WorkspaceID: workspaceID,
+			Type:        events.MessageCreated,
+			EntityType:  entityConversation,
+			EntityID:    conversationID,
+			ActorType:   actorTypeFor(authorType),
+			ActorID:     derefOr(authorID, ""),
+			Data:        messagePayload(conv.InboxID, *message),
+		})
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	s.broadcaster.BroadcastMessage(workspaceID, conversationID, *message)
 	return message, nil
+}
+
+// entityConversation is the entity type every conversation-scoped event
+// carries. Realtime clients subscribe by "<entity_type>:<entity_id>", so this
+// string is part of the wire contract, not an internal label.
+const entityConversation = "conversation"
+
+func messagePayload(inboxID string, message Message) MessageEvent {
+	return MessageEvent{
+		ConversationID: message.ConversationID,
+		InboxID:        inboxID,
+		MessageID:      message.ID,
+		ClientID:       message.ClientID,
+		Kind:           message.Kind,
+		AuthorType:     message.AuthorType,
+		AuthorID:       message.AuthorID,
+		AuthorName:     message.AuthorName,
+		Body:           message.Body,
+		Sequence:       message.Sequence,
+		CreatedAt:      message.CreatedAt.UTC().Format(time.RFC3339Nano),
+	}
+}
+
+// actorTypeFor maps a message author to the event log's actor vocabulary.
+// They are separate vocabularies on purpose: an event's actor may be an API
+// key or an automation, neither of which can author a message.
+func actorTypeFor(authorType string) events.ActorType {
+	switch authorType {
+	case "customer":
+		return events.ActorCustomer
+	case "agent":
+		return events.ActorUser
+	case "automation":
+		return events.ActorAutomation
+	default:
+		return events.ActorSystem
+	}
+}
+
+func derefOr(value *string, fallback string) string {
+	if value == nil {
+		return fallback
+	}
+	return *value
 }
 
 // Get returns one conversation, scoped to workspaceID.
