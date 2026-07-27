@@ -17,13 +17,13 @@ export function SectionSidebar({ section }: { section: NavSection }) {
   return (
     <nav
       aria-label={`${section.label} navigation`}
-      className="flex w-sidebar shrink-0 flex-col overflow-y-auto border-r border-line bg-surface"
+      className="flex w-sidebar shrink-0 flex-col overflow-y-auto rounded-[var(--hc-float-radius)] border-r border-line bg-surface shadow-[var(--hc-float-shadow)] transition-[border-radius,box-shadow,width] duration-base ease-out"
     >
       <div className="sticky top-0 z-[var(--z-sticky)] border-b border-line bg-surface px-3 py-3">
         <h2 className="text-sm font-semibold tracking-tight text-fg">{section.label}</h2>
       </div>
 
-      <div className="flex flex-col gap-4 p-2">
+      <div className="flex flex-col gap-[var(--hc-sidebar-group-gap)] p-[var(--hc-sidebar-pad)]">
         {section.groups.map((group, index) => {
           const items = group.items.filter(
             (item) => !item.capability || can(item.capability),

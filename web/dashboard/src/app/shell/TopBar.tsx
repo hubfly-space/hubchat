@@ -7,18 +7,25 @@ import {
   MenuLabel,
   MenuSeparator,
   MenuTrigger,
+  SegmentedControl,
   StatusDot,
   Tooltip,
   cn,
   formatRelativeShort,
+  useTheme,
+  type ThemeMode,
 } from "@hubchat/shared";
 import {
   Bell,
   BookOpen,
+  Columns2,
   Inbox,
   MessageSquarePlus,
+  Monitor,
+  Moon,
   Plus,
   Search,
+  Sun,
   TicketPlus,
   UserPlus,
 } from "lucide-react";
@@ -36,6 +43,7 @@ export function TopBar({
 }) {
   const navigate = useNavigate();
   const unread = notifications.filter((item) => item.read_at === null);
+  const { mode, setMode, density, setDensity } = useTheme();
 
   return (
     <header className="flex h-topbar shrink-0 items-center gap-3 border-b border-line bg-surface px-3">
@@ -58,6 +66,33 @@ export function TopBar({
 
       <div className="ml-auto flex items-center gap-1">
         <ConnectionIndicator state={connection} />
+
+        <div className="hidden items-center gap-1 md:flex">
+          <Tooltip content="Dashboard theme">
+            <SegmentedControl
+              aria-label="Dashboard theme"
+              value={mode}
+              onValueChange={(value) => setMode(value as ThemeMode)}
+              options={[
+                { value: "dark", icon: <Moon />, ariaLabel: "Dark" },
+                { value: "light", icon: <Sun />, ariaLabel: "Light" },
+                { value: "system", icon: <Monitor />, ariaLabel: "System" },
+              ]}
+            />
+          </Tooltip>
+
+          <Tooltip content={density === "compact" ? "Compact mode on" : "Compact mode off"}>
+            <Button
+              variant={density === "compact" ? "secondary" : "ghost"}
+              size="sm"
+              iconOnly
+              aria-label={density === "compact" ? "Disable compact mode" : "Enable compact mode"}
+              aria-pressed={density === "compact"}
+              leading={<Columns2 />}
+              onClick={() => setDensity(density === "compact" ? "comfortable" : "compact")}
+            />
+          </Tooltip>
+        </div>
 
         <Menu>
           <MenuTrigger asChild>

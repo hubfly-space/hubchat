@@ -26,7 +26,7 @@ export function NavRail({ unreadCount }: { unreadCount: number }) {
   return (
     <nav
       aria-label="Primary"
-      className="flex w-rail shrink-0 flex-col items-center gap-1 border-r border-line bg-sunken py-2"
+      className="flex w-rail shrink-0 flex-col items-center gap-1 rounded-[var(--hc-float-radius)] border-r border-line bg-sunken py-2 shadow-[var(--hc-float-shadow)] transition-[border-radius,box-shadow,width] duration-base ease-out"
     >
       <div className="mb-1">
         <WorkspaceSwitcher />

@@ -32,7 +32,7 @@ export function AppShell() {
   useGoToChords();
 
   return (
-    <div className="flex h-dvh w-full overflow-hidden bg-canvas text-fg">
+    <div className="flex h-dvh w-full gap-[var(--hc-shell-gap)] overflow-hidden bg-canvas p-[var(--hc-shell-pad)] text-fg transition-[gap,padding] duration-base ease-out">
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-[var(--z-toast)] focus:rounded-md focus:bg-accent focus:px-3 focus:py-2 focus:text-sm focus:text-accent-fg"
@@ -42,10 +42,10 @@ export function AppShell() {
 
       <NavRail unreadCount={unreadCount} />
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-[var(--hc-float-radius)] border border-transparent bg-canvas shadow-[var(--hc-float-shadow)] transition-[border-color,border-radius,box-shadow] duration-base ease-out compact:border-line">
         <TopBar onOpenSearch={() => setSearchOpen(true)} connection="connected" />
 
-        <div className="flex min-h-0 flex-1">
+        <div className="flex min-h-0 flex-1 gap-[var(--hc-shell-gap)] transition-[gap] duration-base ease-out">
           {section?.id === "inbox" ? (
             <InboxSidebar />
           ) : section ? (
