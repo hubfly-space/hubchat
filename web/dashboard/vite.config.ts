@@ -44,8 +44,11 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": { target: "http://localhost:8080", changeOrigin: true },
-      "/ws": { target: "ws://localhost:8080", ws: true },
+      // Overridable so a Go server on a non-default port (a second instance,
+      // a busy 8080 on a shared dev box) doesn't require editing this file —
+      // `HUBCHAT_DEV_API_PORT=8091 pnpm dev`.
+      "/api": { target: `http://localhost:${process.env.HUBCHAT_DEV_API_PORT ?? 8080}`, changeOrigin: true },
+      "/ws": { target: `ws://localhost:${process.env.HUBCHAT_DEV_API_PORT ?? 8080}`, ws: true },
     },
   },
 });

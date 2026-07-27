@@ -31,6 +31,18 @@ import { macros, savedReplies } from "../../data/fixtures";
 
 type ComposerMode = "reply" | "note";
 
+export type ComposerProps = {
+  customerName: string;
+  /**
+   * When provided, Send calls the real backend instead of simulating one.
+   * Wired today by pages/dev/LiveDemo.tsx, which talks to the actual Go API
+   * (web/dashboard/src/lib/api.ts) — the rest of the dashboard is still
+   * fixture-driven (see data/fixtures.ts), so most call sites omit this and
+   * get the local demo behaviour below.
+   */
+  onSend?: (body: string, kind: ComposerMode) => Promise<void>;
+};
+
 /**
  * Agent composer (§6.2).
  *
@@ -39,17 +51,43 @@ type ComposerMode = "reply" | "note";
  * relabels the send button. There is no state in which "am I about to reply
  * publicly?" requires a second look.
  */
-export function Composer({ customerName }: { customerName: string }) {
+export function Composer({ customerName, onSend }: ComposerProps) {
   const [mode, setMode] = useState<ComposerMode>("reply");
   const [value, setValue] = useState("");
+  const [sending, setSending] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const toast = useToast();
 
   const isNote = mode === "note";
-  const canSend = value.trim().length > 0;
+  const canSend = value.trim().length > 0 && !sending;
 
   const send = () => {
     if (!canSend) return;
+
+    if (onSend) {
+      const body = value;
+      setSending(true);
+      onSend(body, mode)
+        .then(() => {
+          setValue("");
+          toast.success({
+            title: isNote ? "Note added" : "Reply sent",
+            description: isNote ? "Only your team can see this." : `Delivered to ${customerName}.`,
+          });
+        })
+        .catch((error: unknown) => {
+          // The draft is kept on failure — losing what someone just typed
+          // because the network hiccupped is the one thing a composer must
+          // never do.
+          toast.error({
+            title: "Could not send",
+            description: error instanceof Error ? error.message : "Try again.",
+          });
+        })
+        .finally(() => setSending(false));
+      return;
+    }
+
     toast.success({
       title: isNote ? "Note added" : "Reply sent",
       description: isNote ? "Only your team can see this." : `Delivered to ${customerName}.`,
@@ -187,6 +225,7 @@ export function Composer({ customerName }: { customerName: string }) {
               size="sm"
               variant={isNote ? "secondary" : "primary"}
               disabled={!canSend}
+              loading={sending}
               onClick={send}
               trailing={<Send />}
             >
