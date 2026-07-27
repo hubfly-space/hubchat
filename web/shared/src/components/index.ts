@@ -9,6 +9,7 @@ export * from "./ColorPicker";
 export * from "./CommandPalette";
 export * from "./Dialog";
 export * from "./EmptyState";
+export * from "./QueryBoundary";
 export * from "./Filter";
 export * from "./Input";
 export * from "./Kbd";
