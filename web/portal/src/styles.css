@@ -1,0 +1,83 @@
+@import "../../shared/src/styles/index.css";
+
+/*
+ * Portal-only additions.
+ *
+ * The portal is the one surface with genuine long-form reading, so it gets a
+ * prose treatment the dashboard does not need. Everything else comes from the
+ * shared layer.
+ */
+@layer components {
+  .prose-portal {
+    color: var(--hc-text-secondary);
+    font-size: var(--fs-md);
+    line-height: var(--lh-relaxed);
+  }
+
+  .prose-portal > * + * {
+    margin-top: 1.1em;
+  }
+
+  .prose-portal h2 {
+    margin-top: 2em;
+    font-size: var(--fs-xl);
+    font-weight: var(--fw-semibold);
+    letter-spacing: var(--ls-tight);
+    color: var(--hc-text);
+  }
+
+  .prose-portal h3 {
+    margin-top: 1.6em;
+    font-size: var(--fs-lg);
+    font-weight: var(--fw-semibold);
+    color: var(--hc-text);
+  }
+
+  .prose-portal a {
+    color: var(--hc-accent);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  .prose-portal strong {
+    font-weight: var(--fw-semibold);
+    color: var(--hc-text);
+  }
+
+  .prose-portal ul,
+  .prose-portal ol {
+    padding-left: 1.4em;
+  }
+
+  .prose-portal li {
+    list-style: disc;
+    margin-top: 0.4em;
+  }
+
+  .prose-portal ol > li {
+    list-style: decimal;
+  }
+
+  .prose-portal pre {
+    overflow-x: auto;
+    border-radius: var(--rad-md);
+    border: 1px solid var(--hc-border);
+    background-color: var(--hc-inset);
+    padding: var(--space-3);
+    font-size: var(--fs-sm);
+    line-height: var(--lh-normal);
+  }
+
+  .prose-portal :not(pre) > code {
+    border-radius: var(--rad-xs);
+    background-color: var(--hc-fill);
+    padding: 0.1em 0.35em;
+    font-size: 0.9em;
+  }
+
+  .prose-portal blockquote {
+    border-left: 2px solid var(--hc-accent-border);
+    padding-left: var(--space-4);
+    color: var(--hc-text-muted);
+  }
+}
