@@ -1,0 +1,146 @@
+/*
+ * Widget stylesheet.
+ *
+ * Imported with `?inline` and injected into the shadow root as a string, so
+ * this file is the complete style surface of the widget — nothing cascades in
+ * from the host page and nothing escapes.
+ *
+ * `:host` replaces `:root` as the custom-property scope, which is why the
+ * shared token layer is imported rather than the shared entry point: the
+ * dashboard's `@source` scanning and base resets do not apply here.
+ */
+@import "tailwindcss";
+@import "../../shared/src/styles/tokens.css";
+@import "../../shared/src/styles/theme.css";
+
+@source "./";
+@source "../../shared/src/components";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme {
+  --font-sans: var(--ff-sans);
+  --font-mono: var(--ff-mono);
+
+  --text-2xs: var(--fs-2xs);
+  --text-xs: var(--fs-xs);
+  --text-sm: var(--fs-sm);
+  --text-base: var(--fs-base);
+  --text-md: var(--fs-md);
+  --text-lg: var(--fs-lg);
+
+  --radius-xs: var(--rad-xs);
+  --radius-sm: var(--rad-sm);
+  --radius-md: var(--rad-md);
+  --radius-lg: var(--rad-lg);
+  --radius-xl: var(--rad-xl);
+  --radius-full: var(--rad-pill);
+
+  --spacing: 4px;
+  --default-transition-duration: var(--dur-fast);
+  --default-transition-timing-function: var(--ease-out);
+}
+
+@theme inline {
+  --color-canvas: var(--hc-canvas);
+  --color-surface: var(--hc-surface);
+  --color-surface-hover: var(--hc-surface-hover);
+  --color-inset: var(--hc-inset);
+  --color-overlay: var(--hc-overlay);
+
+  --color-line: var(--hc-border);
+  --color-line-subtle: var(--hc-border-subtle);
+  --color-line-strong: var(--hc-border-strong);
+
+  --color-fg: var(--hc-text);
+  --color-fg-secondary: var(--hc-text-secondary);
+  --color-fg-muted: var(--hc-text-muted);
+  --color-fg-disabled: var(--hc-text-disabled);
+
+  --color-accent: var(--hc-accent);
+  --color-accent-hover: var(--hc-accent-hover);
+  --color-accent-fg: var(--hc-accent-fg);
+  --color-accent-subtle: var(--hc-accent-subtle);
+  --color-accent-border: var(--hc-accent-border);
+
+  --color-fill: var(--hc-fill);
+  --color-fill-hover: var(--hc-fill-hover);
+
+  --color-success: var(--hc-success);
+  --color-danger: var(--hc-danger);
+  --color-danger-text: var(--hc-danger-text);
+
+  --shadow-1: var(--hc-shadow-1);
+  --shadow-2: var(--hc-shadow-2);
+  --shadow-3: var(--hc-shadow-3);
+  --shadow-4: var(--hc-shadow-4);
+}
+
+/* The token layer targets :root; inside a shadow root the scope is :host. */
+:host {
+  all: initial;
+  font-family: var(--ff-sans);
+  color-scheme: light dark;
+}
+
+:host,
+:host > div {
+  pointer-events: none;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  border: 0 solid var(--hc-border);
+  margin: 0;
+  padding: 0;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+  background: none;
+  pointer-events: auto;
+}
+
+button {
+  cursor: pointer;
+}
+
+::placeholder {
+  color: var(--hc-text-disabled);
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--hc-surface), 0 0 0 4px var(--hc-accent);
+  border-radius: var(--rad-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes hc-widget-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes hc-typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.45; }
+  30% { transform: translateY(-3px); opacity: 1; }
+}
