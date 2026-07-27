@@ -30,8 +30,15 @@ export type Paginated<T> = {
   has_more: boolean;
 };
 
-/** §16 — the one and only error shape. */
-export type ApiError = {
+/**
+ * §16 — the one and only error response body.
+ *
+ * Named for what it is (the response) rather than the error, because the
+ * client exposes an `ApiError` *class* callers narrow on with `instanceof`.
+ * Two things called ApiError, one a wire shape and one a thrown value, is a
+ * confusion worth spending a longer name to avoid.
+ */
+export type ApiErrorResponse = {
   error: {
     code: string;
     message: string;
@@ -45,6 +52,14 @@ export type EventEnvelope<T = unknown> = {
   id: Id;
   type: string;
   workspace_id: Id;
+  /**
+   * What the event is about. Realtime clients subscribe by
+   * `"<entity_type>:<entity_id>"`, so these are part of the wire contract, not
+   * incidental metadata. Absent on workspace-wide events that belong to no
+   * single record.
+   */
+  entity_type?: string;
+  entity_id?: Id;
   occurred_at: Timestamp;
   sequence: number;
   data: T;
