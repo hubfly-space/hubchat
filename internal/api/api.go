@@ -14,11 +14,14 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/hubchat/hubchat/internal/audit"
 	"github.com/hubchat/hubchat/internal/auth"
 	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/conversation"
 	"github.com/hubchat/hubchat/internal/database"
+	"github.com/hubchat/hubchat/internal/events"
 	"github.com/hubchat/hubchat/internal/httpserver"
+	"github.com/hubchat/hubchat/internal/jobs"
 	"github.com/hubchat/hubchat/internal/workspace"
 )
 
@@ -31,6 +34,14 @@ type Deps struct {
 	Auth         *auth.Service
 	Workspace    *workspace.Service
 	Conversation *conversation.Service
+
+	// Shared infrastructure. Handlers reach these only for reads that have no
+	// business logic behind them (the audit list, an entity's event timeline);
+	// writes go through the owning module's service, which appends and audits
+	// inside its own transaction.
+	Events *events.Log
+	Audit  *audit.Log
+	Jobs   *jobs.Client
 
 	CookieDomain string
 	CookieSecure bool
