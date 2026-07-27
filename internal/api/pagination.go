@@ -14,9 +14,13 @@ import (
 // The shape matches the browser's `Paginated<T>` exactly, so a page of any
 // resource decodes with one generic type on the client.
 type Page[T any] struct {
-	Data       []T    `json:"data"`
-	NextCursor string `json:"next_cursor,omitempty"`
-	HasMore    bool   `json:"has_more"`
+	Data []T `json:"data"`
+	// Always emitted, null when there is no next page. The browser contract
+	// types this as `string | null`, and omitting the field would make it
+	// `undefined` there instead — a difference a client has to special-case
+	// for no reason.
+	NextCursor *string `json:"next_cursor"`
+	HasMore    bool    `json:"has_more"`
 }
 
 // NewPage builds a page from one extra row.
@@ -37,7 +41,8 @@ func NewPage[T any](rows []T, limit int, cursorFor func(T) Cursor) Page[T] {
 		page.Data = []T{}
 	}
 	if hasMore && len(rows) > 0 {
-		page.NextCursor = cursorFor(rows[len(rows)-1]).Encode()
+		encoded := cursorFor(rows[len(rows)-1]).Encode()
+		page.NextCursor = &encoded
 	}
 	return page
 }
