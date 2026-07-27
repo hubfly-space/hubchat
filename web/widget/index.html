@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Widget harness</title>
+    <style>
+      /*
+        Deliberately hostile host-page styles. If the widget survives these, the
+        shadow-root isolation is doing its job — this is the harness's whole
+        reason to exist.
+      */
+      * { box-sizing: content-box; }
+      body {
+        margin: 0;
+        font-family: Georgia, serif;
+        background: #f4f1ea;
+        color: #2a2622;
+        line-height: 2.4;
+      }
+      div { border: 0 !important; }
+      button { background: hotpink !important; font-size: 22px !important; }
+      main { max-width: 760px; margin: 0 auto; padding: 64px 24px; }
+      h1 { font-size: 40px; letter-spacing: -0.02em; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Host page</h1>
+      <p>
+        This page uses a serif face, a warm background, oversized pink buttons, and a
+        <code>!important</code> border reset. The widget in the corner should be entirely
+        unaffected by all of it.
+      </p>
+      <p>
+        <button onclick="Hubchat('show')">Open support</button>
+        <button onclick="Hubchat('startConversation', { message: 'Hello from the host page' })">
+          Start a conversation
+        </button>
+        <button onclick="Hubchat('reset')">Reset session</button>
+      </p>
+    </main>
+
+    <script type="module">
+      import { mount } from "/src/main.tsx";
+
+      const config = {
+        enabled: true,
+        online: true,
+        modes: ["chat", "knowledge_base", "ticket_form"],
+        appearance: {
+          accent: "#3B6EF6",
+          theme: "auto",
+          launcher_shape: "circle",
+          launcher_size: "md",
+          launcher_label: null,
+          position: "bottom-right",
+          offset_x: 20,
+          offset_y: 20,
+          panel_width: 384,
+          panel_height: 620,
+          radius: 14,
+          header_style: "solid",
+          bubble_style: "rounded",
+          z_index: 2147483000,
+          hide_branding: false,
+        },
+        content: {
+          title: "Northwind Support",
+          subtitle: "We usually reply in under 10 minutes",
+          welcome_message: "Hi there 👋 How can we help today?",
+          input_placeholder: "Write a message…",
+          response_time_text: "Typically replies in 10 minutes",
+          offline_message: "We're offline — leave a message and we'll reply by email.",
+        },
+        behavior: { trigger: "manual", delay_seconds: 0, scroll_percent: 0, allow_anonymous: true },
+        articles: [
+          { slug: "installing-the-widget", title: "Installing the widget", excerpt: "One script tag before the closing body element." },
+          { slug: "verifying-webhook-signatures", title: "Verifying webhook signatures", excerpt: "Check both the signature and the timestamp." },
+          { slug: "signed-identity-tokens", title: "Identifying customers securely", excerpt: "A customer ID from the browser is a claim, not proof." },
+          { slug: "domain-allowlists", title: "Restricting the widget to your domains", excerpt: "The widget refuses to boot on an origin you have not allowed." },
+        ],
+      };
+
+      const app = await mount({ host: location.origin, config: { key: "pk_test_local", remote: config } });
+      window.Hubchat = (method, payload) => app.handle(method, payload);
+    </script>
+  </body>
+</html>
