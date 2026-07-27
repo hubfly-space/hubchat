@@ -39,9 +39,20 @@ type Session struct {
 // module wraps the *combined* owner-plus-workspace creation in its own
 // transaction (see workspace.Service.Bootstrap).
 type Service struct {
-	repo    *repository
-	pool    *database.Pool
-	session sessionConfig
+	repo     *repository
+	pool     *database.Pool
+	session  sessionConfig
+	security securityConfig
+}
+
+// securityConfig holds the brute-force policy. Copied in at construction for
+// the same reason sessionConfig is: this module needs two numbers from the
+// global config, not a dependency on all of it.
+type securityConfig struct {
+	// LoginAttempts is how many consecutive failures lock an account.
+	LoginAttempts int
+	// LockoutWindow is how long the lock lasts.
+	LockoutWindow time.Duration
 }
 
 // sessionConfig is intentionally unexported and tiny — the one setting this
@@ -53,15 +64,37 @@ type sessionConfig struct {
 	CookieSecure bool
 }
 
+// Options is the configuration auth needs. A struct rather than positional
+// parameters because the list has grown past the point where a call site reads
+// unambiguously.
+type Options struct {
+	SessionLifetime time.Duration
+	CookieDomain    string
+	CookieSecure    bool
+	LoginAttempts   int
+	LockoutWindow   time.Duration
+}
+
 // New constructs the auth service.
-func New(pool *database.Pool, lifetime time.Duration, cookieDomain string, cookieSecure bool) *Service {
+func New(pool *database.Pool, opts Options) *Service {
+	if opts.LoginAttempts <= 0 {
+		opts.LoginAttempts = 5
+	}
+	if opts.LockoutWindow <= 0 {
+		opts.LockoutWindow = 15 * time.Minute
+	}
+
 	return &Service{
 		repo: &repository{pool: pool},
 		pool: pool,
 		session: sessionConfig{
-			Lifetime:     lifetime,
-			CookieDomain: cookieDomain,
-			CookieSecure: cookieSecure,
+			Lifetime:     opts.SessionLifetime,
+			CookieDomain: opts.CookieDomain,
+			CookieSecure: opts.CookieSecure,
+		},
+		security: securityConfig{
+			LoginAttempts: opts.LoginAttempts,
+			LockoutWindow: opts.LockoutWindow,
 		},
 	}
 }
