@@ -54,10 +54,10 @@ const (
 	SLAManage           Capability = "sla.manage"
 	IntegrationManage   Capability = "integration.manage"
 
-	ReportRead            Capability = "report.read"
-	AuditRead             Capability = "audit.read"
-	MemberManage          Capability = "member.manage"
-	WorkspaceManage       Capability = "workspace.manage"
+	ReportRead              Capability = "report.read"
+	AuditRead               Capability = "audit.read"
+	MemberManage            Capability = "member.manage"
+	WorkspaceManage         Capability = "workspace.manage"
 	WorkspaceManageSecurity Capability = "workspace.manage_security"
 )
 

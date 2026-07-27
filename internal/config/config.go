@@ -69,10 +69,10 @@ const (
 var AllRoles = []Role{RoleHTTP, RoleRealtime, RoleWorker, RoleScheduler}
 
 type Database struct {
-	URL             string // secret
-	MaxOpenConns    int
-	MaxIdleConns    int
-	ConnMaxLifetime time.Duration
+	URL              string // secret
+	MaxOpenConns     int
+	MaxIdleConns     int
+	ConnMaxLifetime  time.Duration
 	StatementTimeout time.Duration
 	// MigratePolicy decides what happens at boot when migrations are pending.
 	// Defaulting to "verify" rather than "apply" is deliberate: a process
@@ -139,35 +139,35 @@ type Security struct {
 }
 
 type Realtime struct {
-	Enabled            bool
-	MaxConnections     int
-	WriteBufferSize    int
-	HeartbeatInterval  time.Duration
-	ClientTimeout      time.Duration
+	Enabled           bool
+	MaxConnections    int
+	WriteBufferSize   int
+	HeartbeatInterval time.Duration
+	ClientTimeout     time.Duration
 	// OutboundQueueSize bounds each client's send queue. A client that cannot
 	// keep up is disconnected rather than allowed to consume memory (§17).
-	OutboundQueueSize  int
+	OutboundQueueSize int
 }
 
 type Jobs struct {
-	Enabled     bool
-	Concurrency int
-	PollInterval time.Duration
+	Enabled       bool
+	Concurrency   int
+	PollInterval  time.Duration
 	LeaseDuration time.Duration
-	MaxAttempts  int
+	MaxAttempts   int
 }
 
 type Limits struct {
-	MaxEventBytes       int64
+	MaxEventBytes            int64
 	MaxAttributesPerCustomer int
-	MaxActionsPerRule   int
-	MaxRuleDepth        int
+	MaxActionsPerRule        int
+	MaxRuleDepth             int
 }
 
 type Observability struct {
-	LogFormat  string // "text" or "json"
-	LogLevel   string
-	MetricsEnabled bool
+	LogFormat       string // "text" or "json"
+	LogLevel        string
+	MetricsEnabled  bool
 	TracingEndpoint string
 }
 
@@ -246,6 +246,12 @@ func Default() Config {
 func Load() (Config, error) {
 	cfg := Default()
 
+	// A .env file in the working directory fills in anything the real
+	// environment has not already set. It is a development convenience only —
+	// the file layer proper is documented above, and a deployment that ships a
+	// .env alongside the binary has put its secrets on disk in plain text.
+	loadDotEnv(".env")
+
 	if v := os.Getenv("HUBCHAT_LISTEN"); v != "" {
 		cfg.Server.Listen = v
 	}
@@ -284,6 +290,31 @@ func Load() (Config, error) {
 	if v := os.Getenv("HUBCHAT_DATA_DIR"); v != "" {
 		cfg.Storage.LocalPath = v
 	}
+
+	if v := os.Getenv("HUBCHAT_STORAGE_BACKEND"); v != "" {
+		switch v {
+		case "local", "s3":
+			cfg.Storage.Backend = v
+		default:
+			return cfg, fmt.Errorf("HUBCHAT_STORAGE_BACKEND must be local or s3 (got %q)", v)
+		}
+	}
+	if v := os.Getenv("HUBCHAT_S3_ENDPOINT"); v != "" {
+		cfg.Storage.S3Endpoint = v
+	}
+	if v := os.Getenv("HUBCHAT_S3_REGION"); v != "" {
+		cfg.Storage.S3Region = v
+	}
+	if v := os.Getenv("HUBCHAT_S3_BUCKET"); v != "" {
+		cfg.Storage.S3Bucket = v
+	}
+	if v := os.Getenv("HUBCHAT_S3_ACCESS_KEY"); v != "" {
+		cfg.Storage.S3AccessKey = v
+	}
+	if v := os.Getenv("HUBCHAT_S3_SECRET_KEY"); v != "" {
+		cfg.Storage.S3SecretKey = v
+	}
+	cfg.Storage.S3PathStyle = os.Getenv("HUBCHAT_S3_PATH_STYLE") == "1"
 
 	if v := os.Getenv("HUBCHAT_SMTP_HOST"); v != "" {
 		cfg.Email.Enabled = true

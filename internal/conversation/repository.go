@@ -13,20 +13,20 @@ import (
 var ErrNotFound = errors.New("conversation: not found")
 
 type Conversation struct {
-	ID                  string
-	WorkspaceID         string
-	InboxID             string
-	Channel             string
-	Subject             *string
-	State               string
-	Priority            string
-	CustomerID          *string
-	AssigneeID          *string
-	TeamID              *string
-	MessageCount        int
-	LastMessagePreview  string
-	LastMessageAt       time.Time
-	CreatedAt           time.Time
+	ID                 string
+	WorkspaceID        string
+	InboxID            string
+	Channel            string
+	Subject            *string
+	State              string
+	Priority           string
+	CustomerID         *string
+	AssigneeID         *string
+	TeamID             *string
+	MessageCount       int
+	LastMessagePreview string
+	LastMessageAt      time.Time
+	CreatedAt          time.Time
 }
 
 type Message struct {
@@ -47,13 +47,20 @@ type repository struct {
 	pool *database.Pool
 }
 
+// insert writes the conversation row inside the caller's transaction.
+//
+// Taking tx rather than reaching for the pool is what makes Start's guarantee
+// real: a conversation and its opening message commit together, or neither
+// does. Using the pool here would leave an orphaned, message-less conversation
+// behind whenever the message insert failed.
 func (r *repository) insert(
 	ctx context.Context,
+	tx pgx.Tx,
 	id, workspaceID, inboxID, channel string,
 	subject *string,
 	customerID *string,
 ) error {
-	_, err := r.pool.Exec(ctx, `
+	_, err := tx.Exec(ctx, `
 		INSERT INTO conversations
 			(id, workspace_id, inbox_id, channel, subject, customer_id, state, priority)
 		VALUES ($1, $2, $3, $4, $5, $6, 'new', 'normal')
@@ -133,6 +140,32 @@ func (r *repository) lockConversation(ctx context.Context, tx pgx.Tx, workspaceI
 		return ErrNotFound
 	}
 	return err
+}
+
+// lockAndLoad takes the same lock as lockConversation and returns the fields
+// the caller needs, in one round trip.
+//
+// PostMessage needs the inbox id for the event payload it publishes. Reading
+// it separately would be a second query for a row already locked, and reading
+// it before the lock would race the very update the lock exists to serialise.
+func (r *repository) lockAndLoad(ctx context.Context, tx pgx.Tx, workspaceID, id string) (*Conversation, error) {
+	var conv Conversation
+	err := tx.QueryRow(ctx, `
+		SELECT id, workspace_id, inbox_id, channel, state, priority
+		FROM conversations
+		WHERE workspace_id = $1 AND id = $2
+		FOR UPDATE
+	`, workspaceID, id).Scan(
+		&conv.ID, &conv.WorkspaceID, &conv.InboxID,
+		&conv.Channel, &conv.State, &conv.Priority,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &conv, nil
 }
 
 // insertMessage allocates the next sequence number and inserts the message in
