@@ -26,6 +26,22 @@ type Assets struct {
 	Widget    fs.FS
 }
 
+// Routes carries the handlers assembled by internal/api, which owns the
+// business-logic wiring this package deliberately does not (see the package
+// doc). Either field may be nil — a build without a database configured still
+// serves the compiled frontends and health checks.
+type Routes struct {
+	// API is mounted at /api/, with /api stripped, so its own routes are
+	// written as if API were the root ("/v1/conversations", not
+	// "/api/v1/conversations").
+	API http.Handler
+	// WS is mounted at /ws/.
+	WS http.Handler
+	// Ready is called by /readyz. Nil means "no dependency to check" — used
+	// when the server was started without a database (§18 health endpoints).
+	Ready func(context.Context) error
+}
+
 // Server wraps the standard library's HTTP server with this project's routing
 // and lifecycle.
 type Server struct {
@@ -35,7 +51,7 @@ type Server struct {
 }
 
 // New builds the router and returns a server ready to Start.
-func New(cfg config.Config, logger *slog.Logger, assets Assets) (*Server, error) {
+func New(cfg config.Config, logger *slog.Logger, assets Assets, routes Routes) (*Server, error) {
 	mux := http.NewServeMux()
 
 	// ------------------------------------------------------------- health
@@ -49,32 +65,51 @@ func New(cfg config.Config, logger *slog.Logger, assets Assets) (*Server, error)
 	})
 
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		// Wired to the database and storage adapters once those modules exist.
-		WriteJSON(w, http.StatusOK, map[string]any{
-			"status":   "ok",
-			"database": "ok",
-			"storage":  "ok",
-		})
+		if routes.Ready == nil {
+			WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "database": "not_configured"})
+			return
+		}
+
+		checkCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+
+		if err := routes.Ready(checkCtx); err != nil {
+			WriteJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"status":   "unavailable",
+				"database": "error",
+				"error":    err.Error(),
+			})
+			return
+		}
+
+		WriteJSON(w, http.StatusOK, map[string]any{"status": "ok", "database": "ok"})
 	})
 
 	// ---------------------------------------------------------------- API
-	api := http.NewServeMux()
-	api.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		WriteError(w, r, http.StatusNotFound, CodeNotFound,
-			"No API route matches this path.")
-	})
-	api.HandleFunc("GET /v1/meta", func(w http.ResponseWriter, r *http.Request) {
-		WriteJSON(w, http.StatusOK, map[string]any{
-			"version": "v1",
-			"surface": "api",
+	apiHandler := routes.API
+	if apiHandler == nil {
+		// No database configured (e.g. `hubchat doctor` builds a server just to
+		// check routing) — serve a clear message instead of a bare 404 pointing
+		// nowhere.
+		apiHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			WriteError(w, r, http.StatusServiceUnavailable, CodeUnavailable,
+				"The API is not available: this server was started without a database connection.")
 		})
-	})
+	}
 
 	mux.Handle("/api/", Chain(
-		http.StripPrefix("/api", api),
+		http.StripPrefix("/api", apiHandler),
 		SecurityHeaders(SurfaceAPI),
 		MaxBytes(cfg.Server.MaxRequestBytes),
 	))
+
+	// ----------------------------------------------------------- realtime
+	if routes.WS != nil {
+		mux.Handle("/ws/", Chain(
+			http.StripPrefix("/ws", routes.WS),
+			SecurityHeaders(SurfaceAPI),
+		))
+	}
 
 	// ------------------------------------------------------------- widget
 	//

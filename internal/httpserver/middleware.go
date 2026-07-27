@@ -216,6 +216,16 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// Unwrap lets http.NewResponseController see through this wrapper to the
+// underlying ResponseWriter's Hijacker, Flusher, etc. Without it, wrapping the
+// response writer here silently breaks the WebSocket upgrade: coder/websocket
+// hijacks the connection via exactly this mechanism (the standard library's
+// response-writer-wrapping convention since Go 1.20), and a wrapper with no
+// Unwrap looks to it like a ResponseWriter that cannot be hijacked at all.
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}
+
 func newRequestID() string {
 	buf := make([]byte, 12)
 	if _, err := rand.Read(buf); err != nil {
