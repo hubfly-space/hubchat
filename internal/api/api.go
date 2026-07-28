@@ -20,10 +20,14 @@ import (
 	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/config"
 	"github.com/hubchat/hubchat/internal/conversation"
+	"github.com/hubchat/hubchat/internal/customer"
 	"github.com/hubchat/hubchat/internal/database"
 	"github.com/hubchat/hubchat/internal/events"
 	"github.com/hubchat/hubchat/internal/httpserver"
+	"github.com/hubchat/hubchat/internal/inbox"
 	"github.com/hubchat/hubchat/internal/jobs"
+	"github.com/hubchat/hubchat/internal/realtime"
+	"github.com/hubchat/hubchat/internal/search"
 	"github.com/hubchat/hubchat/internal/workspace"
 )
 
@@ -36,6 +40,15 @@ type Deps struct {
 	Auth         *auth.Service
 	Workspace    *workspace.Service
 	Conversation *conversation.Service
+	Inbox        *inbox.Service
+	Customer     *customer.Service
+	Search       *search.Service
+
+	// Hub answers "who is viewing this conversation right now" for the
+	// Conversation DTO's presence field. Read-only from here — writes to
+	// realtime state happen only through the WebSocket protocol itself
+	// (internal/realtime), never from an HTTP handler.
+	Hub *realtime.Hub
 
 	// Shared infrastructure. Handlers reach these only for reads that have no
 	// business logic behind them (the audit list, an entity's event timeline);
@@ -82,6 +95,9 @@ func New(deps Deps) http.Handler {
 	registerTagRoutes(mux, deps)
 	registerAuditRoutes(mux, deps)
 	registerConversationRoutes(mux, deps)
+	registerInboxRoutes(mux, deps)
+	registerCustomerRoutes(mux, deps)
+	registerSearchRoutes(mux, deps)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound,
