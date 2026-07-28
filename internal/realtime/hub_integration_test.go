@@ -23,7 +23,7 @@ import (
 // A connected agent receives events appended after they connected.
 func TestHubDeliversLiveEvents(t *testing.T) {
 	h := newHarness(t)
-	conn := h.connect(t, realtime.AgentGrant())
+	conn := h.connect(t, realtime.AgentGrant("mem_test", "Test Agent"))
 
 	h.expectFrame(t, conn, "hub.ready")
 
@@ -45,7 +45,7 @@ func TestHubDeliversLiveEvents(t *testing.T) {
 func TestResumeReplaysEventsMissedWhileDisconnected(t *testing.T) {
 	h := newHarness(t)
 
-	conn := h.connect(t, realtime.AgentGrant())
+	conn := h.connect(t, realtime.AgentGrant("mem_test", "Test Agent"))
 	ready := h.expectFrame(t, conn, "hub.ready")
 	position := ready.Sequence
 
@@ -67,7 +67,7 @@ func TestResumeReplaysEventsMissedWhileDisconnected(t *testing.T) {
 	}
 
 	// Client comes back and asks for the gap.
-	reconnected := h.connect(t, realtime.AgentGrant())
+	reconnected := h.connect(t, realtime.AgentGrant("mem_test", "Test Agent"))
 	h.expectFrame(t, reconnected, "hub.ready")
 	h.send(t, reconnected, map[string]any{
 		"action":         "resume",
@@ -101,7 +101,7 @@ func TestResumeIsExactlyOnceWhileLiveEventsArrive(t *testing.T) {
 	h := newHarness(t)
 
 	// Establish a position, then disconnect.
-	first := h.connect(t, realtime.AgentGrant())
+	first := h.connect(t, realtime.AgentGrant("mem_test", "Test Agent"))
 	h.expectFrame(t, first, "hub.ready")
 	h.append(t, events.Event{WorkspaceID: h.workspaceID, Type: events.MessageCreated})
 	h.expectFrame(t, first, string(events.MessageCreated))
@@ -114,7 +114,7 @@ func TestResumeIsExactlyOnceWhileLiveEventsArrive(t *testing.T) {
 		h.append(t, events.Event{WorkspaceID: h.workspaceID, Type: events.MessageCreated})
 	}
 
-	conn := h.connect(t, realtime.AgentGrant())
+	conn := h.connect(t, realtime.AgentGrant("mem_test", "Test Agent"))
 	h.expectFrame(t, conn, "hub.ready")
 	h.send(t, conn, map[string]any{"action": "resume", "after_sequence": position})
 
@@ -234,7 +234,7 @@ func TestHubIsScopedToOneWorkspace(t *testing.T) {
 	h := newHarness(t)
 	other := h.seedWorkspace(t, "other")
 
-	conn := h.connect(t, realtime.AgentGrant())
+	conn := h.connect(t, realtime.AgentGrant("mem_test", "Test Agent"))
 	h.expectFrame(t, conn, "hub.ready")
 
 	h.append(t, events.Event{WorkspaceID: other, Type: events.TicketCreated})
@@ -248,7 +248,7 @@ func TestHubIsScopedToOneWorkspace(t *testing.T) {
 
 func TestPingIsAnswered(t *testing.T) {
 	h := newHarness(t)
-	conn := h.connect(t, realtime.AgentGrant())
+	conn := h.connect(t, realtime.AgentGrant("mem_test", "Test Agent"))
 	h.expectFrame(t, conn, "hub.ready")
 
 	h.send(t, conn, map[string]any{"action": "ping"})
@@ -257,7 +257,7 @@ func TestPingIsAnswered(t *testing.T) {
 
 func TestUnknownActionIsReported(t *testing.T) {
 	h := newHarness(t)
-	conn := h.connect(t, realtime.AgentGrant())
+	conn := h.connect(t, realtime.AgentGrant("mem_test", "Test Agent"))
 	h.expectFrame(t, conn, "hub.ready")
 
 	h.send(t, conn, map[string]any{"action": "drop_tables"})
@@ -430,4 +430,121 @@ func (h *harness) latest(t *testing.T) int64 {
 func mustMarshal(record events.Record) []byte {
 	payload, _ := json.Marshal(record)
 	return payload
+}
+
+// A typing indicator from one agent reaches another agent in the same
+// workspace, tagged with who is typing.
+func TestTypingReachesOtherAgents(t *testing.T) {
+	h := newHarness(t)
+
+	sender := h.connect(t, realtime.AgentGrant("mem_sender", "Sender Agent"))
+	h.expectFrame(t, sender, "hub.ready")
+
+	receiver := h.connect(t, realtime.AgentGrant("mem_receiver", "Receiver Agent"))
+	h.expectFrame(t, receiver, "hub.ready")
+
+	h.send(t, sender, map[string]any{
+		"action":          "typing",
+		"conversation_id": "cnv_123",
+		"typing":          true,
+	})
+
+	frame := h.expectFrame(t, receiver, "presence.typing")
+	var payload struct {
+		ConversationID string `json:"conversation_id"`
+		MemberID       string `json:"member_id"`
+		Typing         bool   `json:"typing"`
+	}
+	if err := json.Unmarshal(frame.Data, &payload); err != nil {
+		t.Fatalf("decode presence.typing: %v", err)
+	}
+	if payload.ConversationID != "cnv_123" || payload.MemberID != "mem_sender" || !payload.Typing {
+		t.Fatalf("unexpected typing payload: %+v", payload)
+	}
+}
+
+// A visitor may only announce typing for the conversation its own grant
+// names — announcing on any other id must be silently dropped, not just
+// filtered on delivery.
+func TestVisitorCannotAnnounceTypingForAnotherConversation(t *testing.T) {
+	h := newHarness(t)
+
+	agent := h.connect(t, realtime.AgentGrant("mem_agent", "Agent"))
+	h.expectFrame(t, agent, "hub.ready")
+
+	visitor := h.connect(t, realtime.VisitorGrant("cnv_mine"))
+	h.expectFrame(t, visitor, "hub.ready")
+
+	h.send(t, visitor, map[string]any{
+		"action":          "typing",
+		"conversation_id": "cnv_not_mine",
+		"typing":          true,
+	})
+
+	// The legitimate one must still get through, so the test has a positive
+	// signal to wait for rather than proving a negative by timeout alone.
+	h.send(t, visitor, map[string]any{
+		"action":          "typing",
+		"conversation_id": "cnv_mine",
+		"typing":          true,
+	})
+
+	frame := h.expectFrame(t, agent, "presence.typing")
+	var payload struct {
+		ConversationID string `json:"conversation_id"`
+	}
+	if err := json.Unmarshal(frame.Data, &payload); err != nil {
+		t.Fatalf("decode presence.typing: %v", err)
+	}
+	if payload.ConversationID != "cnv_mine" {
+		t.Fatalf("visitor's typing for another conversation was not dropped: got %q", payload.ConversationID)
+	}
+}
+
+// Subscribing to a conversation topic is also how an agent says "I have this
+// open" — another agent subscribed to the same conversation sees the viewer
+// list update live, and it updates again when the viewer disconnects.
+func TestSubscribingToAConversationReportsAsAViewer(t *testing.T) {
+	h := newHarness(t)
+
+	viewer := h.connect(t, realtime.AgentGrant("mem_viewer", "Viewer"))
+	h.expectFrame(t, viewer, "hub.ready")
+
+	watcher := h.connect(t, realtime.AgentGrant("mem_watcher", "Watcher"))
+	h.expectFrame(t, watcher, "hub.ready")
+	h.send(t, watcher, map[string]any{
+		"action": "subscribe",
+		"topics": []string{"conversation:cnv_shared"},
+	})
+	// The watcher's own subscribe already produces a presence.viewers frame
+	// (itself joining) interleaved with the hub.topics ack in either order;
+	// expectFrame skips past whichever comes first, so this drains exactly
+	// that one before the one caused by viewer joining below.
+	h.expectFrame(t, watcher, "presence.viewers")
+
+	h.send(t, viewer, map[string]any{
+		"action": "subscribe",
+		"topics": []string{"conversation:cnv_shared"},
+	})
+
+	frame := h.expectFrame(t, watcher, "presence.viewers")
+	var payload struct {
+		ConversationID string   `json:"conversation_id"`
+		Viewers        []string `json:"viewers"`
+	}
+	if err := json.Unmarshal(frame.Data, &payload); err != nil {
+		t.Fatalf("decode presence.viewers: %v", err)
+	}
+	if payload.ConversationID != "cnv_shared" {
+		t.Fatalf("unexpected conversation id: %q", payload.ConversationID)
+	}
+	found := false
+	for _, id := range payload.Viewers {
+		if id == "mem_viewer" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected mem_viewer in the viewer list, got %v", payload.Viewers)
+	}
 }

@@ -29,6 +29,9 @@ type clientFrame struct {
 	Topics []string `json:"topics,omitempty"`
 	// AfterSequence is the client's last known position for a resume.
 	AfterSequence int64 `json:"after_sequence,omitempty"`
+	// ConversationID and Typing carry a typing indicator (action "typing").
+	ConversationID string `json:"conversation_id,omitempty"`
+	Typing         bool   `json:"typing,omitempty"`
 }
 
 const (
@@ -36,7 +39,21 @@ const (
 	actionUnsubscribe = "unsubscribe"
 	actionResume      = "resume"
 	actionPing        = "ping"
+	actionTyping      = "typing"
 )
+
+// framePresenceTyping is the ephemeral frame type a typing indicator arrives
+// as. Ephemeral — never appended to workspace_events — because "so-and-so is
+// typing" has no meaning a second after it stops being true; recording it
+// durably would mean resume replaying stale typing state on reconnect.
+const framePresenceTyping = "presence.typing"
+
+// framePresenceViewers is the ephemeral frame reporting who currently has a
+// conversation open — recomputed and re-sent whenever a viewer subscribes,
+// unsubscribes, or disconnects (see Hub.broadcastViewers). Never durable for
+// the same reason typing is not: a viewer list is a description of this
+// instant's connections, not a fact about what happened.
+const framePresenceViewers = "presence.viewers"
 
 func (h *Hub) handleFrame(ctx context.Context, c *client, frame clientFrame) {
 	switch frame.Action {
@@ -55,6 +72,9 @@ func (h *Hub) handleFrame(ctx context.Context, c *client, frame clientFrame) {
 	case actionResume:
 		h.resume(ctx, c, frame.AfterSequence)
 
+	case actionTyping:
+		h.broadcastTyping(c, frame.ConversationID, frame.Typing)
+
 	default:
 		c.sendControl(h, frameError, map[string]any{
 			"code":    "unknown_action",
@@ -70,13 +90,16 @@ func (h *Hub) handleFrame(ctx context.Context, c *client, frame clientFrame) {
 // believes it is subscribed to something it is not will sit waiting for events
 // that never come.
 func (h *Hub) subscribeTopics(c *client, topics []string) {
-	var refused []string
+	var refused, added []string
 
 	c.mu.Lock()
 	for _, topic := range topics {
 		if !c.allows(topic) {
 			refused = append(refused, topic)
 			continue
+		}
+		if !c.topics[topic] {
+			added = append(added, topic)
 		}
 		c.topics[topic] = true
 	}
@@ -93,15 +116,30 @@ func (h *Hub) subscribeTopics(c *client, topics []string) {
 		})
 	}
 
+	// Subscribing to a conversation topic is also how a client says "I have
+	// this open" — see Hub.addViewer.
+	for _, topic := range added {
+		h.addViewer(topic, c)
+	}
+
 	c.sendControl(h, frameTopics, map[string]any{"topics": c.topicList()})
 }
 
 func (h *Hub) unsubscribeTopics(c *client, topics []string) {
+	var removed []string
+
 	c.mu.Lock()
 	for _, topic := range topics {
+		if c.topics[topic] {
+			removed = append(removed, topic)
+		}
 		delete(c.topics, topic)
 	}
 	c.mu.Unlock()
+
+	for _, topic := range removed {
+		h.removeViewer(topic, c)
+	}
 
 	c.sendControl(h, frameTopics, map[string]any{"topics": c.topicList()})
 }
