@@ -1,4 +1,5 @@
 import {
+  api,
   Badge,
   Button,
   Callout,
@@ -9,15 +10,17 @@ import {
   Page,
   PageBody,
   PageHeader,
+  QueryBoundary,
   Section,
   Tooltip,
   cn,
+  useQuery,
   type Capability,
+  type Member,
   type MemberRole,
 } from "@hubchat/shared";
 import { Info, Lock } from "lucide-react";
 import { Fragment } from "react";
-import { members } from "../../data/fixtures";
 
 const ROLES: MemberRole[] = ["owner", "admin", "manager", "agent", "developer", "analyst"];
 
@@ -64,6 +67,17 @@ const CAPABILITY_GROUPS: { group: string; items: { key: Capability; label: strin
   },
 ];
 
+const ROLE_SUMMARY: Record<MemberRole, string> = {
+  owner: "Everything, including transferring ownership and deleting the workspace. There is always exactly one.",
+  admin: "Manages people, surfaces, and integrations. Cannot transfer ownership.",
+  manager: "Runs queues, assignments, SLAs, and reporting. No workspace configuration.",
+  agent: "Reads and replies to conversations in permitted inboxes. Cannot change configuration.",
+  developer: "Integrations, metadata, and technical logs. No conversation access unless granted separately.",
+  analyst: "Read-only. Reports and records, with no ability to reply or modify.",
+};
+
+type RoleDefinition = { key: MemberRole; name: string; description: string | null; capabilities: Capability[] };
+
 /**
  * Roles and capabilities (§5.9).
  *
@@ -72,8 +86,8 @@ const CAPABILITY_GROUPS: { group: string; items: { key: Capability; label: strin
  * asks on day one and the answer should not require reading source.
  */
 export default function Roles() {
-  const capabilitiesFor = (role: MemberRole): Capability[] =>
-    members.find((member) => member.role === role)?.capabilities ?? [];
+  const roles = useQuery<{ data: RoleDefinition[] }>(["roles"], (signal) => api.get("/roles", { signal }));
+  const members = useQuery<{ data: Member[] }>(["members"], (signal) => api.get("/members", { signal }));
 
   return (
     <Page>
@@ -98,101 +112,101 @@ export default function Roles() {
           underlying model is already capability-based.
         </Callout>
 
-        <Section title="Capability matrix">
-          <Card>
-            <CardBody className="overflow-x-auto p-0">
-              <table className="w-full min-w-[720px] text-sm">
-                <thead className="sticky top-0 z-[var(--z-sticky)]">
-                  <tr>
-                    <th className="border-b border-line bg-surface px-4 py-2.5 text-left text-2xs font-semibold uppercase tracking-caps text-fg-muted">
-                      Capability
-                    </th>
+        <QueryBoundary query={roles}>
+          {(roleData) => {
+            const capabilitiesFor = (role: MemberRole): Capability[] =>
+              roleData.data.find((r) => r.key === role)?.capabilities ?? [];
+
+            return (
+              <>
+                <Section title="Capability matrix">
+                  <Card>
+                    <CardBody className="overflow-x-auto p-0">
+                      <table className="w-full min-w-[720px] text-sm">
+                        <thead className="sticky top-0 z-[var(--z-sticky)]">
+                          <tr>
+                            <th className="border-b border-line bg-surface px-4 py-2.5 text-left text-2xs font-semibold uppercase tracking-caps text-fg-muted">
+                              Capability
+                            </th>
+                            {ROLES.map((role) => (
+                              <th
+                                key={role}
+                                className="border-b border-line bg-surface px-3 py-2.5 text-center text-2xs font-semibold uppercase tracking-caps text-fg-muted"
+                              >
+                                {role}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+
+                        <tbody>
+                          {CAPABILITY_GROUPS.map((group) => (
+                            <Fragment key={group.group}>
+                              <tr>
+                                <td
+                                  colSpan={ROLES.length + 1}
+                                  className="border-b border-line bg-inset px-4 py-1.5 text-2xs font-semibold uppercase tracking-caps text-fg-muted"
+                                >
+                                  {group.group}
+                                </td>
+                              </tr>
+
+                              {group.items.map((item) => (
+                                <tr key={item.key} className="border-b border-line-subtle hover:bg-surface-hover">
+                                  <td className="px-4 py-2">
+                                    <p className="text-sm text-fg">{item.label}</p>
+                                    <p className="font-mono text-2xs text-fg-muted">{item.key}</p>
+                                    <p className="mt-0.5 text-xs text-fg-muted">{item.detail}</p>
+                                  </td>
+
+                                  {ROLES.map((role) => {
+                                    const granted = capabilitiesFor(role).includes(item.key);
+                                    return (
+                                      <td key={role} className="px-3 py-2 text-center">
+                                        <Checkbox
+                                          checked={granted}
+                                          disabled
+                                          aria-label={`${role} ${granted ? "has" : "does not have"} ${item.key}`}
+                                          className={cn("inline-flex", !granted && "opacity-25")}
+                                        />
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              ))}
+                            </Fragment>
+                          ))}
+                        </tbody>
+                      </table>
+                    </CardBody>
+                  </Card>
+                </Section>
+
+                <Section title="Role summaries">
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {ROLES.map((role) => (
-                      <th
-                        key={role}
-                        className="border-b border-line bg-surface px-3 py-2.5 text-center text-2xs font-semibold uppercase tracking-caps text-fg-muted"
-                      >
-                        {role}
-                      </th>
+                      <Card key={role}>
+                        <CardHeader
+                          title={<span className="capitalize">{role}</span>}
+                          actions={
+                            <Badge tone="neutral">
+                              {members.data?.data.filter((member) => member.role === role).length ?? 0}
+                            </Badge>
+                          }
+                        />
+                        <CardBody>
+                          <p className="text-xs leading-normal text-fg-muted">{ROLE_SUMMARY[role]}</p>
+                        </CardBody>
+                      </Card>
                     ))}
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {CAPABILITY_GROUPS.map((group) => (
-                    <Fragment key={group.group}>
-                      <tr>
-                        <td
-                          colSpan={ROLES.length + 1}
-                          className="border-b border-line bg-inset px-4 py-1.5 text-2xs font-semibold uppercase tracking-caps text-fg-muted"
-                        >
-                          {group.group}
-                        </td>
-                      </tr>
-
-                      {group.items.map((item) => (
-                        <tr key={item.key} className="border-b border-line-subtle hover:bg-surface-hover">
-                          <td className="px-4 py-2">
-                            <p className="text-sm text-fg">{item.label}</p>
-                            <p className="font-mono text-2xs text-fg-muted">{item.key}</p>
-                            <p className="mt-0.5 text-xs text-fg-muted">{item.detail}</p>
-                          </td>
-
-                          {ROLES.map((role) => {
-                            const granted =
-                              role === "owner" || capabilitiesFor(role).includes(item.key);
-                            return (
-                              <td key={role} className="px-3 py-2 text-center">
-                                <Checkbox
-                                  checked={granted}
-                                  disabled
-                                  aria-label={`${role} ${granted ? "has" : "does not have"} ${item.key}`}
-                                  className={cn("inline-flex", !granted && "opacity-25")}
-                                />
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                    </Fragment>
-                  ))}
-                </tbody>
-              </table>
-            </CardBody>
-          </Card>
-        </Section>
-
-        <Section title="Role summaries">
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {ROLES.map((role) => (
-              <Card key={role}>
-                <CardHeader
-                  title={<span className="capitalize">{role}</span>}
-                  actions={
-                    <Badge tone="neutral">
-                      {members.filter((member) => member.role === role).length}
-                    </Badge>
-                  }
-                />
-                <CardBody>
-                  <p className="text-xs leading-normal text-fg-muted">
-                    {
-                      {
-                        owner: "Everything, including transferring ownership and deleting the workspace. There is always exactly one.",
-                        admin: "Manages people, surfaces, and integrations. Cannot transfer ownership.",
-                        manager: "Runs queues, assignments, SLAs, and reporting. No workspace configuration.",
-                        agent: "Reads and replies to conversations in permitted inboxes. Cannot change configuration.",
-                        developer: "Integrations, metadata, and technical logs. No conversation access unless granted separately.",
-                        analyst: "Read-only. Reports and records, with no ability to reply or modify.",
-                      }[role]
-                    }
-                  </p>
-                </CardBody>
-              </Card>
-            ))}
-          </div>
-        </Section>
+                  </div>
+                </Section>
+              </>
+            );
+          }}
+        </QueryBoundary>
       </PageBody>
     </Page>
   );
 }
+
