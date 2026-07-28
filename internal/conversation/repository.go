@@ -23,24 +23,79 @@ type Conversation struct {
 	CustomerID         *string
 	AssigneeID         *string
 	TeamID             *string
+	TicketID           *string
 	MessageCount       int
 	LastMessagePreview string
 	LastMessageAt      time.Time
+	LastCustomerAt     *time.Time
+	SnoozedUntil       *time.Time
 	CreatedAt          time.Time
 }
 
+// conversationColumns is the column list every full-row Conversation query
+// shares, kept in one place so byID, List, and the mutation methods that
+// reload after a write can never drift from each other's scan order.
+const conversationColumns = `
+	id, workspace_id, inbox_id, channel, subject, state, priority,
+	customer_id, assignee_id, team_id, ticket_id, message_count,
+	last_message_preview, last_message_at, last_customer_at, snoozed_until, created_at
+`
+
+func scanConversation(row interface{ Scan(dest ...any) error }) (*Conversation, error) {
+	var c Conversation
+	err := row.Scan(
+		&c.ID, &c.WorkspaceID, &c.InboxID, &c.Channel, &c.Subject, &c.State, &c.Priority,
+		&c.CustomerID, &c.AssigneeID, &c.TeamID, &c.TicketID, &c.MessageCount,
+		&c.LastMessagePreview, &c.LastMessageAt, &c.LastCustomerAt, &c.SnoozedUntil, &c.CreatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
 type Message struct {
-	ID             string
-	ClientID       *string
-	ConversationID string
-	WorkspaceID    string
-	Kind           string
-	AuthorType     string
-	AuthorID       *string
-	AuthorName     string
-	Body           string
-	Sequence       int64
-	CreatedAt      time.Time
+	ID              string
+	ClientID        *string
+	ConversationID  string
+	WorkspaceID     string
+	Kind            string
+	AuthorType      string
+	AuthorID        *string
+	AuthorName      string
+	Body            string
+	QuotedMessageID *string
+	Delivery        string
+	Sequence        int64
+	EditedAt        *time.Time
+	RedactedAt      *time.Time
+	CreatedAt       time.Time
+}
+
+// messageColumns is the column list every message-row query shares.
+const messageColumns = `
+	id, client_id, conversation_id, workspace_id, kind, author_type,
+	author_id, author_name, body, quoted_message_id, delivery, sequence,
+	edited_at, redacted_at, created_at
+`
+
+func scanMessage(row interface{ Scan(dest ...any) error }) (*Message, error) {
+	var m Message
+	err := row.Scan(
+		&m.ID, &m.ClientID, &m.ConversationID, &m.WorkspaceID, &m.Kind, &m.AuthorType,
+		&m.AuthorID, &m.AuthorName, &m.Body, &m.QuotedMessageID, &m.Delivery, &m.Sequence,
+		&m.EditedAt, &m.RedactedAt, &m.CreatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
 }
 
 type repository struct {
@@ -69,59 +124,10 @@ func (r *repository) insert(
 }
 
 func (r *repository) byID(ctx context.Context, workspaceID, id string) (*Conversation, error) {
-	var c Conversation
-	err := r.pool.QueryRow(ctx, `
-		SELECT id, workspace_id, inbox_id, channel, subject, state, priority,
-		       customer_id, assignee_id, team_id, message_count,
-		       last_message_preview, last_message_at, created_at
-		FROM conversations
-		WHERE workspace_id = $1 AND id = $2
-	`, workspaceID, id).Scan(
-		&c.ID, &c.WorkspaceID, &c.InboxID, &c.Channel, &c.Subject, &c.State, &c.Priority,
-		&c.CustomerID, &c.AssigneeID, &c.TeamID, &c.MessageCount,
-		&c.LastMessagePreview, &c.LastMessageAt, &c.CreatedAt,
-	)
-
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &c, nil
-}
-
-// listActive is the conversation_active_queue index's query, verbatim
-// (0002_inboxes_and_conversations.sql): the open queue for one inbox, newest
-// activity first, excluding closed and spam.
-func (r *repository) listActive(ctx context.Context, workspaceID, inboxID string, limit int) ([]Conversation, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, workspace_id, inbox_id, channel, subject, state, priority,
-		       customer_id, assignee_id, team_id, message_count,
-		       last_message_preview, last_message_at, created_at
-		FROM conversations
-		WHERE workspace_id = $1 AND inbox_id = $2 AND state NOT IN ('closed', 'spam')
-		ORDER BY last_message_at DESC
-		LIMIT $3
-	`, workspaceID, inboxID, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []Conversation
-	for rows.Next() {
-		var c Conversation
-		if err := rows.Scan(
-			&c.ID, &c.WorkspaceID, &c.InboxID, &c.Channel, &c.Subject, &c.State, &c.Priority,
-			&c.CustomerID, &c.AssigneeID, &c.TeamID, &c.MessageCount,
-			&c.LastMessagePreview, &c.LastMessageAt, &c.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
+	row := r.pool.QueryRow(ctx, `SELECT `+conversationColumns+`
+		FROM conversations WHERE workspace_id = $1 AND id = $2
+	`, workspaceID, id)
+	return scanConversation(row)
 }
 
 // lockConversation takes a row-level lock on the conversation for the
@@ -181,8 +187,7 @@ func (r *repository) insertMessage(
 	authorID *string,
 	authorName, body string,
 ) (*Message, error) {
-	var m Message
-	err := tx.QueryRow(ctx, `
+	row := tx.QueryRow(ctx, `
 		WITH next_seq AS (
 			SELECT coalesce(max(sequence), 0) + 1 AS seq
 			FROM messages
@@ -193,37 +198,19 @@ func (r *repository) insertMessage(
 			 author_id, author_name, body, sequence)
 		SELECT $2, $3, $1, $4, $5, $6, $7, $8, $9, next_seq.seq
 		FROM next_seq
-		RETURNING id, client_id, conversation_id, workspace_id, kind, author_type,
-		          author_id, author_name, body, sequence, created_at
-	`, conversationID, id, clientID, workspaceID, kind, authorType, authorID, authorName, body,
-	).Scan(
-		&m.ID, &m.ClientID, &m.ConversationID, &m.WorkspaceID, &m.Kind, &m.AuthorType,
-		&m.AuthorID, &m.AuthorName, &m.Body, &m.Sequence, &m.CreatedAt,
-	)
-	if err != nil {
-		return nil, err
-	}
-	return &m, nil
+		RETURNING `+messageColumns+`
+	`, conversationID, id, clientID, workspaceID, kind, authorType, authorID, authorName, body)
+	return scanMessage(row)
 }
 
 // messageByClientID implements idempotent submission (§9): a retried send
 // with the same client_id returns the message that already exists rather than
 // creating a duplicate.
 func (r *repository) messageByClientID(ctx context.Context, tx pgx.Tx, conversationID, clientID string) (*Message, error) {
-	var m Message
-	err := tx.QueryRow(ctx, `
-		SELECT id, client_id, conversation_id, workspace_id, kind, author_type,
-		       author_id, author_name, body, sequence, created_at
-		FROM messages
-		WHERE conversation_id = $1 AND client_id = $2
-	`, conversationID, clientID).Scan(
-		&m.ID, &m.ClientID, &m.ConversationID, &m.WorkspaceID, &m.Kind, &m.AuthorType,
-		&m.AuthorID, &m.AuthorName, &m.Body, &m.Sequence, &m.CreatedAt,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	return &m, err
+	row := tx.QueryRow(ctx, `SELECT `+messageColumns+`
+		FROM messages WHERE conversation_id = $1 AND client_id = $2
+	`, conversationID, clientID)
+	return scanMessage(row)
 }
 
 // touchConversation updates the denormalised list-view columns after a
@@ -257,10 +244,22 @@ func (r *repository) touchConversation(
 	return err
 }
 
+// memberDisplayName resolves a member id to the user's current name, for
+// denormalising into an audit entry at write time (mirrors
+// internal/workspace's identical query — see that package for why this is
+// duplicated rather than shared).
+func (r *repository) memberDisplayName(ctx context.Context, tx pgx.Tx, memberID string) (string, error) {
+	var name string
+	err := tx.QueryRow(ctx, `
+		SELECT u.name FROM workspace_members m
+		JOIN users u ON u.id = m.user_id
+		WHERE m.id = $1
+	`, memberID).Scan(&name)
+	return name, err
+}
+
 func (r *repository) listMessages(ctx context.Context, workspaceID, conversationID string, afterSequence int64) ([]Message, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, client_id, conversation_id, workspace_id, kind, author_type,
-		       author_id, author_name, body, sequence, created_at
+	rows, err := r.pool.Query(ctx, `SELECT `+messageColumns+`
 		FROM messages
 		WHERE workspace_id = $1 AND conversation_id = $2 AND sequence > $3
 		ORDER BY sequence ASC
@@ -272,14 +271,11 @@ func (r *repository) listMessages(ctx context.Context, workspaceID, conversation
 
 	var out []Message
 	for rows.Next() {
-		var m Message
-		if err := rows.Scan(
-			&m.ID, &m.ClientID, &m.ConversationID, &m.WorkspaceID, &m.Kind, &m.AuthorType,
-			&m.AuthorID, &m.AuthorName, &m.Body, &m.Sequence, &m.CreatedAt,
-		); err != nil {
+		m, err := scanMessage(rows)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, m)
+		out = append(out, *m)
 	}
 	return out, rows.Err()
 }

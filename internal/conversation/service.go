@@ -22,13 +22,21 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/hubchat/hubchat/internal/audit"
 	"github.com/hubchat/hubchat/internal/database"
 	"github.com/hubchat/hubchat/internal/events"
 	"github.com/hubchat/hubchat/internal/ids"
 )
 
 var (
-	ErrEmptyBody = errors.New("conversation: message body must not be empty")
+	ErrEmptyBody       = errors.New("conversation: message body must not be empty")
+	ErrInvalidState    = errors.New("conversation: not a recognised state")
+	ErrInvalidPriority = errors.New("conversation: not a recognised priority")
+	ErrInvalidAssignee = errors.New("conversation: assignee is not a member of this workspace")
+	ErrInvalidTeam     = errors.New("conversation: not a team in this workspace")
+	ErrInvalidInbox    = errors.New("conversation: not an inbox in this workspace")
+	ErrTagNotFound     = errors.New("conversation: not a tag in this workspace")
+	ErrSnoozeInPast    = errors.New("conversation: snooze time must be in the future")
 )
 
 // MessageEvent is the payload published when a message is created.
@@ -64,12 +72,13 @@ type Service struct {
 	repo   *repository
 	pool   *database.Pool
 	events *events.Log
+	audit  *audit.Log
 }
 
 // New returns a Service. eventLog may be nil in tests that do not exercise
 // publication; every publish site nil-checks through appendEvent.
-func New(pool *database.Pool, eventLog *events.Log) *Service {
-	return &Service{repo: &repository{pool: pool}, pool: pool, events: eventLog}
+func New(pool *database.Pool, eventLog *events.Log, auditLog *audit.Log) *Service {
+	return &Service{repo: &repository{pool: pool}, pool: pool, events: eventLog, audit: auditLog}
 }
 
 // appendEvent records a state change on the workspace event log inside the
@@ -87,6 +96,18 @@ func (s *Service) appendEvent(ctx context.Context, tx pgx.Tx, event events.Event
 	}
 	_, err := s.events.Append(ctx, tx, event)
 	return err
+}
+
+func (s *Service) recordAudit(ctx context.Context, tx pgx.Tx, entry audit.Entry) error {
+	if s.audit == nil {
+		return nil
+	}
+	if entry.ActorName == "" && entry.ActorType == audit.ActorUser && entry.ActorID != "" {
+		if name, err := s.repo.memberDisplayName(ctx, tx, entry.ActorID); err == nil {
+			entry.ActorName = name
+		}
+	}
+	return audit.RecordTx(ctx, tx, entry)
 }
 
 // Start creates a new conversation with its opening message in one
@@ -296,14 +317,6 @@ func derefOr(value *string, fallback string) string {
 // Get returns one conversation, scoped to workspaceID.
 func (s *Service) Get(ctx context.Context, workspaceID, id string) (*Conversation, error) {
 	return s.repo.byID(ctx, workspaceID, id)
-}
-
-// ListActive returns the open queue for one inbox (the conversations_active_queue index).
-func (s *Service) ListActive(ctx context.Context, workspaceID, inboxID string, limit int) ([]Conversation, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
-	return s.repo.listActive(ctx, workspaceID, inboxID, limit)
 }
 
 // Messages returns the timeline for one conversation, optionally resuming
