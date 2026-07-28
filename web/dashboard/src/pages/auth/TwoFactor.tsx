@@ -1,14 +1,47 @@
-import { Button, Field, Input } from "@hubchat/shared";
+import { api, ApiError, Button, Callout, clearQueryCache, Field, Input } from "@hubchat/shared";
+import { useMutation } from "@hubchat/shared";
 import { ShieldCheck } from "lucide-react";
 import { useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 
 const LENGTH = 6;
 
+type LocationState = { challenge?: string; next?: string | null };
+
 export default function TwoFactor() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const state = (location.state as LocationState | null) ?? {};
+
   const [digits, setDigits] = useState<string[]>(Array(LENGTH).fill(""));
+  const [recoveryCode, setRecoveryCode] = useState("");
   const [useRecovery, setUseRecovery] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const inputs = useRef<(HTMLInputElement | null)[]>([]);
+
+  const verify = useMutation<{ challenge: string; code: string }, unknown>(
+    (body) => api.post("/auth/totp/challenge", body),
+    {
+      onSuccess: () => {
+        clearQueryCache();
+        navigate(state.next ?? "/overview", { replace: true });
+      },
+      onError: (caught) => {
+        setError(
+          caught instanceof ApiError
+            ? caught.message
+            : "Could not reach the server. Check your connection and try again.",
+        );
+      },
+    },
+  );
+
+  // Arriving here without a challenge means someone opened the URL directly
+  // rather than being sent here by a real sign-in — there is nothing to
+  // verify against, so send them back to start over.
+  if (!state.challenge) {
+    return <Navigate to="/login" replace />;
+  }
 
   const setDigit = (index: number, value: string) => {
     const cleaned = value.replace(/\D/g, "");
@@ -16,7 +49,6 @@ export default function TwoFactor() {
 
     setDigits((current) => {
       const next = [...current];
-      // Paste of a full code fills every box rather than only the focused one.
       cleaned.split("").forEach((char, offset) => {
         if (index + offset < LENGTH) next[index + offset] = char;
       });
@@ -25,6 +57,13 @@ export default function TwoFactor() {
 
     const target = Math.min(index + cleaned.length, LENGTH - 1);
     inputs.current[target]?.focus();
+  };
+
+  const submit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError(null);
+    const code = useRecovery ? recoveryCode : digits.join("");
+    void verify.mutate({ challenge: state.challenge!, code }).catch(() => {});
   };
 
   return (
@@ -40,10 +79,24 @@ export default function TwoFactor() {
           : "Enter the six-digit code from your authenticator app."}
       </p>
 
-      <form className="mt-6 flex flex-col gap-4">
+      {error && (
+        <Callout tone="danger" className="mt-4">
+          {error}
+        </Callout>
+      )}
+
+      <form onSubmit={submit} className="mt-6 flex flex-col gap-4">
         {useRecovery ? (
           <Field label="Recovery code" htmlFor="recovery">
-            <Input id="recovery" mono inputSize="lg" placeholder="xxxx-xxxx-xxxx" autoFocus />
+            <Input
+              id="recovery"
+              mono
+              inputSize="lg"
+              placeholder="xxxxx-xxxxx"
+              autoFocus
+              value={recoveryCode}
+              onChange={(event) => setRecoveryCode(event.target.value)}
+            />
           </Field>
         ) : (
           <div>
@@ -76,7 +129,7 @@ export default function TwoFactor() {
           </div>
         )}
 
-        <Button type="submit" variant="primary" size="lg" fullWidth>
+        <Button type="submit" variant="primary" size="lg" fullWidth loading={verify.isPending}>
           Verify
         </Button>
       </form>
