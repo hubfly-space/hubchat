@@ -1,33 +1,48 @@
 import {
+  api,
+  ApiError,
   Badge,
   Button,
+  Callout,
   DataTable,
+  Dialog,
+  DialogContent,
   EmptyState,
+  Field,
   IdentityCell,
+  Input,
   Page,
   PageHeader,
   Pagination,
   SearchInput,
   Toolbar,
+  useInfinite,
+  useMutation,
   formatCompact,
   type Column,
   type Company,
+  type Paginated,
 } from "@hubchat/shared";
-import { Building2, Download, Plus, Upload } from "lucide-react";
+import { Building2, Download, Plus } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWorkspace } from "../../app/workspace-context";
-import { companies } from "../../data/fixtures";
 
 /** Company directory (§6.9) — the account layer above individual contacts. */
 export default function CompanyList() {
   const navigate = useNavigate();
-  const { memberById } = useWorkspace();
+  const { members } = useWorkspace();
   const [query, setQuery] = useState("");
+  const [creating, setCreating] = useState(false);
 
-  const rows = companies.filter((company) =>
-    `${company.name} ${company.domain ?? ""}`.toLowerCase().includes(query.toLowerCase()),
-  );
+  const list = useInfinite<Company>(["companies", "directory", query], (cursor, signal) => {
+    const params = new URLSearchParams();
+    if (query.trim()) params.set("q", query.trim());
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<Company>>(`/companies?${params.toString()}`, { signal });
+  });
+
+  const memberById = new Map(members.map((m) => [m.id, m]));
 
   const columns: Column<Company>[] = [
     {
@@ -48,11 +63,7 @@ export default function CompanyList() {
       key: "tier",
       header: "Tier",
       width: "116px",
-      cell: (company) => (
-        <Badge tone={company.tier === "enterprise" ? "accent" : "neutral"}>
-          {company.tier ?? "—"}
-        </Badge>
-      ),
+      cell: (company) => <Badge tone={company.tier === "enterprise" ? "accent" : "neutral"}>{company.tier ?? "—"}</Badge>,
       sortable: true,
     },
     {
@@ -69,19 +80,9 @@ export default function CompanyList() {
       width: "104px",
       numeric: true,
       cell: (company) => (
-        <span className={company.open_ticket_count > 3 ? "text-warning-text" : undefined}>
-          {company.open_ticket_count}
-        </span>
+        <span className={company.open_ticket_count > 3 ? "text-warning-text" : undefined}>{company.open_ticket_count}</span>
       ),
       sortable: true,
-    },
-    {
-      key: "mrr",
-      header: "MRR",
-      width: "96px",
-      numeric: true,
-      hideBelow: "lg",
-      cell: (company) => `$${formatCompact(Number(company.attributes.mrr ?? 0))}`,
     },
     {
       key: "owner",
@@ -89,7 +90,7 @@ export default function CompanyList() {
       width: "150px",
       hideBelow: "md",
       cell: (company) => {
-        const owner = memberById(company.owner_id);
+        const owner = company.owner_id ? memberById.get(company.owner_id) : undefined;
         return owner ? (
           <span className="text-xs text-fg-secondary">{owner.name}</span>
         ) : (
@@ -106,13 +107,15 @@ export default function CompanyList() {
         description="Accounts that group contacts, tickets, and service levels."
         actions={
           <>
-            <Button variant="secondary" size="sm" leading={<Upload />}>
-              Import CSV
-            </Button>
-            <Button variant="secondary" size="sm" leading={<Download />}>
+            <Button
+              variant="secondary"
+              size="sm"
+              leading={<Download />}
+              onClick={() => window.open(`/api/v1/companies?q=${encodeURIComponent(query)}&limit=1000`, "_blank")}
+            >
               Export
             </Button>
-            <Button variant="primary" size="sm" leading={<Plus />}>
+            <Button variant="primary" size="sm" leading={<Plus />} onClick={() => setCreating(true)}>
               New company
             </Button>
           </>
@@ -122,13 +125,7 @@ export default function CompanyList() {
       <Toolbar
         leading={
           <div className="w-64">
-            <SearchInput
-              inputSize="sm"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onClear={() => setQuery("")}
-              placeholder="Company or domain"
-            />
+            <SearchInput inputSize="sm" value={query} onChange={(e) => setQuery(e.target.value)} onClear={() => setQuery("")} placeholder="Company or domain" />
           </div>
         }
       />
@@ -136,10 +133,11 @@ export default function CompanyList() {
       <div className="min-h-0 flex-1 overflow-auto">
         <DataTable
           aria-label="Companies"
-          rows={rows}
+          rows={list.items}
           columns={columns}
           rowKey={(company) => company.id}
           onRowClick={(company) => navigate(`/companies/${company.id}`)}
+          loading={list.isLoading}
           empty={
             <EmptyState
               icon={Building2}
@@ -152,11 +150,66 @@ export default function CompanyList() {
 
       <Pagination
         hasPrevious={false}
-        hasNext={false}
+        hasNext={list.hasMore}
         onPrevious={() => undefined}
-        onNext={() => undefined}
-        summary={`${rows.length} companies`}
+        onNext={() => void list.fetchNext()}
+        summary={`${list.items.length} loaded${list.hasMore ? "+" : ""}`}
       />
+
+      <NewCompanyDialog open={creating} onOpenChange={setCreating} onCreated={(c) => navigate(`/companies/${c.id}`)} />
     </Page>
+  );
+}
+
+function NewCompanyDialog({
+  open,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreated: (company: Company) => void;
+}) {
+  const [name, setName] = useState("");
+  const [domain, setDomain] = useState("");
+
+  const create = useMutation<void, Company>(
+    () => api.post<Company>("/companies", { name, domain: domain || null }),
+    {
+      invalidates: [["companies"]],
+      onSuccess: (created) => {
+        setName("");
+        setDomain("");
+        onOpenChange(false);
+        onCreated(created);
+      },
+    },
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        title="New company"
+        footer={
+          <Button variant="primary" size="sm" loading={create.isPending} disabled={!name.trim()} onClick={() => void create.mutate().catch(() => {})}>
+            Create company
+          </Button>
+        }
+      >
+        {create.error ? (
+          <Callout tone="danger" className="mb-3">
+            {create.error instanceof ApiError ? create.error.message : "Could not create the company."}
+          </Callout>
+        ) : null}
+        <div className="flex flex-col gap-3">
+          <Field label="Name">
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Acme Corp" autoFocus />
+          </Field>
+          <Field label="Domain (optional)">
+            <Input value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="acme.com" />
+          </Field>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

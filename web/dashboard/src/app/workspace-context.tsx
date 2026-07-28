@@ -173,6 +173,7 @@ function useWorkspaceInvalidation() {
       invalidate(["conversations"]);
       invalidate(["tickets"]);
       invalidate(["customers"]);
+      invalidate(["companies"]);
       invalidate(["bootstrap"]);
       return;
     }
@@ -189,6 +190,10 @@ function useWorkspaceInvalidation() {
       case "customer":
         invalidate(["customers"]);
         if (event.entity_id) invalidate(["customer", event.entity_id]);
+        break;
+      case "company":
+        invalidate(["companies"]);
+        if (event.entity_id) invalidate(["company", event.entity_id]);
         break;
       case "member":
       case "team":

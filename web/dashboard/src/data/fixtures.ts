@@ -431,6 +431,8 @@ export const customers: Customer[] = [
     first_seen_at: ago(60 * 24 * 370),
     last_seen_at: ago(2),
     last_contacted_at: ago(6),
+    version: 1,
+    masked_attribute_keys: [],
   },
   {
     id: "cus_dan",
@@ -458,6 +460,8 @@ export const customers: Customer[] = [
     first_seen_at: ago(60 * 24 * 480),
     last_seen_at: ago(60 * 9),
     last_contacted_at: ago(60 * 3),
+    version: 1,
+    masked_attribute_keys: [],
   },
   {
     id: "cus_hannah",
@@ -479,6 +483,8 @@ export const customers: Customer[] = [
     first_seen_at: ago(60 * 24 * 190),
     last_seen_at: ago(4),
     last_contacted_at: ago(28),
+    version: 1,
+    masked_attribute_keys: [],
   },
   {
     id: "cus_luca",
@@ -500,6 +506,8 @@ export const customers: Customer[] = [
     first_seen_at: ago(60 * 24 * 12),
     last_seen_at: ago(35),
     last_contacted_at: ago(90),
+    version: 1,
+    masked_attribute_keys: [],
   },
   {
     id: "cus_anon_1",
@@ -521,6 +529,8 @@ export const customers: Customer[] = [
     first_seen_at: ago(22),
     last_seen_at: ago(1),
     last_contacted_at: ago(18),
+    version: 1,
+    masked_attribute_keys: [],
   },
   {
     id: "cus_yuki",
@@ -542,6 +552,8 @@ export const customers: Customer[] = [
     first_seen_at: ago(60 * 24 * 300),
     last_seen_at: ago(60 * 14),
     last_contacted_at: ago(60 * 26),
+    version: 1,
+    masked_attribute_keys: [],
   },
 ];
 
@@ -935,6 +947,7 @@ function ticket(
     field_values: {},
     sla: null,
     due_at: dueAt,
+    version: 1,
     created_at: createdAt,
     updated_at: createdAt,
     resolved_at: status === "resolved" || status === "closed" ? ago(60 * 18) : null,
