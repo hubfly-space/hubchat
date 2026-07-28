@@ -1,12 +1,16 @@
-import { Button, Callout, Field, Input } from "@hubchat/shared";
+import { api, Button, Callout, Field, Input, useMutation } from "@hubchat/shared";
 import { ArrowLeft, MailCheck } from "lucide-react";
-import { useState } from "react";
 import { Link } from "react-router-dom";
 
 export default function ForgotPassword() {
-  const [sent, setSent] = useState(false);
+  // The server answers identically whether or not the address has an
+  // account (§11.4) — the client has no branch to add on top of that, only a
+  // network failure to distinguish from success.
+  const request = useMutation<{ email: string }, unknown>((body) =>
+    api.post("/auth/password/forgot", body),
+  );
 
-  if (sent) {
+  if (request.isSuccess) {
     return (
       <>
         <div className="mb-4 grid size-11 place-items-center rounded-xl border border-line bg-surface">
@@ -15,7 +19,7 @@ export default function ForgotPassword() {
         <h1 className="text-xl font-semibold tracking-tight text-fg">Check your email</h1>
         <p className="mt-2 text-sm leading-normal text-fg-muted">
           If an account exists for that address, a reset link is on its way. The link expires in
-          30 minutes and can be used once.
+          an hour and can be used once.
         </p>
 
         <Callout tone="info" className="mt-5">
@@ -43,14 +47,15 @@ export default function ForgotPassword() {
         className="flex flex-col gap-4"
         onSubmit={(event) => {
           event.preventDefault();
-          setSent(true);
+          const form = new FormData(event.currentTarget);
+          void request.mutate({ email: String(form.get("email") ?? "") });
         }}
       >
         <Field label="Email" htmlFor="email">
           <Input id="email" name="email" type="email" autoComplete="email" required inputSize="lg" />
         </Field>
 
-        <Button type="submit" variant="primary" size="lg" fullWidth>
+        <Button type="submit" variant="primary" size="lg" fullWidth loading={request.isPending}>
           Send reset link
         </Button>
       </form>

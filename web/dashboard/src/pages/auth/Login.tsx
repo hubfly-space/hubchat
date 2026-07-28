@@ -15,15 +15,30 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 type Credentials = { email: string; password: string };
 
+// SignInResponse is one of two shapes, distinguished by which field is
+// present: a completed sign-in carries the user, a pending second factor
+// carries a challenge token instead. Nothing in the client trusts this
+// distinction for anything security-relevant — it only decides which screen
+// to show next, and the server has already made every real decision.
+type SignInResponse =
+  | { id: string; name: string; email: string }
+  | { challenge: string; expires_at: string };
+
 export default function Login() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const [error, setError] = useState<string | null>(null);
 
-  const signIn = useMutation<Credentials, unknown>(
+  const signIn = useMutation<Credentials, SignInResponse>(
     (credentials) => api.post("/auth/login", credentials),
     {
-      onSuccess: () => {
+      onSuccess: (result) => {
+        if ("challenge" in result) {
+          navigate("/two-factor", {
+            state: { challenge: result.challenge, next: params.get("next") },
+          });
+          return;
+        }
         // Anything cached belongs to whoever was signed in before. Clearing it
         // before navigating means the next screen cannot render the previous
         // user's workspace for a frame.
