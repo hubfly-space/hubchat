@@ -60,10 +60,11 @@ type MemberProfile struct {
 	Email     string
 	AvatarURL *string
 	Role      string
-	Presence  string
-	Accepting bool
-	TeamIDs   []string
-	CreatedAt time.Time
+	Presence   string
+	Accepting  bool
+	TeamIDs    []string
+	LastSeenAt *time.Time
+	CreatedAt  time.Time
 }
 
 type Team struct {
@@ -73,12 +74,19 @@ type Team struct {
 	LeadID          *string
 	RoutingStrategy string
 	MemberIDs       []string
+	CreatedAt       time.Time
 }
 
 type Tag struct {
 	ID    string
 	Name  string
 	Color int
+	// UsageCount is populated by ListTags (the standalone tags-settings
+	// query); the bootstrap payload's own listTags below leaves it zero,
+	// since the opening screen has no use for it and computing it there
+	// would cost every cold load a join over six tables for a number nothing
+	// on that screen displays.
+	UsageCount int
 }
 
 // LoadBootstrap assembles the dashboard's opening payload for one member.
@@ -207,7 +215,7 @@ func (r *repository) listForUser(ctx context.Context, userID string) ([]Workspac
 func (r *repository) listMembers(ctx context.Context, workspaceID string) ([]MemberProfile, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT m.id, u.id, u.name, u.email::text, u.avatar_url, m.role,
-		       m.presence, m.accepting_conversations, m.created_at,
+		       m.presence, m.accepting_conversations, m.last_seen_at, m.created_at,
 		       coalesce(
 		           array_agg(tm.team_id) FILTER (WHERE tm.team_id IS NOT NULL),
 		           '{}'
@@ -217,7 +225,7 @@ func (r *repository) listMembers(ctx context.Context, workspaceID string) ([]Mem
 		LEFT JOIN team_members tm ON tm.member_id = m.id
 		WHERE m.workspace_id = $1
 		GROUP BY m.id, u.id, u.name, u.email, u.avatar_url, m.role,
-		         m.presence, m.accepting_conversations, m.created_at
+		         m.presence, m.accepting_conversations, m.last_seen_at, m.created_at
 		ORDER BY u.name
 	`, workspaceID)
 	if err != nil {
@@ -230,7 +238,7 @@ func (r *repository) listMembers(ctx context.Context, workspaceID string) ([]Mem
 		var m MemberProfile
 		if err := rows.Scan(
 			&m.ID, &m.UserID, &m.Name, &m.Email, &m.AvatarURL, &m.Role,
-			&m.Presence, &m.Accepting, &m.CreatedAt, &m.TeamIDs,
+			&m.Presence, &m.Accepting, &m.LastSeenAt, &m.CreatedAt, &m.TeamIDs,
 		); err != nil {
 			return nil, err
 		}
@@ -241,7 +249,7 @@ func (r *repository) listMembers(ctx context.Context, workspaceID string) ([]Mem
 
 func (r *repository) listTeams(ctx context.Context, workspaceID string) ([]Team, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT t.id, t.name, t.description, t.lead_id, t.routing_strategy,
+		SELECT t.id, t.name, t.description, t.lead_id, t.routing_strategy, t.created_at,
 		       coalesce(
 		           array_agg(tm.member_id) FILTER (WHERE tm.member_id IS NOT NULL),
 		           '{}'
@@ -249,7 +257,7 @@ func (r *repository) listTeams(ctx context.Context, workspaceID string) ([]Team,
 		FROM teams t
 		LEFT JOIN team_members tm ON tm.team_id = t.id
 		WHERE t.workspace_id = $1
-		GROUP BY t.id, t.name, t.description, t.lead_id, t.routing_strategy
+		GROUP BY t.id, t.name, t.description, t.lead_id, t.routing_strategy, t.created_at
 		ORDER BY t.name
 	`, workspaceID)
 	if err != nil {
@@ -261,7 +269,7 @@ func (r *repository) listTeams(ctx context.Context, workspaceID string) ([]Team,
 	for rows.Next() {
 		var t Team
 		if err := rows.Scan(&t.ID, &t.Name, &t.Description, &t.LeadID,
-			&t.RoutingStrategy, &t.MemberIDs); err != nil {
+			&t.RoutingStrategy, &t.CreatedAt, &t.MemberIDs); err != nil {
 			return nil, err
 		}
 		out = append(out, t)
