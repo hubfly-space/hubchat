@@ -27,7 +27,18 @@ import (
 // Requests authenticated by an API key rather than a cookie are exempt — they
 // are not subject to CSRF at all, because the credential is not something a
 // browser attaches automatically.
-func CSRF(publicURL *url.URL, enabled bool) func(http.Handler) http.Handler {
+//
+// devMode widens the allowlist to any localhost/127.0.0.1 origin, regardless
+// of port. This exists for exactly one reason: in production the Go binary
+// serves the compiled frontend itself, so the browser's origin always equals
+// PublicURL. In development the dashboard runs under Vite on its own port
+// (5173) and proxies /api to the Go server, which makes the browser's real
+// Origin something PublicURL was never configured to match. Restricting the
+// widened set to loopback addresses only, and only when devMode is set, keeps
+// this from being a usable relaxation in any deployment that matters — the
+// same reasoning config.Validate() already applies by refusing Dev mode
+// together with an https PublicURL.
+func CSRF(publicURL *url.URL, enabled, devMode bool) func(http.Handler) http.Handler {
 	allowed := map[string]bool{}
 	if publicURL != nil {
 		allowed[strings.ToLower(publicURL.Scheme+"://"+publicURL.Host)] = true
@@ -64,15 +75,28 @@ func CSRF(publicURL *url.URL, enabled bool) func(http.Handler) http.Handler {
 				return
 			}
 
-			if !allowed[origin] {
-				WriteError(w, r, http.StatusForbidden, CodeForbidden,
-					"This request came from an unrecognised origin.")
+			if allowed[origin] || (devMode && isLoopbackOrigin(origin)) {
+				next.ServeHTTP(w, r)
 				return
 			}
 
-			next.ServeHTTP(w, r)
+			WriteError(w, r, http.StatusForbidden, CodeForbidden,
+				"This request came from an unrecognised origin.")
 		})
 	}
+}
+
+// isLoopbackOrigin reports whether origin is http://localhost or
+// http://127.0.0.1 at any port. Never matches https — a dev proxy has no
+// business terminating TLS, and matching it would blur the exact line
+// config.Validate() draws between Dev mode and a real deployment.
+func isLoopbackOrigin(origin string) bool {
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Scheme != "http" {
+		return false
+	}
+	host := parsed.Hostname()
+	return host == "localhost" || host == "127.0.0.1"
 }
 
 // requestOrigin reads Origin, falling back to the scheme and host of Referer.

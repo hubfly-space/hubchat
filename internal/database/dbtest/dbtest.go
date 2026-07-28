@@ -94,7 +94,16 @@ func Reset(t *testing.T, pool *database.Pool) {
 func Context(t *testing.T) context.Context {
 	t.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// 120s rather than something tighter because a handful of tests do
+	// several real bcrypt verifications in sequence (auth's lockout and
+	// sign-in tests), and bcrypt at the production cost factor is
+	// deliberately slow — under -race, on a loaded machine, a single cost-12
+	// compare has been measured over 5s here, and six in a row came within
+	// seconds of tripping a 60s deadline on a busier-than-usual run.
+	// Weakening the cost factor for tests would mean testing a different
+	// code path than production runs; loosening the deadline instead keeps
+	// the test honest about what it is timing.
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	t.Cleanup(cancel)
 	return ctx
 }

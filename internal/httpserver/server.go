@@ -107,7 +107,7 @@ func New(cfg config.Config, logger *slog.Logger, assets Assets, routes Routes) (
 		SecurityHeaders(SurfaceAPI),
 		MaxBytes(cfg.Server.MaxRequestBytes),
 		RateLimit(limiter, cfg.Security.TrustedProxies),
-		CSRF(cfg.Server.PublicURL, cfg.Security.CSRFEnabled),
+		CSRF(cfg.Server.PublicURL, cfg.Security.CSRFEnabled, cfg.Dev),
 	))
 
 	// ----------------------------------------------------------- realtime

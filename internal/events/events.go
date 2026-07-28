@@ -62,6 +62,13 @@ const (
 	FormSubmitted  Type = "form.submitted"
 	MemberJoined   Type = "member.joined"
 	MemberRoleSet  Type = "member.role_changed"
+	MemberRemoved  Type = "member.removed"
+	InviteIssued   Type = "invite.issued"
+	InviteAccepted Type = "invite.accepted"
+	InviteRevoked  Type = "invite.revoked"
+	TeamCreated    Type = "team.created"
+	TeamUpdated    Type = "team.updated"
+	TeamDeleted    Type = "team.deleted"
 	TypingStarted  Type = "typing.started"
 	PresenceUpdate Type = "presence.updated"
 
