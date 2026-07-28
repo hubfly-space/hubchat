@@ -128,16 +128,6 @@ func (s *Service) Get(ctx context.Context, id string) (*Workspace, error) {
 	return s.repo.byID(ctx, id)
 }
 
-// ListInboxes returns every inbox in workspaceID, default first. Kept on
-// Service rather than a new inbox.Service for now: inboxes are provisioned by
-// Bootstrap here and internal/inbox has no service layer of its own yet (see
-// its doc.go) — this method will move there the day it does, which is a
-// straightforward cut since nothing outside this file touches the inboxes
-// table directly.
-func (s *Service) ListInboxes(ctx context.Context, workspaceID string) ([]Inbox, error) {
-	return s.repo.listInboxes(ctx, workspaceID)
-}
-
 // ListRoles returns every built-in role with its effective capability set,
 // for the read-only Roles & permissions screen (§5.9). Owner's row is filled
 // in from authorization.AllCapabilityNames rather than role_permissions,

@@ -1,11 +1,6 @@
 import {
   Button,
   Kbd,
-  Menu,
-  MenuContent,
-  MenuItem,
-  MenuLabel,
-  MenuTrigger,
   Tabs,
   TabsList,
   Textarea,
@@ -15,7 +10,6 @@ import {
 } from "@hubchat/shared";
 import {
   Bold,
-  CalendarClock,
   Italic,
   Link2,
   List,
@@ -24,24 +18,28 @@ import {
   Paperclip,
   Send,
   Smile,
-  Zap,
 } from "lucide-react";
-import { useRef, useState } from "react";
-import { macros, savedReplies } from "../../data/fixtures";
+import { useEffect, useRef, useState } from "react";
 
 type ComposerMode = "reply" | "note";
 
 export type ComposerProps = {
   customerName: string;
   /**
-   * When provided, Send calls the real backend instead of simulating one.
-   * Wired today by pages/dev/LiveDemo.tsx, which talks to the actual Go API
-   * (web/dashboard/src/lib/api.ts) — the rest of the dashboard is still
-   * fixture-driven (see data/fixtures.ts), so most call sites omit this and
-   * get the local demo behaviour below.
+   * Drafts autosave to localStorage under this key, per conversation, so a
+   * reload or a tab switch never loses what someone was typing. Saved
+   * replies and macros are a later stage (§8's automation module owns them);
+   * until then the toolbar's formatting and attachment buttons are visual
+   * only, same as the fixture build — nothing here claims to format or
+   * attach anything it cannot.
    */
-  onSend?: (body: string, kind: ComposerMode) => Promise<void>;
+  conversationId: string;
+  onSend: (body: string, kind: ComposerMode) => Promise<void>;
 };
+
+function draftKey(conversationId: string) {
+  return `hubchat.draft.${conversationId}`;
+}
 
 /**
  * Agent composer (§6.2).
@@ -51,12 +49,37 @@ export type ComposerProps = {
  * relabels the send button. There is no state in which "am I about to reply
  * publicly?" requires a second look.
  */
-export function Composer({ customerName, onSend }: ComposerProps) {
+export function Composer({ customerName, conversationId, onSend }: ComposerProps) {
   const [mode, setMode] = useState<ComposerMode>("reply");
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(() => {
+    try {
+      return localStorage.getItem(draftKey(conversationId)) ?? "";
+    } catch {
+      return "";
+    }
+  });
   const [sending, setSending] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const toast = useToast();
+
+  // Switching conversations loads that thread's own draft rather than
+  // carrying over whatever was being typed for the last one.
+  useEffect(() => {
+    try {
+      setValue(localStorage.getItem(draftKey(conversationId)) ?? "");
+    } catch {
+      setValue("");
+    }
+  }, [conversationId]);
+
+  useEffect(() => {
+    try {
+      if (value) localStorage.setItem(draftKey(conversationId), value);
+      else localStorage.removeItem(draftKey(conversationId));
+    } catch {
+      // A full or disabled localStorage should not break typing.
+    }
+  }, [conversationId, value]);
 
   const isNote = mode === "note";
   const canSend = value.trim().length > 0 && !sending;
@@ -64,41 +87,26 @@ export function Composer({ customerName, onSend }: ComposerProps) {
   const send = () => {
     if (!canSend) return;
 
-    if (onSend) {
-      const body = value;
-      setSending(true);
-      onSend(body, mode)
-        .then(() => {
-          setValue("");
-          toast.success({
-            title: isNote ? "Note added" : "Reply sent",
-            description: isNote ? "Only your team can see this." : `Delivered to ${customerName}.`,
-          });
-        })
-        .catch((error: unknown) => {
-          // The draft is kept on failure — losing what someone just typed
-          // because the network hiccupped is the one thing a composer must
-          // never do.
-          toast.error({
-            title: "Could not send",
-            description: error instanceof Error ? error.message : "Try again.",
-          });
-        })
-        .finally(() => setSending(false));
-      return;
-    }
-
-    toast.success({
-      title: isNote ? "Note added" : "Reply sent",
-      description: isNote ? "Only your team can see this." : `Delivered to ${customerName}.`,
-      action: { label: "Undo", onClick: () => setValue(value) },
-    });
-    setValue("");
-  };
-
-  const insert = (snippet: string) => {
-    setValue((current) => (current ? `${current}\n\n${snippet}` : snippet));
-    textareaRef.current?.focus();
+    const body = value;
+    setSending(true);
+    onSend(body, mode)
+      .then(() => {
+        setValue("");
+        toast.success({
+          title: isNote ? "Note added" : "Reply sent",
+          description: isNote ? "Only your team can see this." : `Delivered to ${customerName}.`,
+        });
+      })
+      .catch((error: unknown) => {
+        // The draft is kept on failure — losing what someone just typed
+        // because the network hiccupped is the one thing a composer must
+        // never do.
+        toast.error({
+          title: "Could not send",
+          description: error instanceof Error ? error.message : "Try again.",
+        });
+      })
+      .finally(() => setSending(false));
   };
 
   return (

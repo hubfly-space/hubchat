@@ -3,16 +3,14 @@ import {
   AvatarGroup,
   Checkbox,
   PriorityIndicator,
-  SlaBadge,
   TagChip,
   Tooltip,
   cn,
-  formatDuration,
   formatRelativeShort,
   type Conversation,
+  type Customer,
 } from "@hubchat/shared";
 import { AtSign, Globe, Mail, MessageSquare, Radio, Terminal, UserCog } from "lucide-react";
-import { NOW } from "../../data/fixtures";
 import { useWorkspace } from "../../app/workspace-context";
 
 const CHANNEL_ICON = {
@@ -30,10 +28,11 @@ const CHANNEL_ICON = {
  * The information budget here is brutal: roughly 372×64px must carry who, what,
  * when, how urgent, whether anyone owns it, and whether it is about to breach.
  * The ordering below is the priority order an agent scans in — identity, then
- * recency, then the SLA state, then everything else.
+ * recency, then everything else.
  */
 export function ConversationRow({
   conversation,
+  customer,
   selected,
   active,
   onSelect,
@@ -41,21 +40,18 @@ export function ConversationRow({
   showSelection,
 }: {
   conversation: Conversation;
+  customer: Customer | undefined;
   selected: boolean;
   active: boolean;
   onSelect: () => void;
   onToggleSelect: () => void;
   showSelection: boolean;
 }) {
-  const { customerById, memberById, tagById } = useWorkspace();
+  const { memberById } = useWorkspace();
 
-  const customer = customerById(conversation.customer_id);
   const assignee = memberById(conversation.assignee_id);
   const ChannelIcon = CHANNEL_ICON[conversation.channel];
   const viewers = conversation.viewers.map(memberById).filter(Boolean);
-
-  const slaRemaining =
-    conversation.sla?.next_response_remaining ?? conversation.sla?.first_response_remaining ?? null;
 
   return (
     <div
@@ -123,7 +119,7 @@ export function ConversationRow({
           </Tooltip>
 
           <span className="shrink-0 text-2xs tabular text-fg-muted">
-            {formatRelativeShort(conversation.last_message_at, NOW)}
+            {formatRelativeShort(conversation.last_message_at, new Date())}
           </span>
         </div>
 
@@ -145,17 +141,9 @@ export function ConversationRow({
         <div className="mt-1.5 flex items-center gap-1.5">
           <PriorityIndicator priority={conversation.priority} />
 
-          {conversation.sla && conversation.sla.state !== "none" && (
-            <SlaBadge
-              state={conversation.sla.state}
-              remaining={slaRemaining != null ? formatDuration(slaRemaining) : undefined}
-            />
-          )}
-
-          {conversation.tag_ids.slice(0, 2).map((tagId) => {
-            const tag = tagById(tagId);
-            return tag ? <TagChip key={tagId} label={tag.name} color={tag.color} /> : null;
-          })}
+          {conversation.tag_ids.slice(0, 2).map((tagId) => (
+            <TagChipById key={tagId} tagId={tagId} />
+          ))}
 
           {conversation.tag_ids.length > 2 && (
             <span className="text-2xs text-fg-disabled">+{conversation.tag_ids.length - 2}</span>
@@ -192,4 +180,10 @@ export function ConversationRow({
       </div>
     </div>
   );
+}
+
+function TagChipById({ tagId }: { tagId: string }) {
+  const { tagById } = useWorkspace();
+  const tag = tagById(tagId);
+  return tag ? <TagChip label={tag.name} color={tag.color} /> : null;
 }

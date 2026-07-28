@@ -7,13 +7,13 @@ import {
   MenuLabel,
   MenuRadioGroup,
   MenuRadioItem,
-  MenuSeparator,
   MenuTrigger,
   SegmentedControl,
   Tooltip,
   cn,
   useTheme,
   type Conversation,
+  type Customer,
 } from "@hubchat/shared";
 import {
   ArrowDownUp,
@@ -22,13 +22,12 @@ import {
   Inbox,
   Rows2,
   Rows3,
-  Tag,
   UserPlus,
 } from "lucide-react";
 import { useState } from "react";
 import { ConversationRow } from "./ConversationRow";
 
-export type SortKey = "recent" | "oldest" | "priority" | "sla";
+export type SortKey = "recent" | "oldest" | "priority";
 
 /**
  * Middle pane of the inbox.
@@ -39,14 +38,28 @@ export type SortKey = "recent" | "oldest" | "priority" | "sla";
  */
 export function ConversationList({
   conversations,
+  customersById,
   activeId,
   onSelect,
   viewName,
+  onBulkAssignToMe,
+  onBulkResolve,
+  bulkPending,
+  hasMore,
+  onLoadMore,
+  loadingMore,
 }: {
   conversations: Conversation[];
+  customersById: Map<string, Customer>;
   activeId: string | null;
   onSelect: (id: string) => void;
   viewName: string;
+  onBulkAssignToMe: (ids: string[]) => void;
+  onBulkResolve: (ids: string[]) => void;
+  bulkPending: boolean;
+  hasMore: boolean;
+  onLoadMore: () => void;
+  loadingMore: boolean;
 }) {
   const { density, setDensity } = useTheme();
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -71,13 +84,6 @@ export function ConversationList({
         const rank = { urgent: 0, high: 1, normal: 2, low: 3 };
         return rank[a.priority] - rank[b.priority];
       }
-      case "sla": {
-        const remaining = (conversation: Conversation) =>
-          conversation.sla?.next_response_remaining ??
-          conversation.sla?.first_response_remaining ??
-          Number.MAX_SAFE_INTEGER;
-        return remaining(a) - remaining(b);
-      }
       default:
         return b.last_message_at.localeCompare(a.last_message_at);
     }
@@ -92,14 +98,33 @@ export function ConversationList({
               {selected.size} selected
             </span>
             <div className="flex items-center gap-0.5">
-              <Tooltip content="Assign">
-                <Button variant="ghost" size="xs" iconOnly aria-label="Assign" leading={<UserPlus />} />
-              </Tooltip>
-              <Tooltip content="Tag">
-                <Button variant="ghost" size="xs" iconOnly aria-label="Tag" leading={<Tag />} />
+              <Tooltip content="Assign to me">
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  iconOnly
+                  aria-label="Assign to me"
+                  leading={<UserPlus />}
+                  loading={bulkPending}
+                  onClick={() => {
+                    onBulkAssignToMe([...selected]);
+                    setSelected(new Set());
+                  }}
+                />
               </Tooltip>
               <Tooltip content="Mark resolved">
-                <Button variant="ghost" size="xs" iconOnly aria-label="Resolve" leading={<CheckCheck />} />
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  iconOnly
+                  aria-label="Resolve"
+                  leading={<CheckCheck />}
+                  loading={bulkPending}
+                  onClick={() => {
+                    onBulkResolve([...selected]);
+                    setSelected(new Set());
+                  }}
+                />
               </Tooltip>
               <Button variant="ghost" size="xs" onClick={() => setSelected(new Set())}>
                 Cancel
@@ -139,10 +164,7 @@ export function ConversationList({
                     <MenuRadioItem value="recent">Most recent activity</MenuRadioItem>
                     <MenuRadioItem value="oldest">Oldest waiting</MenuRadioItem>
                     <MenuRadioItem value="priority">Priority</MenuRadioItem>
-                    <MenuRadioItem value="sla">SLA deadline</MenuRadioItem>
                   </MenuRadioGroup>
-                  <MenuSeparator />
-                  <MenuItem>Save as view…</MenuItem>
                 </MenuContent>
               </Menu>
 
@@ -173,17 +195,27 @@ export function ConversationList({
             description="This view is clear. New conversations appear here the moment they arrive."
           />
         ) : (
-          sorted.map((conversation) => (
-            <ConversationRow
-              key={conversation.id}
-              conversation={conversation}
-              active={conversation.id === activeId}
-              selected={selected.has(conversation.id)}
-              showSelection={selectionMode}
-              onSelect={() => onSelect(conversation.id)}
-              onToggleSelect={() => toggle(conversation.id)}
-            />
-          ))
+          <>
+            {sorted.map((conversation) => (
+              <ConversationRow
+                key={conversation.id}
+                conversation={conversation}
+                customer={conversation.customer_id ? customersById.get(conversation.customer_id) : undefined}
+                active={conversation.id === activeId}
+                selected={selected.has(conversation.id)}
+                showSelection={selectionMode}
+                onSelect={() => onSelect(conversation.id)}
+                onToggleSelect={() => toggle(conversation.id)}
+              />
+            ))}
+            {hasMore && (
+              <div className="flex justify-center p-3">
+                <Button variant="secondary" size="sm" loading={loadingMore} onClick={onLoadMore}>
+                  Load more
+                </Button>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
