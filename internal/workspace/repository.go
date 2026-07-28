@@ -29,7 +29,11 @@ type Member struct {
 	WorkspaceID string
 	UserID      string
 	Role        string
-	CreatedAt   time.Time
+	// ExtraCapabilities are grants beyond the role's defaults (§5.9). The
+	// effective set is role_permissions ∪ ExtraCapabilities — see
+	// ActorForUser, which is the one place that union actually happens.
+	ExtraCapabilities []string
+	CreatedAt         time.Time
 }
 
 type repository struct {
@@ -121,10 +125,12 @@ func (r *repository) byID(ctx context.Context, id string) (*Workspace, error) {
 func (r *repository) memberForUser(ctx context.Context, workspaceID, userID string) (*Member, error) {
 	var m Member
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, workspace_id, user_id, role, created_at
+		SELECT id, workspace_id, user_id, role, extra_capabilities, created_at
 		FROM workspace_members
 		WHERE workspace_id = $1 AND user_id = $2
-	`, workspaceID, userID).Scan(&m.ID, &m.WorkspaceID, &m.UserID, &m.Role, &m.CreatedAt)
+	`, workspaceID, userID).Scan(
+		&m.ID, &m.WorkspaceID, &m.UserID, &m.Role, &m.ExtraCapabilities, &m.CreatedAt,
+	)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -178,6 +184,62 @@ func (r *repository) capabilitiesForRole(ctx context.Context, roleKey string) (m
 		caps[authorization.Capability(capability)] = true
 	}
 	return caps, rows.Err()
+}
+
+// RoleDefinition is a built-in role and the capabilities it grants — the
+// read-only matrix the Roles settings screen renders (§5.9). Custom roles
+// are out of scope until a later release; every workspace shares this same
+// fixed set for now.
+type RoleDefinition struct {
+	Key          string
+	Name         string
+	Description  *string
+	Capabilities []string
+}
+
+// listRoleDefinitions loads every built-in role and its seeded permissions in
+// one query, ordered so owner (which Actor.Can short-circuits rather than
+// storing permissions for) sorts first regardless of insertion order.
+func (r *repository) listRoleDefinitions(ctx context.Context) ([]RoleDefinition, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT r.key, r.name, r.description,
+		       coalesce(
+		           array_agg(rp.capability) FILTER (WHERE rp.capability IS NOT NULL),
+		           '{}'
+		       ) AS capabilities
+		FROM roles r
+		LEFT JOIN role_permissions rp ON rp.role_id = r.id
+		WHERE r.workspace_id IS NULL AND r.is_builtin
+		GROUP BY r.id, r.key, r.name, r.description
+		ORDER BY (r.key != 'owner'), r.key
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []RoleDefinition{}
+	for rows.Next() {
+		var role RoleDefinition
+		if err := rows.Scan(&role.Key, &role.Name, &role.Description, &role.Capabilities); err != nil {
+			return nil, err
+		}
+		out = append(out, role)
+	}
+	return out, rows.Err()
+}
+
+// memberDisplayName resolves a member id to the user's current name, for
+// denormalising into an audit entry at write time. Runs inside the caller's
+// transaction so it sees the same snapshot everything else in that write does.
+func (r *repository) memberDisplayName(ctx context.Context, tx pgx.Tx, memberID string) (string, error) {
+	var name string
+	err := tx.QueryRow(ctx, `
+		SELECT u.name FROM workspace_members m
+		JOIN users u ON u.id = m.user_id
+		WHERE m.id = $1
+	`, memberID).Scan(&name)
+	return name, err
 }
 
 func isUniqueViolation(err error) bool {
