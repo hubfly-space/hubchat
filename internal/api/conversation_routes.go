@@ -97,15 +97,15 @@ func handleConversationCounts(deps Deps) http.HandlerFunc {
 			return
 		}
 		httpserver.WriteJSON(w, http.StatusOK, map[string]any{
-			"all":                counts.All,
-			"unassigned":         counts.Unassigned,
-			"mine":               counts.Mine,
-			"following":          counts.Following,
-			"waiting_on_us":      counts.WaitingOnUs,
+			"all":                 counts.All,
+			"unassigned":          counts.Unassigned,
+			"mine":                counts.Mine,
+			"following":           counts.Following,
+			"waiting_on_us":       counts.WaitingOnUs,
 			"waiting_on_customer": counts.WaitingOnCustomer,
-			"snoozed":            counts.Snoozed,
-			"resolved":           counts.Resolved,
-			"spam":               counts.Spam,
+			"snoozed":             counts.Snoozed,
+			"resolved":            counts.Resolved,
+			"spam":                counts.Spam,
 		})
 	}
 }
