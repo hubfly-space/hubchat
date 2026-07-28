@@ -1,4 +1,5 @@
 import {
+  api,
   Badge,
   BulkActionBar,
   Button,
@@ -6,6 +7,12 @@ import {
   EmptyState,
   FilterBar,
   IdentityCell,
+  invalidate,
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuLabel,
+  MenuTrigger,
   Page,
   PageHeader,
   Pagination,
@@ -13,155 +20,179 @@ import {
   StatusDot,
   TagChip,
   Toolbar,
-  Tooltip,
+  useInfinite,
+  useQuery,
   formatRelativeShort,
   type Column,
+  type Company,
   type Customer,
   type FilterCondition,
   type FilterFieldDef,
+  type Member,
+  type Paginated,
+  type Tag,
 } from "@hubchat/shared";
-import { BadgeCheck, Building2, Download, ShieldQuestion, Tag, Upload, UserRound, Users } from "lucide-react";
-import { useState } from "react";
+import { Download, Tag as TagIcon, UserRound, Users } from "lucide-react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWorkspace } from "../../app/workspace-context";
-import { NOW, customers } from "../../data/fixtures";
 
-const FILTER_FIELDS: FilterFieldDef[] = [
-  {
-    key: "verification",
-    label: "Identity",
-    icon: <BadgeCheck />,
-    operators: ["is", "is_not"],
-    options: [
-      { value: "verified", label: "Verified" },
-      { value: "unverified", label: "Unverified" },
-      { value: "anonymous", label: "Anonymous" },
-    ],
-  },
-  { key: "company", label: "Company", icon: <Building2 />, operators: ["is", "in"] },
-  { key: "tag", label: "Tag", icon: <Tag />, operators: ["is", "is_not", "in"] },
-  {
-    key: "plan",
-    label: "Plan",
-    icon: <UserRound />,
-    operators: ["is", "in"],
-    group: "Attributes",
-    options: [
-      { value: "starter", label: "Starter" },
-      { value: "growth", label: "Growth" },
-      { value: "enterprise", label: "Enterprise" },
-    ],
-  },
-  { key: "last_seen_at", label: "Last seen", icon: <UserRound />, operators: ["gt", "lt"], group: "Activity" },
-];
+function conditionsToParams(conditions: FilterCondition[]): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const condition of conditions) {
+    if (typeof condition.value !== "string" || condition.value === "") continue;
+    switch (condition.field) {
+      case "verification":
+        params.set("verification", condition.value);
+        break;
+      case "tag":
+        params.set("tag_id", condition.value);
+        break;
+      case "company":
+        params.set("company_id", condition.value);
+        break;
+    }
+  }
+  return params;
+}
 
-/** Customer directory (§6.9). */
+/**
+ * Customer directory (§6.9). Every visitor and identified contact who has
+ * ever reached out, regardless of channel.
+ */
 export default function CustomerList() {
   const navigate = useNavigate();
-  const { companyById, tagById } = useWorkspace();
+  const { members, tags, tagById } = useWorkspace();
+
   const [query, setQuery] = useState("");
   const [conditions, setConditions] = useState<FilterCondition[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  const rows = customers.filter((customer) => {
-    if (!query) return true;
-    const haystack = `${customer.name ?? ""} ${customer.email ?? ""} ${customer.external_id ?? ""}`;
-    return haystack.toLowerCase().includes(query.toLowerCase());
+  const companies = useQuery<{ data: Company[] }>(["companies", "picker"], (signal) =>
+    api.get("/companies?limit=100", { signal }),
+  );
+
+  const filterFields: FilterFieldDef[] = useMemo(
+    () => [
+      {
+        key: "verification",
+        label: "Verification",
+        icon: <UserRound />,
+        operators: ["is"],
+        options: [
+          { value: "verified", label: "Verified" },
+          { value: "unverified", label: "Unverified" },
+          { value: "anonymous", label: "Anonymous" },
+        ],
+      },
+      {
+        key: "tag",
+        label: "Tag",
+        icon: <TagIcon />,
+        operators: ["is"],
+        options: tags.map((t) => ({ value: t.id, label: t.name })),
+      },
+      {
+        key: "company",
+        label: "Company",
+        icon: <Users />,
+        operators: ["is"],
+        options: (companies.data?.data ?? []).map((c) => ({ value: c.id, label: c.name })),
+      },
+    ],
+    [tags, companies.data],
+  );
+
+  const filterParams = useMemo(() => {
+    const params = conditionsToParams(conditions);
+    if (query.trim()) params.set("q", query.trim());
+    return params.toString();
+  }, [conditions, query]);
+
+  const list = useInfinite<Customer>(["customers", "directory", filterParams], (cursor, signal) => {
+    const params = new URLSearchParams(filterParams);
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<Customer>>(`/customers?${params.toString()}`, { signal });
   });
+
+  const companyById = useMemo(() => new Map((companies.data?.data ?? []).map((c) => [c.id, c])), [companies.data]);
+  const memberById = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
+
+  const [bulkPending, setBulkPending] = useState(false);
+  const runBulk = async (fn: (id: string) => Promise<unknown>) => {
+    setBulkPending(true);
+    try {
+      await Promise.all([...selected].map(fn));
+    } finally {
+      invalidate(["customers"]);
+      setBulkPending(false);
+      setSelected(new Set());
+    }
+  };
 
   const columns: Column<Customer>[] = [
     {
       key: "name",
       header: "Customer",
-      cell: (customer) => (
-        <IdentityCell
-          name={customer.name ?? "Anonymous visitor"}
-          secondary={customer.email ?? customer.external_id ?? "No contact details"}
-          seed={customer.id}
-          status={customer.presence === "online" ? "online" : null}
-        />
-      ),
+      cell: (c) => <IdentityCell name={c.name ?? "Anonymous"} secondary={c.email ?? c.external_id ?? undefined} seed={c.id} />,
       sortable: true,
     },
     {
       key: "verification",
-      header: "Identity",
-      width: "116px",
-      cell: (customer) =>
-        customer.verification === "verified" ? (
-          <Badge tone="success" leading={<BadgeCheck />}>
-            Verified
-          </Badge>
+      header: "Verification",
+      width: "120px",
+      cell: (c) =>
+        c.verification === "verified" ? (
+          <Badge tone="success">Verified</Badge>
         ) : (
-          <Tooltip
-            content={
-              customer.verification === "anonymous"
-                ? "No identity supplied. Do not disclose account details."
-                : "Self-reported. Not backed by a signed token."
-            }
-          >
-            <span>
-              <Badge
-                tone={customer.verification === "anonymous" ? "neutral" : "warning"}
-                leading={<ShieldQuestion />}
-              >
-                {customer.verification === "anonymous" ? "Anonymous" : "Unverified"}
-              </Badge>
-            </span>
-          </Tooltip>
+          <Badge tone={c.verification === "anonymous" ? "neutral" : "warning"}>{c.verification}</Badge>
         ),
     },
     {
       key: "company",
       header: "Company",
-      width: "180px",
-      hideBelow: "md",
-      cell: (customer) => {
-        const company = companyById(customer.company_ids[0] ?? null);
-        return company ? (
-          <span className="truncate text-xs text-fg-secondary">{company.name}</span>
-        ) : (
-          <span className="text-xs text-fg-disabled">—</span>
-        );
+      width: "160px",
+      hideBelow: "lg",
+      cell: (c) => {
+        const company = c.company_ids[0] ? companyById.get(c.company_ids[0]) : undefined;
+        return <span className="truncate text-xs text-fg-secondary">{company?.name ?? "—"}</span>;
       },
     },
     {
-      key: "plan",
-      header: "Plan",
-      width: "104px",
-      hideBelow: "lg",
-      cell: (customer) => (
-        <span className="text-xs capitalize text-fg-secondary">
-          {String(customer.attributes.plan ?? "—")}
-        </span>
-      ),
+      key: "owner",
+      header: "Owner",
+      width: "140px",
+      hideBelow: "md",
+      cell: (c) => {
+        const owner = c.owner_id ? memberById.get(c.owner_id) : undefined;
+        return <span className="truncate text-xs text-fg-secondary">{owner?.name ?? "—"}</span>;
+      },
     },
     {
       key: "tags",
       header: "Tags",
       width: "160px",
-      hideBelow: "xl",
-      cell: (customer) => (
-        <span className="flex flex-wrap gap-1">
-          {customer.tag_ids.map((tagId) => {
+      hideBelow: "lg",
+      cell: (c) => (
+        <div className="flex flex-wrap gap-1">
+          {c.tag_ids.slice(0, 2).map((tagId) => {
             const tag = tagById(tagId);
             return tag ? <TagChip key={tagId} label={tag.name} color={tag.color} /> : null;
           })}
-        </span>
+        </div>
       ),
     },
     {
       key: "last_seen_at",
       header: "Last seen",
-      width: "100px",
+      width: "110px",
       numeric: true,
-      cell: (customer) => (
+      cell: (c) => (
         <span className="flex items-center justify-end gap-1.5 text-xs text-fg-muted">
-          {customer.presence === "online" && <StatusDot status="online" />}
-          {customer.last_seen_at ? formatRelativeShort(customer.last_seen_at, NOW) : "never"}
+          {c.presence === "online" && <StatusDot status="live" />}
+          {c.last_seen_at ? `${formatRelativeShort(c.last_seen_at, new Date())} ago` : "never"}
         </span>
       ),
-      sortable: true,
     },
   ];
 
@@ -171,42 +202,41 @@ export default function CustomerList() {
         title="Customers"
         description="Everyone who has contacted you, identified or not."
         actions={
-          <>
-            <Button variant="secondary" size="sm" leading={<Upload />}>
-              Import CSV
-            </Button>
-            <Button variant="secondary" size="sm" leading={<Download />}>
-              Export
-            </Button>
-          </>
+          <Button
+            variant="secondary"
+            size="sm"
+            leading={<Download />}
+            onClick={() => window.open(`/api/v1/customers?${filterParams}&limit=1000`, "_blank")}
+          >
+            Export
+          </Button>
         }
       />
 
       <Toolbar
         leading={
-          <>
-            <div className="w-64">
-              <SearchInput
-                inputSize="sm"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onClear={() => setQuery("")}
-                placeholder="Name, email, or external ID"
-              />
-            </div>
-            <FilterBar fields={FILTER_FIELDS} conditions={conditions} onChange={setConditions} />
-          </>
+          <div className="flex items-center gap-2">
+            <SearchInput
+              inputSize="sm"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onClear={() => setQuery("")}
+              placeholder="Search by name, email…"
+            />
+            <FilterBar fields={filterFields} conditions={conditions} onChange={setConditions} />
+          </div>
         }
       />
 
       <div className="min-h-0 flex-1 overflow-auto">
         <DataTable
           aria-label="Customers"
-          rows={rows}
+          rows={list.items}
           columns={columns}
-          rowKey={(customer) => customer.id}
-          onRowClick={(customer) => navigate(`/customers/${customer.id}`)}
+          rowKey={(c) => c.id}
+          onRowClick={(c) => navigate(`/customers/${c.id}`)}
           selection={{ selected, onChange: setSelected }}
+          loading={list.isLoading}
           empty={
             <EmptyState
               icon={Users}
@@ -219,23 +249,84 @@ export default function CustomerList() {
 
       <Pagination
         hasPrevious={false}
-        hasNext={false}
+        hasNext={list.hasMore}
         onPrevious={() => undefined}
-        onNext={() => undefined}
-        summary={`${rows.length} of ${customers.length}`}
+        onNext={() => void list.fetchNext()}
+        summary={`${list.items.length} loaded${list.hasMore ? "+" : ""}`}
       />
 
       <BulkActionBar count={selected.size} onClear={() => setSelected(new Set())}>
-        <Button variant="ghost" size="sm">
-          Add tag
-        </Button>
-        <Button variant="ghost" size="sm">
-          Assign owner
-        </Button>
-        <Button variant="ghost" size="sm">
-          Export selected
-        </Button>
+        <TagPickerMenu
+          tags={tags}
+          disabled={bulkPending}
+          onSelect={(tagId) => void runBulk((id) => api.post(`/customers/${id}/tags`, { tag_id: tagId }))}
+        />
+        <OwnerPickerMenu
+          members={members}
+          disabled={bulkPending}
+          onSelect={(ownerId) => void runBulk((id) => api.patch(`/customers/${id}/owner`, { owner_id: ownerId }))}
+        />
       </BulkActionBar>
     </Page>
+  );
+}
+
+function TagPickerMenu({
+  tags,
+  disabled,
+  onSelect,
+}: {
+  tags: Tag[];
+  disabled: boolean;
+  onSelect: (tagId: string) => void;
+}) {
+  return (
+    <Menu>
+      <MenuTrigger asChild>
+        <Button variant="ghost" size="sm" disabled={disabled}>
+          Add tag
+        </Button>
+      </MenuTrigger>
+      <MenuContent>
+        <MenuLabel>Tags</MenuLabel>
+        {tags.length === 0 ? (
+          <div className="px-2 py-1.5 text-xs text-fg-muted">No tags yet</div>
+        ) : (
+          tags.map((tag) => (
+            <MenuItem key={tag.id} onSelect={() => onSelect(tag.id)}>
+              {tag.name}
+            </MenuItem>
+          ))
+        )}
+      </MenuContent>
+    </Menu>
+  );
+}
+
+function OwnerPickerMenu({
+  members,
+  disabled,
+  onSelect,
+}: {
+  members: Member[];
+  disabled: boolean;
+  onSelect: (ownerId: string) => void;
+}) {
+  return (
+    <Menu>
+      <MenuTrigger asChild>
+        <Button variant="ghost" size="sm" disabled={disabled}>
+          Assign owner
+        </Button>
+      </MenuTrigger>
+      <MenuContent>
+        <MenuLabel>Owner</MenuLabel>
+        {members.map((member) => (
+          <MenuItem key={member.id} onSelect={() => onSelect(member.id)}>
+            {member.name}
+          </MenuItem>
+        ))}
+      </MenuContent>
+    </Menu>
   );
 }
