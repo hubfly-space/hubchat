@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/httpserver"
 	"github.com/hubchat/hubchat/internal/workspace"
 )
@@ -14,32 +13,6 @@ func registerWorkspaceRoutes(mux *http.ServeMux, deps Deps) {
 	// — this is the endpoint §7.2's onboarding flow calls to create the very
 	// first workspace for a new owner.
 	mux.HandleFunc("POST /v1/workspaces", handleCreateWorkspace(deps))
-
-	mux.HandleFunc("GET /v1/inboxes",
-		requireCapability(deps, authorization.ConversationRead, handleListInboxes(deps)))
-}
-
-func handleListInboxes(deps Deps) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		actor := actorFromRequest(r)
-
-		inboxes, err := deps.Workspace.ListInboxes(r.Context(), actor.WorkspaceID)
-		if err != nil {
-			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load inboxes.")
-			return
-		}
-
-		out := make([]any, len(inboxes))
-		for i, inbox := range inboxes {
-			out[i] = map[string]any{
-				"id":         inbox.ID,
-				"name":       inbox.Name,
-				"slug":       inbox.Slug,
-				"is_default": inbox.IsDefault,
-			}
-		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
-	}
 }
 
 type createWorkspaceRequest struct {

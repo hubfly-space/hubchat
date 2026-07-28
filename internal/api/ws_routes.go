@@ -42,7 +42,8 @@ func NewWebSocketHandler(deps Deps, hub *realtime.Hub) http.Handler {
 			}
 		}
 
-		if _, err := deps.Workspace.ActorForUser(r.Context(), workspaceID, user.ID); err != nil {
+		actor, err := deps.Workspace.ActorForUser(r.Context(), workspaceID, user.ID)
+		if err != nil {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -63,7 +64,7 @@ func NewWebSocketHandler(deps Deps, hub *realtime.Hub) http.Handler {
 		// has to react to conversations they are not currently reading. The
 		// grant is decided here, at the boundary that verified membership, and
 		// the hub only ever narrows it (§11.3).
-		hub.Serve(r.Context(), conn, workspaceID, realtime.AgentGrant())
+		hub.Serve(r.Context(), conn, workspaceID, realtime.AgentGrant(actor.MemberID, user.Name))
 	})
 
 	return mux
