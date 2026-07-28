@@ -69,6 +69,7 @@ type memberJSON struct {
 	Teams        []string `json:"teams"`
 	Presence     string   `json:"presence"`
 	Accepting    bool     `json:"accepting_conversations"`
+	LastSeenAt   *string  `json:"last_seen_at"`
 	CreatedAt    string   `json:"created_at"`
 }
 
@@ -81,6 +82,7 @@ type teamJSON struct {
 	MemberIDs       []string `json:"member_ids"`
 	InboxIDs        []string `json:"inbox_ids"`
 	RoutingStrategy string   `json:"routing_strategy"`
+	CreatedAt       string   `json:"created_at"`
 }
 
 type tagJSON struct {
@@ -163,6 +165,7 @@ func buildBootstrapResponse(data *workspace.Bootstrap) bootstrapResponse {
 			Teams:        orEmpty(member.TeamIDs),
 			Presence:     member.Presence,
 			Accepting:    member.Accepting,
+			LastSeenAt:   formatOptionalTime(member.LastSeenAt),
 			CreatedAt:    member.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
@@ -177,11 +180,12 @@ func buildBootstrapResponse(data *workspace.Bootstrap) bootstrapResponse {
 			MemberIDs:       orEmpty(team.MemberIDs),
 			InboxIDs:        []string{},
 			RoutingStrategy: team.RoutingStrategy,
+			CreatedAt:       team.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
 
 	for _, tag := range data.Tags {
-		response.Tags = append(response.Tags, tagJSON(tag))
+		response.Tags = append(response.Tags, tagJSON{ID: tag.ID, Name: tag.Name, Color: tag.Color})
 	}
 
 	for _, inbox := range data.Inboxes {

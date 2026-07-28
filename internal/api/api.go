@@ -18,6 +18,7 @@ import (
 	"github.com/hubchat/hubchat/internal/audit"
 	"github.com/hubchat/hubchat/internal/auth"
 	"github.com/hubchat/hubchat/internal/authorization"
+	"github.com/hubchat/hubchat/internal/config"
 	"github.com/hubchat/hubchat/internal/conversation"
 	"github.com/hubchat/hubchat/internal/database"
 	"github.com/hubchat/hubchat/internal/events"
@@ -49,6 +50,12 @@ type Deps struct {
 	// controls (§11.4).
 	PublicURL *url.URL
 
+	// Config backs the /v1/setup/state diagnostics the first-run wizard reads.
+	// Handlers otherwise reach for the narrower fields above rather than this
+	// — it exists for the one screen that legitimately needs a deployment-wide
+	// view, not as a general escape hatch around Deps' explicit surface.
+	Config config.Config
+
 	CookieDomain string
 	CookieSecure bool
 }
@@ -65,8 +72,15 @@ func New(deps Deps) http.Handler {
 
 	registerAuthRoutes(mux, deps)
 	registerAuthFlowRoutes(mux, deps)
+	registerSetupRoutes(mux, deps)
 	registerBootstrapRoutes(mux, deps)
 	registerWorkspaceRoutes(mux, deps)
+	registerMemberRoutes(mux, deps)
+	registerInviteRoutes(mux, deps)
+	registerTeamRoutes(mux, deps)
+	registerSettingsRoutes(mux, deps)
+	registerTagRoutes(mux, deps)
+	registerAuditRoutes(mux, deps)
 	registerConversationRoutes(mux, deps)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

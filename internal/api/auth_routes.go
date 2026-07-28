@@ -47,6 +47,12 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
+// handleLogin goes through Service.SignIn rather than Authenticate+CreateSession
+// directly — SignIn is what applies brute-force lockout and branches into a
+// 2FA challenge when the account has one enrolled (§11.1, §11.4). Calling
+// Authenticate here instead, as an earlier draft of this handler did, silently
+// bypasses both: an account with two-factor enabled would sign straight in on
+// a password alone, and repeated wrong guesses would never lock.
 func handleLogin(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req loginRequest
@@ -55,16 +61,13 @@ func handleLogin(deps Deps) http.HandlerFunc {
 			return
 		}
 
-		user, err := deps.Auth.Authenticate(r.Context(), req.Email, req.Password)
+		result, err := deps.Auth.SignIn(r.Context(), req.Email, req.Password, r.UserAgent(), clientIP(r))
 		if err != nil {
-			writeAuthError(w, r, err)
+			writeAuthFlowError(w, r, err)
 			return
 		}
 
-		issueSession(w, r, deps, user.ID)
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{
-			"id": user.ID, "name": user.Name, "email": user.Email,
-		})
+		writeSignInResult(w, r, deps, result)
 	}
 }
 
