@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,6 +55,11 @@ type Hub struct {
 	// O(all connections) — the difference matters once a deployment has
 	// several workspaces, each with their own busy inbox.
 	byWorkspace map[string]map[*client]struct{}
+	// viewers indexes clients currently subscribed to a "conversation:<id>"
+	// topic, keyed by that topic string — §6.12's collision-prevention
+	// presence. Only conversation topics are tracked here; TopicWorkspace
+	// itself never needs a viewer list.
+	viewers map[string]map[*client]struct{}
 	// cursor tracks how far each workspace has been broadcast, so a NOTIFY
 	// signal reads only what is new rather than re-reading from zero.
 	cursor map[string]int64
@@ -73,6 +79,7 @@ func NewHub(logger *slog.Logger, outboundQueueSize int) *Hub {
 		logger:            logger,
 		clients:           make(map[*client]struct{}),
 		byWorkspace:       make(map[string]map[*client]struct{}),
+		viewers:           make(map[string]map[*client]struct{}),
 		cursor:            make(map[string]int64),
 		outboundQueueSize: outboundQueueSize,
 		writeTimeout:      5 * time.Second,
@@ -225,6 +232,60 @@ func (h *Hub) deliver(workspaceID string, record events.Record) {
 	}
 }
 
+// broadcastTyping relays a typing indicator live, to every other connection
+// that would receive events on this conversation's topic — the same
+// audience deliver would reach, computed the same way, but never durable:
+// nothing here touches workspace_events or the per-workspace cursor.
+//
+// A visitor may only speak for the conversation its own grant names; an
+// agent (holding the workspace firehose) always may, the same authority that
+// already lets it see every conversation's durable events.
+func (h *Hub) broadcastTyping(sender *client, conversationID string, typing bool) {
+	if conversationID == "" {
+		return
+	}
+
+	isAgent := sender.grant.MemberID != ""
+	topic := "conversation:" + conversationID
+	if !isAgent && !sender.allows(topic) {
+		return
+	}
+
+	actorType := "customer"
+	if isAgent {
+		actorType = "agent"
+	}
+	payload, err := encodeFrame(framePresenceTyping, struct {
+		ConversationID string `json:"conversation_id"`
+		ActorType      string `json:"actor_type"`
+		MemberID       string `json:"member_id,omitempty"`
+		MemberName     string `json:"member_name,omitempty"`
+		Typing         bool   `json:"typing"`
+	}{
+		ConversationID: conversationID,
+		ActorType:      actorType, MemberID: sender.grant.MemberID, MemberName: sender.grant.MemberName,
+		Typing: typing,
+	})
+	if err != nil {
+		return
+	}
+
+	h.mu.RLock()
+	targets := make([]*client, 0, len(h.byWorkspace[sender.workspaceID]))
+	for c := range h.byWorkspace[sender.workspaceID] {
+		if c != sender {
+			targets = append(targets, c)
+		}
+	}
+	h.mu.RUnlock()
+
+	for _, c := range targets {
+		if c.wants(topic) {
+			c.enqueue(h, payload)
+		}
+	}
+}
+
 // topicFor names the narrow topic an event belongs to, if any. Events without
 // an entity reach only workspace-wide subscribers.
 func topicFor(record events.Record) string {
@@ -284,9 +345,13 @@ func (h *Hub) register(c *client) {
 }
 
 func (h *Hub) unregister(c *client) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	// Read before taking h.mu: c.topicList() takes the client's own lock, and
+	// every other caller here locks h.mu first — matching that order avoids
+	// a lock-ordering deadlock with, say, deliver holding h.mu while trying
+	// to read a client's topics.
+	topics := c.topicList()
 
+	h.mu.Lock()
 	delete(h.clients, c)
 	if set, ok := h.byWorkspace[c.workspaceID]; ok {
 		delete(set, c)
@@ -298,6 +363,132 @@ func (h *Hub) unregister(c *client) {
 			delete(h.cursor, c.workspaceID)
 		}
 	}
+	var conversationTopics []string
+	for _, topic := range topics {
+		if strings.HasPrefix(topic, conversationTopicPrefix) {
+			h.removeViewerLocked(topic, c)
+			conversationTopics = append(conversationTopics, topic)
+		}
+	}
+	h.mu.Unlock()
+
+	// Broadcasting locks h.mu itself (RLock), so it happens after Unlock —
+	// sync.RWMutex is not reentrant.
+	for _, topic := range conversationTopics {
+		h.broadcastViewers(c.workspaceID, topic)
+	}
+}
+
+// addViewer and removeViewer maintain the per-conversation-topic viewer
+// index that backs Viewers() and the "presence.viewing" broadcast — called
+// from subscribeTopics/unsubscribeTopics for every topic that names a
+// conversation (TopicWorkspace itself is never tracked here; everyone with
+// it can already see everything, so "viewing" it means nothing).
+func (h *Hub) addViewer(topic string, c *client) {
+	if !strings.HasPrefix(topic, conversationTopicPrefix) {
+		return
+	}
+	h.mu.Lock()
+	if h.viewers[topic] == nil {
+		h.viewers[topic] = make(map[*client]struct{})
+	}
+	h.viewers[topic][c] = struct{}{}
+	h.mu.Unlock()
+
+	h.broadcastViewers(c.workspaceID, topic)
+}
+
+func (h *Hub) removeViewer(topic string, c *client) {
+	if !strings.HasPrefix(topic, conversationTopicPrefix) {
+		return
+	}
+	h.mu.Lock()
+	h.removeViewerLocked(topic, c)
+	h.mu.Unlock()
+
+	h.broadcastViewers(c.workspaceID, topic)
+}
+
+func (h *Hub) removeViewerLocked(topic string, c *client) {
+	set, ok := h.viewers[topic]
+	if !ok {
+		return
+	}
+	delete(set, c)
+	if len(set) == 0 {
+		delete(h.viewers, topic)
+	}
+}
+
+const conversationTopicPrefix = "conversation:"
+
+// Viewers returns the member ids of every agent currently subscribed to a
+// conversation's topic — §6.12's "someone else has this open" indicator.
+// Visitor connections never appear here: they have no MemberID, and a
+// visitor is never "another viewer" of their own conversation.
+func (h *Hub) Viewers(conversationID string) []string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.viewersLocked(conversationTopicPrefix + conversationID)
+}
+
+// viewersLocked assumes h.mu is already held (read or write).
+func (h *Hub) viewersLocked(topic string) []string {
+	set := h.viewers[topic]
+	out := make([]string, 0, len(set))
+	seen := make(map[string]bool, len(set))
+	for c := range set {
+		if c.grant.MemberID == "" || seen[c.grant.MemberID] {
+			continue
+		}
+		seen[c.grant.MemberID] = true
+		out = append(out, c.grant.MemberID)
+	}
+	return out
+}
+
+// broadcastViewers sends the live viewer list to every connection in
+// workspaceID that wants this conversation's topic, whenever the list
+// changes. Like typing, this is presence — never appended to
+// workspace_events, since a viewer list five minutes stale describes nobody
+// actually looking anymore. Scoped to workspaceID explicitly (rather than
+// matching topic across every connected client) because two different
+// workspaces' agents both hold the bare TopicWorkspace membership that
+// c.wants uses to mean "everything" — without the scope, one workspace's
+// viewer presence would leak into another's.
+func (h *Hub) broadcastViewers(workspaceID, topic string) {
+	conversationID := strings.TrimPrefix(topic, conversationTopicPrefix)
+
+	h.mu.RLock()
+	viewers := h.viewersLocked(topic)
+	targets := make([]*client, 0, len(h.byWorkspace[workspaceID]))
+	for c := range h.byWorkspace[workspaceID] {
+		targets = append(targets, c)
+	}
+	h.mu.RUnlock()
+
+	payload, err := encodeFrame(framePresenceViewers, struct {
+		ConversationID string   `json:"conversation_id"`
+		Viewers        []string `json:"viewers"`
+	}{ConversationID: conversationID, Viewers: viewers})
+	if err != nil {
+		return
+	}
+
+	for _, c := range targets {
+		if c.wants(topic) {
+			c.enqueue(h, payload)
+		}
+	}
+}
+
+// encodeFrame wraps data in the same events.Record envelope every durable
+// event and control frame uses, so a client's one parser handles presence
+// frames identically to everything else. Unlike client.sendControl (which
+// sends to one connection) this returns the bytes so a broadcast to many
+// targets encodes once rather than per recipient.
+func encodeFrame(frameType string, data any) ([]byte, error) {
+	return json.Marshal(events.Record{Type: events.Type(frameType), Data: mustJSON(data)})
 }
 
 // ConnectionCount reports total connected clients, for the readiness endpoint

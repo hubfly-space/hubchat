@@ -24,13 +24,22 @@ type Grant struct {
 	// Topics active immediately, so an agent's inbox is live without a
 	// round trip.
 	Initial []string
+	// MemberID and MemberName identify an agent connection for presence
+	// frames (typing, viewing) — empty for a visitor grant, which speaks for
+	// itself through the conversation it owns rather than an identity of its
+	// own. Carried here rather than looked up per-keystroke so a typing
+	// indicator costs no database round trip.
+	MemberID   string
+	MemberName string
 }
 
 // AgentGrant is the grant for an authenticated member: the workspace firehose.
-func AgentGrant() Grant {
+func AgentGrant(memberID, memberName string) Grant {
 	return Grant{
-		Allowed: []string{TopicWorkspace},
-		Initial: []string{TopicWorkspace},
+		Allowed:    []string{TopicWorkspace},
+		Initial:    []string{TopicWorkspace},
+		MemberID:   memberID,
+		MemberName: memberName,
 	}
 }
 
@@ -85,9 +94,15 @@ func newClient(conn *websocket.Conn, workspaceID string, grant Grant, queueSize 
 
 // allows reports whether the grant permits a topic. Called before every
 // subscribe, so an unauthorized topic is refused rather than silently ignored.
+//
+// A connection holding TopicWorkspace may subscribe to any narrow topic in
+// addition — an agent already receives every conversation's events through
+// the firehose, so a conversation subscription grants no new visibility. It
+// exists purely as a presence marker ("I have this open"; see Hub.addViewer),
+// which is exactly why it is safe to allow unconditionally here.
 func (c *client) allows(topic string) bool {
 	for _, allowed := range c.grant.Allowed {
-		if allowed == topic {
+		if allowed == topic || allowed == TopicWorkspace {
 			return true
 		}
 	}
