@@ -53,6 +53,23 @@ func (r *repository) insertWorkspace(
 	return err
 }
 
+// allocateTicketNumber increments the workspace's ticket_sequence and returns
+// the prefix and new number in one statement. UPDATE...RETURNING takes the
+// row's lock itself, so two tickets created concurrently in the same
+// workspace can never be handed the same number — the second writer simply
+// waits for the first's transaction to commit or roll back.
+func (r *repository) allocateTicketNumber(ctx context.Context, tx pgx.Tx, workspaceID string) (prefix string, number int, err error) {
+	err = tx.QueryRow(ctx, `
+		UPDATE workspaces SET ticket_sequence = ticket_sequence + 1
+		WHERE id = $1
+		RETURNING ticket_prefix, ticket_sequence
+	`, workspaceID).Scan(&prefix, &number)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", 0, ErrNotFound
+	}
+	return prefix, number, err
+}
+
 func (r *repository) insertOwnerMember(ctx context.Context, tx pgx.Tx, id, workspaceID, userID string) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO workspace_members (id, workspace_id, user_id, role, presence)

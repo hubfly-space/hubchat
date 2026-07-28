@@ -128,6 +128,14 @@ func (s *Service) Get(ctx context.Context, id string) (*Workspace, error) {
 	return s.repo.byID(ctx, id)
 }
 
+// AllocateTicketNumber hands the ticket module the next display number for
+// workspaceID, inside the caller's own transaction — so a ticket insert and
+// its number allocation commit or roll back together, and a failed create
+// never leaves a gap another module has to explain (§6.3 ticket numbering).
+func (s *Service) AllocateTicketNumber(ctx context.Context, tx pgx.Tx, workspaceID string) (prefix string, number int, err error) {
+	return s.repo.allocateTicketNumber(ctx, tx, workspaceID)
+}
+
 // ListRoles returns every built-in role with its effective capability set,
 // for the read-only Roles & permissions screen (§5.9). Owner's row is filled
 // in from authorization.AllCapabilityNames rather than role_permissions,
