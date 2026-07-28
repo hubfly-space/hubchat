@@ -44,6 +44,7 @@ const (
 	CustomerRead          Capability = "customer.read"
 	CustomerReadSensitive Capability = "customer.read_sensitive"
 	CustomerMerge         Capability = "customer.merge"
+	CompanyManage         Capability = "company.manage"
 
 	TicketManage        Capability = "ticket.manage"
 	WidgetManage        Capability = "widget.manage"
@@ -68,7 +69,7 @@ const (
 // do.
 var allCapabilities = []Capability{
 	ConversationRead, ConversationReply, ConversationAssign, ConversationDelete,
-	CustomerRead, CustomerReadSensitive, CustomerMerge,
+	CustomerRead, CustomerReadSensitive, CustomerMerge, CompanyManage,
 	TicketManage, WidgetManage, PortalManage, KnowledgebaseManage,
 	FeedbackModerate, AutomationManage, SLAManage, IntegrationManage,
 	ReportRead, AuditRead, MemberManage, WorkspaceManage, WorkspaceManageSecurity,
