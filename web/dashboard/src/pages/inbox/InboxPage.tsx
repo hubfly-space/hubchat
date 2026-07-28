@@ -156,6 +156,12 @@ function viewFilterParams(viewId: string, viewerId: string, inboxes: Inbox[]): s
 
   switch (viewId) {
     case "all":
+      // The backend's own default (no `state` param) excludes only closed
+      // and spam, matching the conversations_active_queue index verbatim.
+      // "All active" as a product concept is narrower than that — resolved
+      // means done, not active — so this view asks for the narrower set
+      // explicitly rather than relying on the broader default.
+      params.set("state", "new,open,pending,waiting_for_customer,waiting_for_support,snoozed");
       break;
     case "unassigned":
       params.set("assignee_id", "unassigned");
