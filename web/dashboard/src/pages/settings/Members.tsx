@@ -1,4 +1,6 @@
 import {
+  api,
+  ApiError,
   Badge,
   Button,
   Callout,
@@ -22,25 +24,30 @@ import {
   Page,
   PageBody,
   PageHeader,
+  QueryBoundary,
   RadioGroup,
   SearchInput,
   Section,
-  Select,
+  Switch,
   Tabs,
   TabsContent,
   TabsList,
   Toolbar,
   Tooltip,
   formatRelativeShort,
+  invalidate,
+  useMutation,
+  useQuery,
   type BadgeTone,
   type Column,
   type Member,
   type MemberRole,
+  type Team,
 } from "@hubchat/shared";
 import { MoreHorizontal, ShieldAlert, UserMinus, UserPlus, UsersRound } from "lucide-react";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useWorkspace } from "../../app/workspace-context";
-import { NOW, members, teams } from "../../data/fixtures";
 
 const ROLE: Record<MemberRole, { label: string; tone: BadgeTone; detail: string }> = {
   owner: { label: "Owner", tone: "accent", detail: "Full control, including deleting the workspace." },
@@ -51,18 +58,42 @@ const ROLE: Record<MemberRole, { label: string; tone: BadgeTone; detail: string 
   analyst: { label: "Analyst", tone: "neutral", detail: "Read-only reports and records." },
 };
 
-const PENDING_INVITES = [
-  { id: "inv_1", email: "noor@northwind.cloud", role: "agent" as MemberRole, sent: "2026-07-24T09:00:00Z" },
-  { id: "inv_2", email: "contract-dev@vendor.example", role: "developer" as MemberRole, sent: "2026-07-19T14:30:00Z" },
-];
+type Invite = {
+  id: string;
+  email: string;
+  role: MemberRole;
+  expires_at: string;
+  created_at: string;
+};
 
 /** Members and invitations (§5, §6.1). */
 export default function Members() {
   const { viewer } = useWorkspace();
+  const navigate = useNavigate();
   const [tab, setTab] = useState("active");
   const [query, setQuery] = useState("");
+  const [managingTeamsFor, setManagingTeamsFor] = useState<Member | null>(null);
 
-  const rows = members.filter((member) =>
+  const members = useQuery<{ data: Member[] }>(["members"], (signal) => api.get("/members", { signal }));
+  const teams = useQuery<{ data: Team[] }>(["teams"], (signal) => api.get("/teams", { signal }));
+  const invites = useQuery<{ data: Invite[] }>(["invites"], (signal) => api.get("/invites", { signal }));
+
+  const setRole = useMutation<{ id: string; role: string }, unknown>(
+    ({ id, role }) => api.patch(`/members/${id}/role`, { role }),
+    { invalidates: [["members"]] },
+  );
+  const removeMember = useMutation<string, unknown>(
+    (id) => api.delete(`/members/${id}`),
+    { invalidates: [["members"]] },
+  );
+  const revokeInvite = useMutation<string, unknown>(
+    (id) => api.delete(`/invites/${id}`),
+    { invalidates: [["invites"]] },
+  );
+
+  const teamById = new Map((teams.data?.data ?? []).map((team) => [team.id, team]));
+
+  const rows = (members.data?.data ?? []).filter((member) =>
     `${member.name} ${member.email}`.toLowerCase().includes(query.toLowerCase()),
   );
 
@@ -71,13 +102,7 @@ export default function Members() {
       key: "name",
       header: "Member",
       cell: (member) => (
-        <IdentityCell
-          name={member.name}
-          secondary={member.email}
-          seed={member.id}
-          size="sm"
-          status={member.presence}
-        />
+        <IdentityCell name={member.name} secondary={member.email} seed={member.id} size="sm" status={member.presence} />
       ),
       sortable: true,
     },
@@ -106,7 +131,7 @@ export default function Members() {
           ) : (
             member.teams.map((teamId) => (
               <Badge key={teamId} tone="neutral" variant="outline">
-                {teams.find((team) => team.id === teamId)?.name ?? teamId}
+                {teamById.get(teamId)?.name ?? teamId}
               </Badge>
             ))
           )}
@@ -132,9 +157,7 @@ export default function Members() {
       numeric: true,
       cell: (member) =>
         member.last_seen_at ? (
-          <span className="text-xs text-fg-muted">
-            {formatRelativeShort(member.last_seen_at, NOW)}
-          </span>
+          <span className="text-xs text-fg-muted">{formatRelativeShort(member.last_seen_at, new Date())}</span>
         ) : (
           <span className="text-xs text-fg-disabled">never</span>
         ),
@@ -147,69 +170,13 @@ export default function Members() {
       <PageHeader
         title="Members"
         description="Who can sign in to this workspace, and what they are permitted to do."
-        actions={
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button variant="primary" size="sm" leading={<UserPlus />}>
-                Invite people
-              </Button>
-            </DialogTrigger>
-            <DialogContent
-              title="Invite people"
-              description="They receive an email with a single-use link that expires in 7 days."
-              size="lg"
-              footer={
-                <>
-                  <DialogClose asChild>
-                    <Button variant="ghost" size="sm">
-                      Cancel
-                    </Button>
-                  </DialogClose>
-                  <Button variant="primary" size="sm">
-                    Send invitations
-                  </Button>
-                </>
-              }
-            >
-              <div className="space-y-4 pb-2">
-                <Field
-                  label="Email addresses"
-                  description="One per line. Everyone in this batch receives the same role."
-                >
-                  <Input placeholder="teammate@northwind.cloud" />
-                </Field>
-
-                <Field label="Role">
-                  <RadioGroup
-                    variant="cards"
-                    aria-label="Role"
-                    defaultValue="agent"
-                    options={(Object.keys(ROLE) as MemberRole[])
-                      .filter((role) => role !== "owner")
-                      .map((role) => ({
-                        value: role,
-                        label: ROLE[role].label,
-                        description: ROLE[role].detail,
-                      }))}
-                  />
-                </Field>
-
-                <Field label="Add to teams" description="Optional. Controls which inboxes they can see.">
-                  <Select
-                    aria-label="Teams"
-                    options={teams.map((team) => ({ value: team.id, label: team.name }))}
-                  />
-                </Field>
-              </div>
-            </DialogContent>
-          </Dialog>
-        }
+        actions={<InviteDialog />}
         tabs={
           <Tabs value={tab} onValueChange={setTab}>
             <TabsList
               items={[
-                { value: "active", label: "Active", count: members.length },
-                { value: "invites", label: "Pending invites", count: PENDING_INVITES.length },
+                { value: "active", label: "Active", count: rows.length },
+                { value: "invites", label: "Pending invites", count: invites.data?.data.length ?? 0 },
               ]}
             />
           </Tabs>
@@ -231,57 +198,75 @@ export default function Members() {
       />
 
       <PageBody>
+        {setRole.error ? (
+          <Callout tone="danger" className="mb-4">
+            {setRole.error instanceof ApiError ? setRole.error.message : "Could not change that member's role."}
+          </Callout>
+        ) : null}
+        {removeMember.error ? (
+          <Callout tone="danger" className="mb-4">
+            {removeMember.error instanceof ApiError ? removeMember.error.message : "Could not remove that member."}
+          </Callout>
+        ) : null}
+
         <Tabs value={tab} onValueChange={setTab}>
           <TabsContent value="active">
-            <Card>
-              <CardBody className="p-0">
-                <DataTable
-                  aria-label="Members"
-                  rows={rows}
-                  columns={columns}
-                  rowKey={(member) => member.id}
-                  rowActions={(member) => (
-                    <Menu>
-                      <MenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="xs"
-                          iconOnly
-                          aria-label={`Actions for ${member.name}`}
-                          leading={<MoreHorizontal />}
-                        />
-                      </MenuTrigger>
-                      <MenuContent align="end" className="w-56">
-                        <MenuLabel>Change role</MenuLabel>
-                        {(Object.keys(ROLE) as MemberRole[])
-                          .filter((role) => role !== "owner")
-                          .map((role) => (
-                            <MenuItem key={role}>{ROLE[role].label}</MenuItem>
-                          ))}
-                        <MenuSeparator />
-                        <MenuItem>Manage teams…</MenuItem>
-                        <MenuItem>View audit trail</MenuItem>
-                        <MenuSeparator />
-                        <MenuItem
-                          icon={<UserMinus />}
-                          destructive
-                          disabled={member.role === "owner" || member.id === viewer.id}
-                        >
-                          Remove from workspace
-                        </MenuItem>
-                      </MenuContent>
-                    </Menu>
-                  )}
-                  empty={
-                    <EmptyState
-                      icon={UsersRound}
-                      title="No members match"
-                      description="Try a different search."
+            <QueryBoundary query={members}>
+              {() => (
+                <Card>
+                  <CardBody className="p-0">
+                    <DataTable
+                      aria-label="Members"
+                      rows={rows}
+                      columns={columns}
+                      rowKey={(member) => member.id}
+                      rowActions={(member) => (
+                        <Menu>
+                          <MenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              iconOnly
+                              aria-label={`Actions for ${member.name}`}
+                              leading={<MoreHorizontal />}
+                            />
+                          </MenuTrigger>
+                          <MenuContent align="end" className="w-56">
+                            <MenuLabel>Change role</MenuLabel>
+                            {(Object.keys(ROLE) as MemberRole[])
+                              .filter((role) => role !== "owner")
+                              .map((role) => (
+                                <MenuItem
+                                  key={role}
+                                  disabled={member.role === "owner"}
+                                  onSelect={() => void setRole.mutate({ id: member.id, role }).catch(() => {})}
+                                >
+                                  {ROLE[role].label}
+                                </MenuItem>
+                              ))}
+                            <MenuSeparator />
+                            <MenuItem onSelect={() => setManagingTeamsFor(member)}>Manage teams…</MenuItem>
+                            <MenuItem onSelect={() => navigate(`/settings/audit?actor_id=${member.id}`)}>
+                              View audit trail
+                            </MenuItem>
+                            <MenuSeparator />
+                            <MenuItem
+                              icon={<UserMinus />}
+                              destructive
+                              disabled={member.role === "owner" || member.id === viewer.id}
+                              onSelect={() => void removeMember.mutate(member.id).catch(() => {})}
+                            >
+                              Remove from workspace
+                            </MenuItem>
+                          </MenuContent>
+                        </Menu>
+                      )}
+                      empty={<EmptyState icon={UsersRound} title="No members match" description="Try a different search." />}
                     />
-                  }
-                />
-              </CardBody>
-            </Card>
+                  </CardBody>
+                </Card>
+              )}
+            </QueryBoundary>
 
             <Callout tone="info" className="mt-4" icon={<ShieldAlert />}>
               Roles are bundles of capabilities. What a role can actually do is enforced in the
@@ -291,36 +276,185 @@ export default function Members() {
           </TabsContent>
 
           <TabsContent value="invites">
-            <Card>
-              <CardBody className="p-0">
-                {PENDING_INVITES.length === 0 ? (
-                  <EmptyState icon={UserPlus} size="sm" title="No pending invitations" />
-                ) : (
-                  <ul className="divide-y divide-line-subtle">
-                    {PENDING_INVITES.map((invite) => (
-                      <li key={invite.id} className="flex items-center gap-3 px-4 py-3">
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm text-fg">{invite.email}</span>
-                          <span className="block text-xs text-fg-muted">
-                            Sent {formatRelativeShort(invite.sent, NOW)} ago
-                          </span>
-                        </span>
-                        <Badge tone={ROLE[invite.role].tone}>{ROLE[invite.role].label}</Badge>
-                        <Button variant="ghost" size="sm">
-                          Resend
-                        </Button>
-                        <Button variant="danger-ghost" size="sm">
-                          Revoke
-                        </Button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </CardBody>
-            </Card>
+            <QueryBoundary query={invites}>
+              {({ data }) => (
+                <Card>
+                  <CardBody className="p-0">
+                    {data.length === 0 ? (
+                      <EmptyState icon={UserPlus} size="sm" title="No pending invitations" />
+                    ) : (
+                      <ul className="divide-y divide-line-subtle">
+                        {data.map((invite) => (
+                          <li key={invite.id} className="flex items-center gap-3 px-4 py-3">
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm text-fg">{invite.email}</span>
+                              <span className="block text-xs text-fg-muted">
+                                Sent {formatRelativeShort(invite.created_at, new Date())} ago
+                              </span>
+                            </span>
+                            <Badge tone={ROLE[invite.role].tone}>{ROLE[invite.role].label}</Badge>
+                            <Button
+                              variant="danger-ghost"
+                              size="sm"
+                              loading={revokeInvite.isPending}
+                              onClick={() => void revokeInvite.mutate(invite.id).catch(() => {})}
+                            >
+                              Revoke
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </CardBody>
+                </Card>
+              )}
+            </QueryBoundary>
           </TabsContent>
         </Tabs>
       </PageBody>
+
+      {managingTeamsFor ? (
+        <ManageTeamsDialog member={managingTeamsFor} teams={teams.data?.data ?? []} onClose={() => setManagingTeamsFor(null)} />
+      ) : null}
     </Page>
+  );
+}
+
+function InviteDialog() {
+  const [open, setOpen] = useState(false);
+  const [emails, setEmails] = useState("");
+  const [role, setRole] = useState<MemberRole>("agent");
+
+  const invite = useMutation<{ emails: string[]; role: MemberRole }, void>(
+    async ({ emails: list, role: r }) => {
+      for (const email of list) {
+        await api.post("/invites", { email, role: r });
+      }
+    },
+    {
+      onSuccess: () => {
+        invalidate(["invites"]);
+        setOpen(false);
+        setEmails("");
+      },
+    },
+  );
+
+  const parsedEmails = emails
+    .split(/[\n,]/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="primary" size="sm" leading={<UserPlus />}>
+          Invite people
+        </Button>
+      </DialogTrigger>
+      <DialogContent
+        title="Invite people"
+        description="They receive an email with a single-use link that expires in 7 days."
+        size="lg"
+        footer={
+          <>
+            <DialogClose asChild>
+              <Button variant="ghost" size="sm">
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button
+              variant="primary"
+              size="sm"
+              loading={invite.isPending}
+              disabled={parsedEmails.length === 0}
+              onClick={() => void invite.mutate({ emails: parsedEmails, role }).catch(() => {})}
+            >
+              Send invitations
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4 pb-2">
+          {invite.error ? (
+            <Callout tone="danger">
+              {invite.error instanceof ApiError ? invite.error.message : "Could not send those invitations."}
+            </Callout>
+          ) : null}
+
+          <Field label="Email addresses" description="One per line. Everyone in this batch receives the same role.">
+            <Input
+              placeholder="teammate@northwind.cloud"
+              value={emails}
+              onChange={(event) => setEmails(event.target.value)}
+            />
+          </Field>
+
+          <Field label="Role">
+            <RadioGroup
+              variant="cards"
+              aria-label="Role"
+              value={role}
+              onValueChange={(value) => setRole(value as MemberRole)}
+              options={(Object.keys(ROLE) as MemberRole[])
+                .filter((r) => r !== "owner")
+                .map((r) => ({ value: r, label: ROLE[r].label, description: ROLE[r].detail }))}
+            />
+          </Field>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ManageTeamsDialog({ member, teams, onClose }: { member: Member; teams: Team[]; onClose: () => void }) {
+  const toggle = useMutation<{ teamId: string; add: boolean }, unknown>(
+    ({ teamId, add }) =>
+      add ? api.put(`/teams/${teamId}/members/${member.id}`) : api.delete(`/teams/${teamId}/members/${member.id}`),
+    {
+      onSuccess: () => {
+        invalidate(["teams"]);
+        invalidate(["members"]);
+      },
+    },
+  );
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        title={`Teams for ${member.name}`}
+        footer={
+          <Button variant="primary" size="sm" onClick={onClose}>
+            Done
+          </Button>
+        }
+      >
+        <div className="flex flex-col gap-1">
+          {toggle.error ? (
+            <Callout tone="danger" className="mb-2">
+              {toggle.error instanceof ApiError ? toggle.error.message : "Could not update team membership."}
+            </Callout>
+          ) : null}
+
+          {teams.length === 0 ? (
+            <EmptyState size="sm" title="No teams yet" description="Create a team first, from Settings → Teams." />
+          ) : (
+            teams.map((team) => {
+              const isMember = team.member_ids.includes(member.id);
+              return (
+                <div key={team.id} className="flex items-center justify-between gap-3 rounded-md px-2 py-2 hover:bg-inset">
+                  <span className="text-sm text-fg">{team.name}</span>
+                  <Switch
+                    checked={isMember}
+                    onCheckedChange={(checked) => void toggle.mutate({ teamId: team.id, add: checked }).catch(() => {})}
+                    aria-label={`Member of ${team.name}`}
+                  />
+                </div>
+              );
+            })
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

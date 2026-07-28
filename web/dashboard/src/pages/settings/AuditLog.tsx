@@ -1,10 +1,8 @@
 import {
+  api,
   Avatar,
-  Badge,
   Button,
   Callout,
-  Card,
-  CardBody,
   CodeBlock,
   DataTable,
   EmptyState,
@@ -12,43 +10,94 @@ import {
   Page,
   PageBody,
   PageHeader,
-  Pagination,
   Toolbar,
   Tooltip,
   formatDateTime,
   formatRelativeShort,
+  useInfinite,
+  useQuery,
   type AuditLog as AuditLogEntry,
   type Column,
   type FilterCondition,
   type FilterFieldDef,
+  type Member,
+  type Paginated,
 } from "@hubchat/shared";
-import { Calendar, Download, ScrollText, ShieldCheck, User } from "lucide-react";
-import { useState } from "react";
-import { useWorkspace } from "../../app/workspace-context";
-import { NOW, auditLogs } from "../../data/fixtures";
+import { Calendar, ScrollText, ShieldCheck, User } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
-const FILTER_FIELDS: FilterFieldDef[] = [
-  { key: "actor", label: "Actor", icon: <User />, operators: ["is", "is_not"] },
-  {
-    key: "action",
-    label: "Action",
-    icon: <ShieldCheck />,
-    operators: ["is", "starts_with"],
-    options: [
-      { value: "widget.updated", label: "widget.updated" },
-      { value: "api_key.created", label: "api_key.created" },
-      { value: "member.role_changed", label: "member.role_changed" },
-      { value: "customer.merged", label: "customer.merged" },
-    ],
-  },
-  { key: "occurred_at", label: "Date", icon: <Calendar />, operators: ["gt", "lt"] },
+// Actions Stage 1 modules actually emit. As later stages add their own audit
+// entries, this list grows — it is not exhaustive of every string the
+// `action` column can ever hold.
+const KNOWN_ACTIONS = [
+  "user.signed_in",
+  "user.signed_out",
+  "user.sign_in_failed",
+  "user.password_changed",
+  "user.totp_enabled",
+  "user.totp_disabled",
+  "session.revoked",
+  "workspace.updated",
+  "workspace.security_settings_changed",
+  "workspace.privacy_settings_changed",
+  "member.invited",
+  "member.joined",
+  "member.role_changed",
+  "member.removed",
+  "team.created",
+  "team.updated",
+  "team.deleted",
+  "tag.created",
+  "tag.deleted",
+  "tag.merged",
 ];
 
 /** Audit log (§6.19). */
 export default function AuditLog() {
-  const { memberById } = useWorkspace();
-  const [conditions, setConditions] = useState<FilterCondition[]>([]);
+  const [searchParams] = useSearchParams();
+  const actorIdFromLink = searchParams.get("actor_id");
+
+  const [conditions, setConditions] = useState<FilterCondition[]>(
+    actorIdFromLink ? [{ field: "actor", operator: "is", value: actorIdFromLink }] : [],
+  );
   const [expanded, setExpanded] = useState<string | null>(null);
+
+  const members = useQuery<{ data: Member[] }>(["members"], (signal) => api.get("/members", { signal }));
+
+  const actorId = conditionValue(conditions, "actor");
+  const action = conditionValue(conditions, "action");
+
+  const filterFields: FilterFieldDef[] = useMemo(
+    () => [
+      {
+        key: "actor",
+        label: "Actor",
+        icon: <User />,
+        operators: ["is"],
+        options: (members.data?.data ?? []).map((member) => ({ value: member.id, label: member.name })),
+      },
+      {
+        key: "action",
+        label: "Action",
+        icon: <ShieldCheck />,
+        operators: ["is"],
+        options: KNOWN_ACTIONS.map((value) => ({ value, label: value })),
+      },
+    ],
+    [members.data],
+  );
+
+  const log = useInfinite<AuditLogEntry>(
+    ["audit-logs", actorId ?? "", action ?? ""],
+    (cursor, signal) => {
+      const params = new URLSearchParams();
+      if (actorId) params.set("actor_id", actorId);
+      if (action) params.set("action", action);
+      if (cursor) params.set("cursor", cursor);
+      return api.get<Paginated<AuditLogEntry>>(`/audit-logs?${params.toString()}`, { signal });
+    },
+  );
 
   const columns: Column<AuditLogEntry>[] = [
     {
@@ -58,12 +107,9 @@ export default function AuditLog() {
       numeric: true,
       cell: (entry) => (
         <Tooltip content={formatDateTime(entry.occurred_at)}>
-          <span className="text-xs text-fg-muted">
-            {formatRelativeShort(entry.occurred_at, NOW)}
-          </span>
+          <span className="text-xs text-fg-muted">{formatRelativeShort(entry.occurred_at, new Date())}</span>
         </Tooltip>
       ),
-      sortable: true,
     },
     {
       key: "actor",
@@ -76,22 +122,16 @@ export default function AuditLog() {
               <span className="size-1.5 rounded-full bg-system" />
             </span>
           ) : (
-            <Avatar
-              name={entry.actor_name}
-              seed={entry.actor_id ?? entry.actor_name}
-              size="xs"
-            />
+            <Avatar name={entry.actor_name} seed={entry.actor_id ?? entry.actor_name} size="xs" />
           )}
-          <span className="min-w-0 truncate text-xs text-fg-secondary">{entry.actor_name}</span>
+          <span className="min-w-0 truncate text-xs text-fg-secondary">{entry.actor_name || "Unknown"}</span>
         </span>
       ),
     },
     {
       key: "action",
       header: "Action",
-      cell: (entry) => (
-        <span className="font-mono text-xs text-fg">{entry.action}</span>
-      ),
+      cell: (entry) => <span className="font-mono text-xs text-fg">{entry.action}</span>,
     },
     {
       key: "entity",
@@ -109,46 +149,51 @@ export default function AuditLog() {
       header: "Source",
       width: "130px",
       hideBelow: "xl",
-      cell: (entry) => (
-        <span className="font-mono text-xs text-fg-muted">{entry.ip ?? "internal"}</span>
-      ),
+      cell: (entry) => <span className="font-mono text-xs text-fg-muted">{entry.ip ?? "internal"}</span>,
     },
   ];
 
-  const active = auditLogs.find((entry) => entry.id === expanded);
+  const active = log.items.find((entry) => entry.id === expanded);
 
   return (
     <Page>
       <PageHeader
         title="Audit log"
         description="Append-only record of who changed what. Cannot be edited or deleted from the interface."
-        actions={
-          <Button variant="secondary" size="sm" leading={<Download />}>
-            Export
-          </Button>
-        }
       />
 
-      <Toolbar
-        leading={<FilterBar fields={FILTER_FIELDS} conditions={conditions} onChange={setConditions} />}
-      />
+      <Toolbar leading={<FilterBar fields={filterFields} conditions={conditions} onChange={setConditions} />} />
 
       <div className="flex min-h-0 flex-1">
         <div className="min-w-0 flex-1 overflow-auto">
-          <DataTable
-            aria-label="Audit log"
-            rows={auditLogs}
-            columns={columns}
-            rowKey={(entry) => entry.id}
-            onRowClick={(entry) => setExpanded(entry.id)}
-            empty={
-              <EmptyState
-                icon={ScrollText}
-                title="No matching entries"
-                description="Audit entries are written for authentication, configuration, and sensitive-data access."
-              />
-            }
-          />
+          {log.error ? (
+            <Callout tone="danger" className="m-4">
+              Could not load the audit log.
+            </Callout>
+          ) : (
+            <DataTable
+              aria-label="Audit log"
+              rows={log.items}
+              columns={columns}
+              rowKey={(entry) => entry.id}
+              onRowClick={(entry) => setExpanded(entry.id)}
+              empty={
+                <EmptyState
+                  icon={ScrollText}
+                  title="No matching entries"
+                  description="Audit entries are written for authentication, configuration, and sensitive-data access."
+                />
+              }
+            />
+          )}
+
+          {log.hasMore && (
+            <div className="flex justify-center p-4">
+              <Button variant="secondary" size="sm" loading={log.isFetching} onClick={() => void log.fetchNext()}>
+                Load more
+              </Button>
+            </div>
+          )}
         </div>
 
         {active && (
@@ -184,21 +229,17 @@ export default function AuditLog() {
         )}
       </div>
 
-      <Pagination
-        hasPrevious={false}
-        hasNext
-        onPrevious={() => undefined}
-        onNext={() => undefined}
-        summary={`${auditLogs.length} entries`}
-      />
-
       <PageBody className="border-t border-line py-4">
         <Callout tone="info">
-          Audit entries are retained for two years by default and are excluded from the customer
-          deletion workflow — removing them would defeat their purpose. Adjust retention under
-          Privacy & retention.
+          Audit entries are retained per the schedule set under Privacy & retention, and are
+          excluded from the customer deletion workflow — removing them would defeat their purpose.
         </Callout>
       </PageBody>
     </Page>
   );
+}
+
+function conditionValue(conditions: FilterCondition[], field: string): string | null {
+  const condition = conditions.find((c) => c.field === field);
+  return typeof condition?.value === "string" ? condition.value : null;
 }

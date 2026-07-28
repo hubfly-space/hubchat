@@ -1,26 +1,49 @@
 import {
+  api,
+  ApiError,
   Button,
+  Callout,
   Card,
   CardBody,
-  CardHeader,
-  ConfirmDialog,
   Input,
+  invalidate,
   Page,
   PageBody,
   PageHeader,
   Section,
   Select,
   SettingsRow,
-  Switch,
+  useMutation,
 } from "@hubchat/shared";
-import { Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useWorkspace } from "../../app/workspace-context";
+
+type GeneralPayload = {
+  name: string;
+  ticket_prefix: string;
+  timezone: string;
+  default_language: string;
+};
 
 /** Workspace settings (§6.1). */
 export default function General() {
   const { workspace } = useWorkspace();
-  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const [name, setName] = useState(workspace.name);
+  const [ticketPrefix, setTicketPrefix] = useState(workspace.ticket_prefix);
+  const [timezone, setTimezone] = useState(workspace.timezone);
+  const [language, setLanguage] = useState(workspace.default_language);
+
+  const dirty =
+    name.trim() !== workspace.name ||
+    ticketPrefix.trim().toUpperCase() !== workspace.ticket_prefix ||
+    timezone !== workspace.timezone ||
+    language !== workspace.default_language;
+
+  const save = useMutation<GeneralPayload, unknown>((body) => api.patch("/workspace/general", body), {
+    invalidates: [["bootstrap"]],
+    onSuccess: () => invalidate(["bootstrap"]),
+  });
 
   return (
     <Page>
@@ -28,26 +51,50 @@ export default function General() {
         title="General"
         description="Identity, locale, and defaults for this workspace."
         actions={
-          <Button variant="primary" size="sm">
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={!dirty}
+            loading={save.isPending}
+            onClick={() =>
+              void save.mutate({
+                name: name.trim(),
+                ticket_prefix: ticketPrefix.trim().toUpperCase(),
+                timezone,
+                default_language: language,
+              })
+            }
+          >
             Save changes
           </Button>
         }
       />
 
       <PageBody width="narrow">
+        {save.error ? (
+          <Callout tone="danger" className="mb-4">
+            {save.error instanceof ApiError ? save.error.message : "Could not save these settings."}
+          </Callout>
+        ) : null}
+        {save.isSuccess ? (
+          <Callout tone="success" className="mb-4">
+            Saved.
+          </Callout>
+        ) : null}
+
         <Section title="Identity">
           <Card>
             <CardBody className="pt-0">
               <SettingsRow label="Workspace name" htmlFor="ws-name">
-                <Input id="ws-name" inputSize="sm" defaultValue={workspace.name} />
+                <Input id="ws-name" inputSize="sm" value={name} onChange={(event) => setName(event.target.value)} />
               </SettingsRow>
 
               <SettingsRow
                 label="Slug"
-                description="Appears in portal URLs and API scoping. Changing it breaks existing links."
+                description="Appears in portal URLs and API scoping. Not changeable from here yet."
                 htmlFor="ws-slug"
               >
-                <Input id="ws-slug" inputSize="sm" mono defaultValue={workspace.slug} suffix=".hubchat.app" />
+                <Input id="ws-slug" inputSize="sm" mono defaultValue={workspace.slug} disabled />
               </SettingsRow>
 
               <SettingsRow
@@ -55,7 +102,14 @@ export default function General() {
                 description="Prepended to display numbers, e.g. SUP-1042. Existing tickets keep their current prefix."
                 htmlFor="ws-prefix"
               >
-                <Input id="ws-prefix" inputSize="sm" mono defaultValue={workspace.ticket_prefix} className="max-w-32" />
+                <Input
+                  id="ws-prefix"
+                  inputSize="sm"
+                  mono
+                  className="max-w-32"
+                  value={ticketPrefix}
+                  onChange={(event) => setTicketPrefix(event.target.value)}
+                />
               </SettingsRow>
             </CardBody>
           </Card>
@@ -70,7 +124,8 @@ export default function General() {
               >
                 <Select
                   size="sm"
-                  defaultValue={workspace.timezone}
+                  value={timezone}
+                  onValueChange={setTimezone}
                   aria-label="Timezone"
                   options={[
                     { value: "Europe/Lisbon", label: "Europe/Lisbon" },
@@ -85,7 +140,8 @@ export default function General() {
               <SettingsRow label="Default language">
                 <Select
                   size="sm"
-                  defaultValue={workspace.default_language}
+                  value={language}
+                  onValueChange={setLanguage}
                   aria-label="Default language"
                   options={[
                     { value: "en", label: "English" },
@@ -94,92 +150,10 @@ export default function General() {
                   ]}
                 />
               </SettingsRow>
-
-              <SettingsRow label="Date format">
-                <Select
-                  size="sm"
-                  defaultValue="dmy"
-                  aria-label="Date format"
-                  options={[
-                    { value: "dmy", label: "12 Mar 2026" },
-                    { value: "mdy", label: "Mar 12, 2026" },
-                    { value: "iso", label: "2026-03-12" },
-                  ]}
-                />
-              </SettingsRow>
-
-              <SettingsRow label="Time format">
-                <Select
-                  size="sm"
-                  defaultValue="24"
-                  aria-label="Time format"
-                  options={[
-                    { value: "24", label: "24-hour (14:08)" },
-                    { value: "12", label: "12-hour (2:08 PM)" },
-                  ]}
-                />
-              </SettingsRow>
             </CardBody>
-          </Card>
-        </Section>
-
-        <Section title="Defaults">
-          <Card>
-            <CardBody className="pt-0">
-              <SettingsRow label="Default ticket priority">
-                <Select
-                  size="sm"
-                  defaultValue="normal"
-                  aria-label="Default priority"
-                  options={[
-                    { value: "low", label: "Low" },
-                    { value: "normal", label: "Normal" },
-                    { value: "high", label: "High" },
-                  ]}
-                />
-              </SettingsRow>
-
-              <SettingsRow
-                label="Auto-assign on first reply"
-                description="An unassigned conversation becomes owned by whoever replies first."
-              >
-                <Switch defaultChecked aria-label="Auto-assign on first reply" />
-              </SettingsRow>
-
-              <SettingsRow
-                label="Reopen on customer reply"
-                description="A reply to a resolved conversation reopens it instead of creating a new one."
-              >
-                <Switch defaultChecked aria-label="Reopen on reply" />
-              </SettingsRow>
-            </CardBody>
-          </Card>
-        </Section>
-
-        <Section title="Danger zone">
-          <Card className="border-danger-border">
-            <CardHeader
-              title="Delete this workspace"
-              description="Permanently removes every conversation, ticket, customer, article, and file. This cannot be undone and cannot be recovered from a Hubchat backup."
-              actions={
-                <Button variant="danger" size="sm" leading={<Trash2 />} onClick={() => setConfirmDelete(true)}>
-                  Delete workspace
-                </Button>
-              }
-            />
           </Card>
         </Section>
       </PageBody>
-
-      <ConfirmDialog
-        open={confirmDelete}
-        onOpenChange={setConfirmDelete}
-        title={`Delete ${workspace.name}?`}
-        description="8 conversations, 8 tickets, 6 customers, 7 articles, and all associated files will be permanently deleted. Members lose access immediately. Export your data first if you might need it."
-        confirmLabel="Delete permanently"
-        destructive
-        onConfirm={() => setConfirmDelete(false)}
-      />
     </Page>
   );
 }
