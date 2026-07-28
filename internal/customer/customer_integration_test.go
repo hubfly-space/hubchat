@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/hubchat/hubchat/internal/audit"
+	"github.com/hubchat/hubchat/internal/config"
 	"github.com/hubchat/hubchat/internal/customer"
 	"github.com/hubchat/hubchat/internal/database"
 	"github.com/hubchat/hubchat/internal/database/dbtest"
@@ -18,7 +19,9 @@ import (
 
 func newTestService(t *testing.T, pool *database.Pool) *customer.Service {
 	t.Helper()
-	return customer.New(pool, events.New(pool), audit.New(pool))
+	return customer.New(pool, events.New(pool), audit.New(pool), config.Limits{
+		MaxEventBytes: 32 << 10, MaxAttributesPerCustomer: 100,
+	})
 }
 
 func seedWorkspace(t *testing.T, ctx context.Context, pool *database.Pool) (workspaceID, memberID string) {
