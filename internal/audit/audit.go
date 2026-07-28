@@ -199,15 +199,21 @@ type Filter struct {
 	Action     Action
 	EntityType string
 	EntityID   string
-	Before     time.Time
-	Limit      int
+	// Before and BeforeID together are the pagination cursor: pass the last
+	// row's OccurredAt and ID to continue past it. BeforeID is what keeps two
+	// entries sharing a timestamp from being skipped or repeated across pages
+	// — occurred_at alone is not fine-grained enough to promise that under
+	// concurrent writes, and "the audit log dropped an entry" is a bad thing
+	// for an audit log to do.
+	Before   time.Time
+	BeforeID string
+	Limit    int
 }
 
 const maxPageSize = 200
 
 // List returns audit entries for one workspace, newest first.
 //
-// `Before` is the cursor: pass the last row's OccurredAt to page backwards.
 // Offset pagination is deliberately not offered — §16 requires cursors, and an
 // append-only log paged by offset shifts under the reader as new rows arrive.
 func (l *Log) List(ctx context.Context, workspaceID string, filter Filter) ([]Record, error) {
@@ -220,21 +226,24 @@ func (l *Log) List(ctx context.Context, workspaceID string, filter Filter) ([]Re
 		before = time.Now().Add(time.Hour)
 	}
 
+	// The row tuple comparison is the tie-break: strictly less than
+	// (before, beforeID) in that order, which matches the ORDER BY and is
+	// well-defined even when BeforeID is empty (every id sorts after "").
 	rows, err := l.pool.Query(ctx, `
 		SELECT id, workspace_id, actor_type, coalesce(actor_id, ''), actor_name,
 		       action, coalesce(entity_type, ''), coalesce(entity_id, ''),
 		       coalesce(request_id, ''), coalesce(host(ip), ''), metadata, occurred_at
 		FROM audit_logs
 		WHERE workspace_id = $1
-		  AND occurred_at < $2
-		  AND ($3 = '' OR actor_id = $3)
-		  AND ($4 = '' OR action = $4)
-		  AND ($5 = '' OR entity_type = $5)
-		  AND ($6 = '' OR entity_id = $6)
-		ORDER BY occurred_at DESC
-		LIMIT $7
+		  AND (occurred_at, id) < ($2, $3)
+		  AND ($4 = '' OR actor_id = $4)
+		  AND ($5 = '' OR action = $5)
+		  AND ($6 = '' OR entity_type = $6)
+		  AND ($7 = '' OR entity_id = $7)
+		ORDER BY occurred_at DESC, id DESC
+		LIMIT $8
 	`,
-		workspaceID, before, filter.ActorID, string(filter.Action),
+		workspaceID, before, filter.BeforeID, filter.ActorID, string(filter.Action),
 		filter.EntityType, filter.EntityID, filter.Limit,
 	)
 	if err != nil {

@@ -74,6 +74,22 @@ func (d Deps) link(path string, key, value string) string {
 	return target.String()
 }
 
+// pathLink builds an absolute URL with no query string, for links whose token
+// is already part of the path (an invite link's /invite/{token}, as opposed
+// to a reset link's ?token=...).
+func (d Deps) pathLink(path string) string {
+	base := d.PublicURL
+	if base == nil {
+		return path
+	}
+
+	target := *base
+	target.Path = strings.TrimSuffix(target.Path, "/") + path
+	target.RawQuery = ""
+
+	return target.String()
+}
+
 // issuerName is what an authenticator app shows next to the account.
 func (d Deps) issuerName() string {
 	if d.PublicURL != nil && d.PublicURL.Host != "" {
