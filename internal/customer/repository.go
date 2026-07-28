@@ -126,6 +126,24 @@ func (r *repository) update(
 	return nil
 }
 
+// setOwner assigns (or clears) a customer's account owner — a plain set with
+// no optimistic-concurrency check, the same reasoning conversation.SetAssignee
+// and ticket.SetAssignee document: an assignment is not free-text a second
+// writer could be mid-edit of, so there is nothing for a version number to
+// protect here.
+func (r *repository) setOwner(ctx context.Context, workspaceID, id string, ownerID *string) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE customers SET owner_id = $3 WHERE workspace_id = $1 AND id = $2
+	`, workspaceID, id, ownerID)
+	if err != nil {
+		return fmt.Errorf("customer: set owner: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *repository) exists(ctx context.Context, workspaceID, id string) (bool, error) {
 	var exists bool
 	err := r.pool.QueryRow(ctx, `
@@ -248,4 +266,20 @@ func (r *repository) memberDisplayName(ctx context.Context, memberID string) (st
 		WHERE m.id = $1
 	`, memberID).Scan(&name)
 	return name, err
+}
+
+func (r *repository) memberInWorkspace(ctx context.Context, workspaceID, memberID string) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM workspace_members WHERE id = $1 AND workspace_id = $2)
+	`, memberID, workspaceID).Scan(&exists)
+	return exists, err
+}
+
+func uniqueViolation(err error) bool {
+	var pgErr interface{ SQLState() string }
+	if errors.As(err, &pgErr) {
+		return pgErr.SQLState() == "23505"
+	}
+	return false
 }

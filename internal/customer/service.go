@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/hubchat/hubchat/internal/audit"
+	"github.com/hubchat/hubchat/internal/config"
 	"github.com/hubchat/hubchat/internal/database"
 	"github.com/hubchat/hubchat/internal/events"
 	"github.com/hubchat/hubchat/internal/ids"
@@ -16,21 +17,28 @@ import (
 // ErrInvalidBlockKind is returned when kind is not one blocked_contacts accepts.
 var ErrInvalidBlockKind = errors.New("customer: not a recognised block kind")
 
-// Service is deliberately narrow: a customer's basic profile, tags, company
-// links, and blocking — enough for the inbox's customer panel and the
-// "block this visitor" action a conversation exposes. Identity merging,
-// attribute definitions, contact sessions, and event ingestion are Stage 4
-// (§26.3's sharpest edge, not something to bolt on as a side effect of
-// wiring the inbox).
+// Service covers a customer's basic profile, tags, company links and
+// roster, blocking, the metadata allowlist, event ingestion, contact
+// sessions, and identity merge (§6.9, §6.10, §26.3, §26.4).
 type Service struct {
 	repo   *repository
 	pool   *database.Pool
 	audit  *audit.Log
 	events *events.Log
+
+	// maxEventBytes and maxAttributesPerRecord enforce cfg.Limits at the
+	// service layer, so every entry point (dashboard API today, the widget
+	// SDK once Stage 5 exists) is bounded the same way rather than each
+	// handler re-implementing the check.
+	maxEventBytes          int64
+	maxAttributesPerRecord int
 }
 
-func New(pool *database.Pool, eventLog *events.Log, auditLog *audit.Log) *Service {
-	return &Service{repo: &repository{pool: pool}, pool: pool, audit: auditLog, events: eventLog}
+func New(pool *database.Pool, eventLog *events.Log, auditLog *audit.Log, limits config.Limits) *Service {
+	return &Service{
+		repo: &repository{pool: pool}, pool: pool, audit: auditLog, events: eventLog,
+		maxEventBytes: limits.MaxEventBytes, maxAttributesPerRecord: limits.MaxAttributesPerCustomer,
+	}
 }
 
 func (s *Service) appendEvent(ctx context.Context, tx pgx.Tx, event events.Event) error {
@@ -99,6 +107,24 @@ func (s *Service) Update(
 		return nil, err
 	}
 	return s.repo.byID(ctx, workspaceID, id)
+}
+
+// SetOwner assigns (or clears, when ownerID is nil) which agent owns this
+// customer's account — the "Assign owner" bulk action in the directory.
+func (s *Service) SetOwner(ctx context.Context, workspaceID, actorMemberID, customerID string, ownerID *string) (*Customer, error) {
+	if ownerID != nil {
+		ok, err := s.repo.memberInWorkspace(ctx, workspaceID, *ownerID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, ErrInvalidOwner
+		}
+	}
+	if err := s.repo.setOwner(ctx, workspaceID, customerID, ownerID); err != nil {
+		return nil, err
+	}
+	return s.repo.byID(ctx, workspaceID, customerID)
 }
 
 func (s *Service) AddTag(ctx context.Context, workspaceID, actorMemberID, customerID, tagID string) error {
