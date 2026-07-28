@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/hubchat/hubchat/internal/audit"
+	"github.com/hubchat/hubchat/internal/config"
 	"github.com/hubchat/hubchat/internal/conversation"
 	"github.com/hubchat/hubchat/internal/customer"
 	"github.com/hubchat/hubchat/internal/database"
@@ -52,7 +53,7 @@ func TestSearchFindsBothMessagesAndCustomers(t *testing.T) {
 	ctx := dbtest.Context(t)
 
 	convSvc := conversation.New(pool, events.New(pool), audit.New(pool))
-	custSvc := customer.New(pool, events.New(pool), audit.New(pool))
+	custSvc := customer.New(pool, events.New(pool), audit.New(pool), config.Limits{MaxEventBytes: 32 << 10, MaxAttributesPerCustomer: 100})
 	searchSvc := search.New(convSvc, custSvc)
 
 	workspaceID, inboxID := seedWorkspace(t, ctx, pool)
@@ -113,7 +114,7 @@ func TestSearchReturnsEmptyWithoutError(t *testing.T) {
 	ctx := dbtest.Context(t)
 
 	convSvc := conversation.New(pool, events.New(pool), audit.New(pool))
-	custSvc := customer.New(pool, events.New(pool), audit.New(pool))
+	custSvc := customer.New(pool, events.New(pool), audit.New(pool), config.Limits{MaxEventBytes: 32 << 10, MaxAttributesPerCustomer: 100})
 	searchSvc := search.New(convSvc, custSvc)
 
 	workspaceID, _ := seedWorkspace(t, ctx, pool)

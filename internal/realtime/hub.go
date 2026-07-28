@@ -56,9 +56,9 @@ type Hub struct {
 	// several workspaces, each with their own busy inbox.
 	byWorkspace map[string]map[*client]struct{}
 	// viewers indexes clients currently subscribed to a "conversation:<id>"
-	// topic, keyed by that topic string — §6.12's collision-prevention
-	// presence. Only conversation topics are tracked here; TopicWorkspace
-	// itself never needs a viewer list.
+	// or "ticket:<id>" topic, keyed by that topic string — §6.12's
+	// collision-prevention presence. Only those two entity topics are tracked
+	// here; TopicWorkspace itself never needs a viewer list.
 	viewers map[string]map[*client]struct{}
 	// cursor tracks how far each workspace has been broadcast, so a NOTIFY
 	// signal reads only what is new rather than re-reading from zero.
@@ -363,29 +363,30 @@ func (h *Hub) unregister(c *client) {
 			delete(h.cursor, c.workspaceID)
 		}
 	}
-	var conversationTopics []string
+	var presenceTopics []string
 	for _, topic := range topics {
-		if strings.HasPrefix(topic, conversationTopicPrefix) {
+		if isPresenceTopic(topic) {
 			h.removeViewerLocked(topic, c)
-			conversationTopics = append(conversationTopics, topic)
+			presenceTopics = append(presenceTopics, topic)
 		}
 	}
 	h.mu.Unlock()
 
 	// Broadcasting locks h.mu itself (RLock), so it happens after Unlock —
 	// sync.RWMutex is not reentrant.
-	for _, topic := range conversationTopics {
+	for _, topic := range presenceTopics {
 		h.broadcastViewers(c.workspaceID, topic)
 	}
 }
 
-// addViewer and removeViewer maintain the per-conversation-topic viewer
-// index that backs Viewers() and the "presence.viewing" broadcast — called
+// addViewer and removeViewer maintain the per-topic viewer index that backs
+// Viewers()/TicketViewers() and the "presence.viewing" broadcast — called
 // from subscribeTopics/unsubscribeTopics for every topic that names a
-// conversation (TopicWorkspace itself is never tracked here; everyone with
-// it can already see everything, so "viewing" it means nothing).
+// conversation or ticket (TopicWorkspace itself is never tracked here;
+// everyone with it can already see everything, so "viewing" it means
+// nothing).
 func (h *Hub) addViewer(topic string, c *client) {
-	if !strings.HasPrefix(topic, conversationTopicPrefix) {
+	if !isPresenceTopic(topic) {
 		return
 	}
 	h.mu.Lock()
@@ -399,7 +400,7 @@ func (h *Hub) addViewer(topic string, c *client) {
 }
 
 func (h *Hub) removeViewer(topic string, c *client) {
-	if !strings.HasPrefix(topic, conversationTopicPrefix) {
+	if !isPresenceTopic(topic) {
 		return
 	}
 	h.mu.Lock()
@@ -420,7 +421,17 @@ func (h *Hub) removeViewerLocked(topic string, c *client) {
 	}
 }
 
-const conversationTopicPrefix = "conversation:"
+const (
+	conversationTopicPrefix = "conversation:"
+	ticketTopicPrefix       = "ticket:"
+)
+
+// isPresenceTopic reports whether topic is one of the two entity topics the
+// hub tracks viewers for. TopicWorkspace and any other bare topic are never
+// presence-tracked.
+func isPresenceTopic(topic string) bool {
+	return strings.HasPrefix(topic, conversationTopicPrefix) || strings.HasPrefix(topic, ticketTopicPrefix)
+}
 
 // Viewers returns the member ids of every agent currently subscribed to a
 // conversation's topic — §6.12's "someone else has this open" indicator.
@@ -430,6 +441,15 @@ func (h *Hub) Viewers(conversationID string) []string {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.viewersLocked(conversationTopicPrefix + conversationID)
+}
+
+// TicketViewers is Viewers' ticket counterpart — the same collision warning
+// applied to the ticket detail view (§6.3 "ticket collision warning when
+// multiple agents are viewing or replying").
+func (h *Hub) TicketViewers(ticketID string) []string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.viewersLocked(ticketTopicPrefix + ticketID)
 }
 
 // viewersLocked assumes h.mu is already held (read or write).
@@ -457,8 +477,6 @@ func (h *Hub) viewersLocked(topic string) []string {
 // c.wants uses to mean "everything" — without the scope, one workspace's
 // viewer presence would leak into another's.
 func (h *Hub) broadcastViewers(workspaceID, topic string) {
-	conversationID := strings.TrimPrefix(topic, conversationTopicPrefix)
-
 	h.mu.RLock()
 	viewers := h.viewersLocked(topic)
 	targets := make([]*client, 0, len(h.byWorkspace[workspaceID]))
@@ -467,10 +485,15 @@ func (h *Hub) broadcastViewers(workspaceID, topic string) {
 	}
 	h.mu.RUnlock()
 
-	payload, err := encodeFrame(framePresenceViewers, struct {
-		ConversationID string   `json:"conversation_id"`
-		Viewers        []string `json:"viewers"`
-	}{ConversationID: conversationID, Viewers: viewers})
+	fields := map[string]any{"viewers": viewers}
+	switch {
+	case strings.HasPrefix(topic, conversationTopicPrefix):
+		fields["conversation_id"] = strings.TrimPrefix(topic, conversationTopicPrefix)
+	case strings.HasPrefix(topic, ticketTopicPrefix):
+		fields["ticket_id"] = strings.TrimPrefix(topic, ticketTopicPrefix)
+	}
+
+	payload, err := encodeFrame(framePresenceViewers, fields)
 	if err != nil {
 		return
 	}
