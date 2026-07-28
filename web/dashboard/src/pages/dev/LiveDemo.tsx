@@ -248,7 +248,7 @@ export default function LiveDemo() {
                     <MessageTimeline messages={messages} />
                   )}
                 </div>
-                <Composer customerName="Live demo visitor" onSend={onSend} />
+                <Composer conversationId={conversationId} customerName="Live demo visitor" onSend={onSend} />
               </Card>
             )}
           </div>

@@ -188,47 +188,9 @@ export function Composer({ customerName, conversationId, onSend }: ComposerProps
             <Tooltip content="Emoji">
               <Button variant="ghost" size="xs" iconOnly aria-label="Insert emoji" leading={<Smile />} />
             </Tooltip>
-
-            <Menu>
-              <Tooltip content="Saved replies and macros" shortcut="mod+/">
-                <MenuTrigger asChild>
-                  <Button variant="ghost" size="xs" iconOnly aria-label="Saved replies" leading={<Zap />} />
-                </MenuTrigger>
-              </Tooltip>
-              <MenuContent align="start" side="top" className="w-72">
-                <MenuLabel>Saved replies</MenuLabel>
-                {savedReplies.map((reply) => (
-                  <MenuItem
-                    key={reply.id}
-                    onSelect={() => insert(reply.body)}
-                    description={reply.body}
-                    shortcut={reply.shortcut ?? undefined}
-                  >
-                    {reply.name}
-                  </MenuItem>
-                ))}
-                <MenuLabel>Macros</MenuLabel>
-                {macros.map((macro) => (
-                  <MenuItem
-                    key={macro.id}
-                    icon={<Zap />}
-                    onSelect={() => macro.body && insert(macro.body)}
-                    description={`${macro.actions.length} action${macro.actions.length === 1 ? "" : "s"} · used ${macro.usage_count.toLocaleString()}×`}
-                  >
-                    {macro.name}
-                  </MenuItem>
-                ))}
-              </MenuContent>
-            </Menu>
           </div>
 
           <div className="flex items-center gap-1.5">
-            {!isNote && (
-              <Tooltip content="Send later">
-                <Button variant="ghost" size="xs" iconOnly aria-label="Schedule send" leading={<CalendarClock />} />
-              </Tooltip>
-            )}
-
             <Button
               size="sm"
               variant={isNote ? "secondary" : "primary"}
