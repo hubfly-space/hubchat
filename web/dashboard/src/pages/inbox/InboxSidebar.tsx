@@ -1,41 +1,48 @@
-import { Button, Eyebrow, Tooltip } from "@hubchat/shared";
+import { api, Button, Eyebrow, Tooltip, useQuery, type Inbox } from "@hubchat/shared";
 import {
-  AlertTriangle,
-  AtSign,
-  Ban,
   BellRing,
   CheckCircle2,
   Clock,
-  Filter,
   Hourglass,
-  Inbox,
+  Inbox as InboxIcon,
   Plus,
-  Timer,
   UserCheck,
   Users,
 } from "lucide-react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { SidebarItem } from "../../app/shell/SectionSidebar";
-import { conversations, inboxes, savedViews } from "../../data/fixtures";
-import { useWorkspace } from "../../app/workspace-context";
+
+type Counts = {
+  all: number;
+  unassigned: number;
+  mine: number;
+  following: number;
+  waiting_on_us: number;
+  waiting_on_customer: number;
+  snoozed: number;
+  resolved: number;
+  spam: number;
+};
 
 /**
  * The inbox's own sidebar, substituted for the generic SectionSidebar.
  *
- * View counts are computed here from the loaded page for the fixtures build.
- * Against the real API they arrive as a single aggregate call
- * (`GET /api/v1/inbox/counts`) — computing them client-side would mean loading
- * every conversation just to render a number, which is exactly the pattern
- * §17 warns about.
+ * Counts arrive as one aggregate call (`GET /v1/conversations/counts`)
+ * rather than one query per badge. Mentions, breached/approaching SLA, and
+ * saved views from the original design have no backend yet (there is no
+ * @mention concept anywhere in the schema, SLA is Stage 8, saved filter sets
+ * are Stage 3) and are left out rather than shown as permanently-empty
+ * buttons.
  */
 export function InboxSidebar() {
   const { pathname } = useLocation();
-  const { viewer } = useWorkspace();
+  const navigate = useNavigate();
 
-  const count = (predicate: (conversation: (typeof conversations)[number]) => boolean) =>
-    conversations.filter(predicate).length;
+  const counts = useQuery<Counts>(["conversation-counts"], (signal) => api.get("/conversations/counts", { signal }));
+  const inboxes = useQuery<{ data: Inbox[] }>(["inboxes"], (signal) => api.get("/inboxes", { signal }));
 
   const activeView = pathname.split("/")[2] ?? "all";
+  const c = counts.data;
 
   return (
     <nav
@@ -44,8 +51,15 @@ export function InboxSidebar() {
     >
       <div className="sticky top-0 z-[var(--z-sticky)] flex items-center justify-between border-b border-line bg-surface px-3 py-2">
         <h2 className="text-sm font-semibold tracking-tight text-fg">Inbox</h2>
-        <Tooltip content="New saved view" shortcut="mod+shift+v">
-          <Button variant="ghost" size="xs" iconOnly aria-label="New saved view" leading={<Plus />} />
+        <Tooltip content="New inbox">
+          <Button
+            variant="ghost"
+            size="xs"
+            iconOnly
+            aria-label="New inbox"
+            leading={<Plus />}
+            onClick={() => navigate("/channels/inboxes")}
+          />
         </Tooltip>
       </div>
 
@@ -55,8 +69,8 @@ export function InboxSidebar() {
             <SidebarItem
               to="/inbox/all"
               label="All active"
-              icon={<Inbox />}
-              count={count((c) => !["closed", "resolved", "spam"].includes(c.state))}
+              icon={<InboxIcon />}
+              count={c?.all ?? 0}
               active={activeView === "all"}
             />
           </li>
@@ -65,7 +79,7 @@ export function InboxSidebar() {
               to="/inbox/unassigned"
               label="Unassigned"
               icon={<Users />}
-              count={count((c) => c.assignee_id === null && c.state !== "closed")}
+              count={c?.unassigned ?? 0}
               active={activeView === "unassigned"}
               accent
             />
@@ -75,17 +89,8 @@ export function InboxSidebar() {
               to="/inbox/mine"
               label="Assigned to me"
               icon={<UserCheck />}
-              count={count((c) => c.assignee_id === viewer.id)}
+              count={c?.mine ?? 0}
               active={activeView === "mine"}
-            />
-          </li>
-          <li>
-            <SidebarItem
-              to="/inbox/mentions"
-              label="Mentions"
-              icon={<AtSign />}
-              count={1}
-              active={activeView === "mentions"}
             />
           </li>
           <li>
@@ -93,36 +98,11 @@ export function InboxSidebar() {
               to="/inbox/following"
               label="Following"
               icon={<BellRing />}
-              count={3}
+              count={c?.following ?? 0}
               active={activeView === "following"}
             />
           </li>
         </ul>
-
-        <div>
-          <Eyebrow className="px-2 pb-1.5">Service level</Eyebrow>
-          <ul className="flex flex-col gap-px">
-            <li>
-              <SidebarItem
-                to="/inbox/breached"
-                label="Breached SLA"
-                icon={<AlertTriangle />}
-                count={count((c) => c.sla?.state === "breached")}
-                active={activeView === "breached"}
-                accent
-              />
-            </li>
-            <li>
-              <SidebarItem
-                to="/inbox/approaching"
-                label="Approaching SLA"
-                icon={<Timer />}
-                count={count((c) => c.sla?.state === "approaching")}
-                active={activeView === "approaching"}
-              />
-            </li>
-          </ul>
-        </div>
 
         <div>
           <Eyebrow className="px-2 pb-1.5">Status</Eyebrow>
@@ -132,7 +112,7 @@ export function InboxSidebar() {
                 to="/inbox/waiting-support"
                 label="Waiting on us"
                 icon={<Hourglass />}
-                count={count((c) => c.state === "waiting_for_support")}
+                count={c?.waiting_on_us ?? 0}
                 active={activeView === "waiting-support"}
               />
             </li>
@@ -141,7 +121,7 @@ export function InboxSidebar() {
                 to="/inbox/waiting-customer"
                 label="Waiting on customer"
                 icon={<Clock />}
-                count={count((c) => c.state === "waiting_for_customer" || c.state === "pending")}
+                count={c?.waiting_on_customer ?? 0}
                 active={activeView === "waiting-customer"}
               />
             </li>
@@ -150,7 +130,7 @@ export function InboxSidebar() {
                 to="/inbox/snoozed"
                 label="Snoozed"
                 icon={<Clock />}
-                count={count((c) => c.state === "snoozed")}
+                count={c?.snoozed ?? 0}
                 active={activeView === "snoozed"}
               />
             </li>
@@ -159,17 +139,8 @@ export function InboxSidebar() {
                 to="/inbox/resolved"
                 label="Resolved"
                 icon={<CheckCircle2 />}
-                count={count((c) => c.state === "resolved")}
+                count={c?.resolved ?? 0}
                 active={activeView === "resolved"}
-              />
-            </li>
-            <li>
-              <SidebarItem
-                to="/inbox/spam"
-                label="Spam"
-                icon={<Ban />}
-                count={count((c) => c.state === "spam")}
-                active={activeView === "spam"}
               />
             </li>
           </ul>
@@ -178,31 +149,14 @@ export function InboxSidebar() {
         <div>
           <Eyebrow className="px-2 pb-1.5">Inboxes</Eyebrow>
           <ul className="flex flex-col gap-px">
-            {inboxes.map((inbox) => (
+            {(inboxes.data?.data ?? []).map((inbox) => (
               <li key={inbox.id}>
                 <SidebarItem
                   to={`/inbox/${inbox.slug}`}
                   label={inbox.name}
-                  icon={<Inbox />}
+                  icon={<InboxIcon />}
                   count={inbox.open_count}
                   active={activeView === inbox.slug}
-                />
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div>
-          <Eyebrow className="px-2 pb-1.5">Saved views</Eyebrow>
-          <ul className="flex flex-col gap-px">
-            {savedViews.map((view) => (
-              <li key={view.id}>
-                <SidebarItem
-                  to={`/inbox/${view.id}`}
-                  label={view.name}
-                  icon={<Filter />}
-                  count={view.count}
-                  active={activeView === view.id}
                 />
               </li>
             ))}
