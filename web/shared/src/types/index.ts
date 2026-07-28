@@ -96,6 +96,7 @@ export type Capability =
   | "customer.read"
   | "customer.read_sensitive"
   | "customer.merge"
+  | "company.manage"
   | "ticket.manage"
   | "widget.manage"
   | "portal.manage"
@@ -299,6 +300,8 @@ export type Ticket = {
   field_values: Record<string, FieldValue>;
   sla: ConversationSla | null;
   due_at: Timestamp | null;
+  /** §13 conventions — pass back on update; a stale value means someone else changed this ticket first. */
+  version: number;
   created_at: Timestamp;
   updated_at: Timestamp;
   resolved_at: Timestamp | null;
@@ -366,6 +369,46 @@ export type MetadataSource =
   | "cookie"
   | "event";
 
+/** §6.10 — the metadata allowlist's own type system, narrower than {@link FieldType}: it spans only what untrusted input can plausibly carry. */
+export type AttributeType =
+  | "string"
+  | "integer"
+  | "decimal"
+  | "boolean"
+  | "timestamp"
+  | "date"
+  | "enum"
+  | "string_list"
+  | "url"
+  | "json";
+
+export type AttributeEntityType = "customer" | "company" | "session";
+
+/**
+ * A declared metadata key (§6.10, §12). Deliberately not {@link FieldDefinition}
+ * even though the shapes rhyme: this is the allowlist untrusted pipelines
+ * (the SDK, the widget, URL parameters) write through, backed by its own
+ * `attribute_definitions` table — agent-filled custom fields on a ticket are
+ * a different concept with a different owner.
+ */
+export type AttributeDefinition = {
+  id: Id;
+  workspace_id: Id;
+  entity_type: AttributeEntityType;
+  key: string;
+  label: string;
+  type: AttributeType;
+  description: string | null;
+  options: string[];
+  allowed_sources: MetadataSource[];
+  required_capability: Capability | null;
+  sensitive: boolean;
+  searchable: boolean;
+  validation: FieldValidation | null;
+  retention_days: number | null;
+  created_at: Timestamp;
+};
+
 // ---------------------------------------------------------------- customers
 
 export type IdentityVerification = "anonymous" | "unverified" | "verified";
@@ -383,6 +426,8 @@ export type Customer = {
   language: string | null;
   timezone: string | null;
   attributes: Record<string, FieldValue>;
+  /** Keys in `attributes` whose real value is masked because the viewer lacks customer.read_sensitive (§12 audit-on-reveal). */
+  masked_attribute_keys: string[];
   tag_ids: Id[];
   owner_id: Id | null;
   presence: PresenceState;
@@ -390,6 +435,8 @@ export type Customer = {
   first_seen_at: Timestamp;
   last_seen_at: Timestamp | null;
   last_contacted_at: Timestamp | null;
+  /** §13 conventions — pass back on update; a stale value means someone else changed this profile first. */
+  version: number;
 };
 
 export type Company = {
@@ -413,12 +460,14 @@ export type ContactSession = {
   customer_id: Id | null;
   visitor_id: Id | null;
   started_at: Timestamp;
+  last_seen_at: Timestamp;
   ended_at: Timestamp | null;
   ip_country: string | null;
   browser: string | null;
   os: string | null;
   device: "desktop" | "mobile" | "tablet" | "unknown";
   referrer: string | null;
+  current_url: string | null;
   page_views: number;
 };
 
