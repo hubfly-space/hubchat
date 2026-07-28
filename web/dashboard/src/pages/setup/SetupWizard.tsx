@@ -1,15 +1,14 @@
 import {
+  api,
+  ApiError,
   Badge,
   Button,
   Callout,
-  Card,
-  CardBody,
-  CodeBlock,
   Field,
   Input,
-  Select,
-  Spinner,
-  Switch,
+  QueryError,
+  useMutation,
+  useQuery,
   cn,
 } from "@hubchat/shared";
 import {
@@ -20,35 +19,47 @@ import {
   Mail,
   Server,
   ShieldCheck,
-  UserPlus,
 } from "lucide-react";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import { Wordmark } from "../../components/Wordmark";
 
-type StepId = "checks" | "migrate" | "owner" | "workspace" | "services";
+type StepId = "checks" | "owner" | "workspace";
 
 const STEPS: { id: StepId; label: string; hint: string }[] = [
   { id: "checks", label: "Preflight", hint: "Configuration and database" },
-  { id: "migrate", label: "Migrations", hint: "Create the schema" },
   { id: "owner", label: "Owner account", hint: "The first user" },
   { id: "workspace", label: "Workspace", hint: "Your tenant" },
-  { id: "services", label: "Services", hint: "Storage, email, public URL" },
 ];
+
+type SetupState = {
+  installed: boolean;
+  public_url: string;
+  secret_key_ok: boolean;
+  email_configured: boolean;
+  storage_backend: string;
+  migrations_total: number;
+  migrations_applied: number;
+};
 
 /**
  * First-run installation (§7.1).
  *
- * Runs before any account exists, so it is served by the Go binary at /setup
- * and is unreachable once an owner has been created. Migrations are applied
- * only after explicit approval — silently mutating a database on boot is not
- * acceptable for a self-hosted product.
+ * Reachable at any time, but only useful before an owner exists — once
+ * `/v1/setup/state` reports `installed`, this redirects to sign-in rather than
+ * let a second visitor create a competing "first" owner. Schema migrations are
+ * never triggered from here: they already ran (or were verified clean) before
+ * this server accepted its first request, per `HUBCHAT_MIGRATE` — silently
+ * mutating a database from a browser click is not a self-hosted product's
+ * business.
  */
 export default function SetupWizard() {
   const navigate = useNavigate();
   const [step, setStep] = useState<StepId>("checks");
-  const [migrating, setMigrating] = useState(false);
-  const [migrated, setMigrated] = useState(false);
+
+  const state = useQuery<SetupState>(["setup", "state"], (signal) =>
+    api.get<SetupState>("/setup/state", { signal, fresh: true }),
+  );
 
   const index = STEPS.findIndex((item) => item.id === step);
   const advance = () => {
@@ -56,6 +67,29 @@ export default function SetupWizard() {
     if (next) setStep(next.id);
     else navigate("/onboarding");
   };
+
+  if (state.isLoading) {
+    return (
+      <div className="grid min-h-dvh place-items-center bg-canvas">
+        <p className="text-sm text-fg-muted">Checking installation state…</p>
+      </div>
+    );
+  }
+
+  if (state.error) {
+    return (
+      <div className="mx-auto max-w-md pt-24">
+        <QueryError error={state.error} retry={state.refetch} />
+      </div>
+    );
+  }
+
+  // An owner already exists. Whoever is here either finished setup already or
+  // followed a stale link — either way, sign-in is the correct next step, not
+  // a wizard that would try to create a second first-run owner.
+  if (state.data?.installed) {
+    return <Navigate to="/login" replace />;
+  }
 
   return (
     <div className="min-h-dvh bg-canvas">
@@ -67,7 +101,6 @@ export default function SetupWizard() {
       </header>
 
       <div className="mx-auto grid max-w-4xl gap-8 px-6 py-10 md:grid-cols-[200px_minmax(0,1fr)]">
-        {/* Step rail ------------------------------------------------------ */}
         <ol className="relative hidden md:block">
           <span aria-hidden="true" className="absolute bottom-3 left-[11px] top-3 w-px bg-line" />
           {STEPS.map((item, itemIndex) => {
@@ -101,213 +134,260 @@ export default function SetupWizard() {
           })}
         </ol>
 
-        {/* Step body ------------------------------------------------------ */}
         <div>
-          {step === "checks" && (
-            <StepShell
-              title="Preflight checks"
-              description="Hubchat verified its configuration before starting. Everything below must pass before the schema is created."
-              onNext={advance}
-              nextLabel="Continue"
-            >
-              <div className="flex flex-col gap-2">
-                <CheckRow
-                  icon={<Database />}
-                  label="PostgreSQL connection"
-                  detail="postgres://hubchat@localhost:5432/hubchat · server 17.2"
-                  state="pass"
-                />
-                <CheckRow
-                  icon={<Server />}
-                  label="Public URL"
-                  detail="https://support.northwind.cloud"
-                  state="pass"
-                />
-                <CheckRow
-                  icon={<HardDrive />}
-                  label="Data directory"
-                  detail="/var/lib/hubchat · writable · 214 GB free"
-                  state="pass"
-                />
-                <CheckRow
-                  icon={<Mail />}
-                  label="Outbound email"
-                  detail="No SMTP configured — customer notifications will queue"
-                  state="warn"
-                />
-                <CheckRow
-                  icon={<ShieldCheck />}
-                  label="Secret key"
-                  detail="HUBCHAT_SECRET_KEY present · 32 bytes"
-                  state="pass"
-                />
-              </div>
-
-              <Callout tone="warning" className="mt-4">
-                Email is optional for installation but required before customers can receive ticket
-                notifications. You can configure it now or later in Settings.
-              </Callout>
-            </StepShell>
-          )}
-
-          {step === "migrate" && (
-            <StepShell
-              title="Create the database schema"
-              description="Hubchat ships its migrations inside the binary. Nothing has been written to your database yet."
-              onNext={advance}
-              nextDisabled={!migrated}
-              nextLabel="Continue"
-            >
-              <Card variant="sunken">
-                <CardBody className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-sm text-fg">42 pending migrations</p>
-                    <p className="mt-0.5 text-xs text-fg-muted">
-                      0001_accounts → 0042_analytics_rollups
-                    </p>
-                  </div>
-                  {migrated ? (
-                    <Badge tone="success" leading={<Check />}>
-                      Applied
-                    </Badge>
-                  ) : (
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      loading={migrating}
-                      onClick={() => {
-                        setMigrating(true);
-                        window.setTimeout(() => {
-                          setMigrating(false);
-                          setMigrated(true);
-                        }, 1200);
-                      }}
-                    >
-                      Apply migrations
-                    </Button>
-                  )}
-                </CardBody>
-              </Card>
-
-              <p className="mt-4 text-xs text-fg-muted">
-                Prefer to run this yourself, or automating the install?
-              </p>
-              <CodeBlock
-                className="mt-2"
-                language="bash"
-                code={"hubchat migrate\nhubchat migrate status --json"}
-              />
-            </StepShell>
-          )}
-
-          {step === "owner" && (
-            <StepShell
-              title="Create the owner account"
-              description="The owner holds every capability, including destructive workspace operations. You can add more members later."
-              onNext={advance}
-              nextLabel="Create account"
-            >
-              <div className="flex flex-col gap-4">
-                <Field label="Full name" htmlFor="owner-name">
-                  <Input id="owner-name" inputSize="lg" defaultValue="Ada Mwangi" />
-                </Field>
-                <Field label="Email" htmlFor="owner-email">
-                  <Input
-                    id="owner-email"
-                    type="email"
-                    inputSize="lg"
-                    defaultValue="ada@northwind.cloud"
-                  />
-                </Field>
-                <Field
-                  label="Password"
-                  htmlFor="owner-password"
-                  description="At least 12 characters. This account can delete the workspace — choose accordingly."
-                >
-                  <Input id="owner-password" type="password" inputSize="lg" />
-                </Field>
-                <Switch
-                  label="Require two-factor authentication for this account"
-                  description="Recommended. You will set it up immediately after signing in."
-                  defaultChecked
-                />
-              </div>
-            </StepShell>
-          )}
-
-          {step === "workspace" && (
-            <StepShell
-              title="Create your first workspace"
-              description="A workspace is the tenant boundary. Every customer, conversation, and setting belongs to exactly one."
-              onNext={advance}
-              nextLabel="Create workspace"
-            >
-              <div className="flex flex-col gap-4">
-                <Field label="Workspace name" htmlFor="ws-name">
-                  <Input id="ws-name" inputSize="lg" defaultValue="Northwind Cloud" />
-                </Field>
-                <Field
-                  label="Slug"
-                  htmlFor="ws-slug"
-                  description="Used in portal URLs and API scoping. Hard to change later."
-                >
-                  <Input id="ws-slug" inputSize="lg" defaultValue="northwind" suffix=".hubchat.app" />
-                </Field>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field label="Timezone" htmlFor="ws-tz">
-                    <Select
-                      id="ws-tz"
-                      size="lg"
-                      defaultValue="Europe/Lisbon"
-                      options={[
-                        { value: "Europe/Lisbon", label: "Europe/Lisbon (WEST)" },
-                        { value: "Europe/Berlin", label: "Europe/Berlin (CEST)" },
-                        { value: "America/New_York", label: "America/New_York (EDT)" },
-                        { value: "Asia/Singapore", label: "Asia/Singapore (+08)" },
-                      ]}
-                    />
-                  </Field>
-                  <Field label="Ticket prefix" htmlFor="ws-prefix">
-                    <Input id="ws-prefix" inputSize="lg" defaultValue="SUP" mono />
-                  </Field>
-                </div>
-              </div>
-            </StepShell>
-          )}
-
-          {step === "services" && (
-            <StepShell
-              title="Optional services"
-              description="Hubchat runs without any of these. Configure them now or from Settings once you are in."
-              onNext={advance}
-              nextLabel="Finish setup"
-            >
-              <div className="flex flex-col gap-3">
-                <ServiceCard
-                  icon={<Mail />}
-                  title="Outbound email"
-                  status="not-configured"
-                  detail="Required for ticket notifications, magic links, and password resets."
-                />
-                <ServiceCard
-                  icon={<HardDrive />}
-                  title="Object storage"
-                  status="local"
-                  detail="Attachments are stored on local disk at /var/lib/hubchat/files. Switch to S3-compatible storage for multi-node deployments."
-                />
-                <ServiceCard
-                  icon={<ShieldCheck />}
-                  title="TLS"
-                  status="ok"
-                  detail="Terminated by your reverse proxy. Secure cookies are enabled."
-                />
-              </div>
-            </StepShell>
-          )}
+          {step === "checks" && state.data && <ChecksStep state={state.data} onNext={advance} />}
+          {step === "owner" && <OwnerStep onNext={advance} />}
+          {step === "workspace" && <WorkspaceStep onNext={advance} />}
         </div>
       </div>
     </div>
   );
+}
+
+function ChecksStep({ state, onNext }: { state: SetupState; onNext: () => void }) {
+  const migrationsCurrent = state.migrations_applied >= state.migrations_total;
+
+  return (
+    <StepShell
+      title="Preflight checks"
+      description="Hubchat verified its configuration before starting. Everything below reflects the server you are actually talking to — not a simulation."
+      onNext={onNext}
+      nextLabel="Continue"
+    >
+      <div className="flex flex-col gap-2">
+        <CheckRow
+          icon={<Database />}
+          label="Database schema"
+          detail={`${state.migrations_applied} of ${state.migrations_total} migrations applied`}
+          state={migrationsCurrent ? "pass" : "fail"}
+        />
+        <CheckRow
+          icon={<Server />}
+          label="Public URL"
+          detail={state.public_url || "Not configured"}
+          state={state.public_url ? "pass" : "fail"}
+        />
+        <CheckRow
+          icon={<HardDrive />}
+          label="Attachment storage"
+          detail={state.storage_backend === "s3" ? "S3-compatible storage" : "Local disk"}
+          state="pass"
+        />
+        <CheckRow
+          icon={<Mail />}
+          label="Outbound email"
+          detail={
+            state.email_configured
+              ? "SMTP configured"
+              : "No SMTP configured — notifications will queue"
+          }
+          state={state.email_configured ? "pass" : "warn"}
+        />
+        <CheckRow
+          icon={<ShieldCheck />}
+          label="Secret key"
+          detail={state.secret_key_ok ? "Present, at least 32 bytes" : "Missing or too short"}
+          state={state.secret_key_ok ? "pass" : "fail"}
+        />
+      </div>
+
+      {!state.email_configured && (
+        <Callout tone="warning" className="mt-4">
+          Email is optional for installation but required before customers can receive ticket
+          notifications. You can configure it now with <code>HUBCHAT_SMTP_HOST</code> or later.
+        </Callout>
+      )}
+    </StepShell>
+  );
+}
+
+function OwnerStep({ onNext }: { onNext: () => void }) {
+  const [error, setError] = useState<string | null>(null);
+
+  const createOwner = useMutation<
+    { name: string; email: string; password: string },
+    unknown
+  >((body) => api.post("/auth/signup", body), {
+    onSuccess: onNext,
+    onError: (caught) => {
+      setError(
+        caught instanceof ApiError
+          ? caught.message
+          : "Could not reach the server. Check your connection and try again.",
+      );
+    },
+  });
+
+  const submit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError(null);
+    const form = new FormData(event.currentTarget);
+    void createOwner
+      .mutate({
+        name: String(form.get("name") ?? ""),
+        email: String(form.get("email") ?? ""),
+        password: String(form.get("password") ?? ""),
+      })
+      .catch(() => {});
+  };
+
+  return (
+    <StepShell
+      title="Create the owner account"
+      description="The owner holds every capability, including destructive workspace operations. You can add more members later."
+      onNext={() => {}}
+      nextLabel="Create account"
+      hideNext
+    >
+      <form id="owner-form" onSubmit={submit} className="flex flex-col gap-4">
+        {error && <Callout tone="danger">{error}</Callout>}
+
+        <Field label="Full name" htmlFor="owner-name">
+          <Input id="owner-name" name="name" inputSize="lg" required autoComplete="name" />
+        </Field>
+        <Field label="Email" htmlFor="owner-email">
+          <Input
+            id="owner-email"
+            name="email"
+            type="email"
+            inputSize="lg"
+            required
+            autoComplete="username"
+          />
+        </Field>
+        <Field
+          label="Password"
+          htmlFor="owner-password"
+          description="At least 12 characters. This account can delete the workspace — choose accordingly."
+        >
+          <Input
+            id="owner-password"
+            name="password"
+            type="password"
+            inputSize="lg"
+            required
+            minLength={12}
+            autoComplete="new-password"
+          />
+        </Field>
+      </form>
+
+      <div className="mt-8 flex justify-end">
+        <Button
+          type="submit"
+          form="owner-form"
+          variant="primary"
+          size="lg"
+          loading={createOwner.isPending}
+        >
+          Create account
+        </Button>
+      </div>
+    </StepShell>
+  );
+}
+
+function WorkspaceStep({ onNext }: { onNext: () => void }) {
+  const [error, setError] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [slug, setSlug] = useState("");
+  // Tracks whether the person has typed into the slug field directly, so
+  // auto-deriving it from the name never clobbers a deliberate edit.
+  const [slugTouched, setSlugTouched] = useState(false);
+
+  const createWorkspace = useMutation<{ name: string; slug: string }, unknown>(
+    (body) => api.post("/workspaces", body),
+    {
+      onSuccess: onNext,
+      onError: (caught) => {
+        setError(
+          caught instanceof ApiError
+            ? caught.message
+            : "Could not reach the server. Check your connection and try again.",
+        );
+      },
+    },
+  );
+
+  const submit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError(null);
+    const form = new FormData(event.currentTarget);
+    void createWorkspace
+      .mutate({
+        name: String(form.get("name") ?? ""),
+        slug: String(form.get("slug") ?? ""),
+      })
+      .catch(() => {});
+  };
+
+  return (
+    <StepShell
+      title="Create your first workspace"
+      description="A workspace is the tenant boundary. Every customer, conversation, and setting belongs to exactly one."
+      onNext={() => {}}
+      nextLabel="Create workspace"
+      hideNext
+    >
+      <form id="workspace-form" onSubmit={submit} className="flex flex-col gap-4">
+        {error && <Callout tone="danger">{error}</Callout>}
+
+        <Field label="Workspace name" htmlFor="ws-name">
+          <Input
+            id="ws-name"
+            name="name"
+            inputSize="lg"
+            required
+            value={name}
+            onChange={(event) => {
+              const value = event.target.value;
+              setName(value);
+              if (!slugTouched) setSlug(slugify(value));
+            }}
+          />
+        </Field>
+        <Field
+          label="Slug"
+          htmlFor="ws-slug"
+          description="Used in portal URLs and API scoping. Lowercase letters, numbers, and hyphens."
+        >
+          <Input
+            id="ws-slug"
+            name="slug"
+            inputSize="lg"
+            required
+            pattern="[a-z0-9][a-z0-9-]{1,38}[a-z0-9]"
+            value={slug}
+            onChange={(event) => {
+              setSlugTouched(true);
+              setSlug(event.target.value);
+            }}
+          />
+        </Field>
+      </form>
+
+      <div className="mt-8 flex justify-end">
+        <Button
+          type="submit"
+          form="workspace-form"
+          variant="primary"
+          size="lg"
+          loading={createWorkspace.isPending}
+        >
+          Create workspace
+        </Button>
+      </div>
+    </StepShell>
+  );
+}
+
+function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
 }
 
 function StepShell({
@@ -317,6 +397,7 @@ function StepShell({
   onNext,
   nextLabel,
   nextDisabled,
+  hideNext,
 }: {
   title: string;
   description: string;
@@ -324,17 +405,20 @@ function StepShell({
   onNext: () => void;
   nextLabel: string;
   nextDisabled?: boolean;
+  hideNext?: boolean;
 }) {
   return (
     <div>
       <h1 className="text-xl font-semibold tracking-tight text-fg">{title}</h1>
       <p className="mt-1.5 max-w-measure text-sm leading-normal text-fg-muted">{description}</p>
       <div className="mt-6">{children}</div>
-      <div className="mt-8 flex justify-end">
-        <Button variant="primary" size="lg" onClick={onNext} disabled={nextDisabled}>
-          {nextLabel}
-        </Button>
-      </div>
+      {!hideNext && (
+        <div className="mt-8 flex justify-end">
+          <Button variant="primary" size="lg" onClick={onNext} disabled={nextDisabled}>
+            {nextLabel}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -348,7 +432,7 @@ function CheckRow({
   icon: React.ReactNode;
   label: string;
   detail: string;
-  state: "pass" | "warn" | "fail" | "pending";
+  state: "pass" | "warn" | "fail";
 }) {
   return (
     <div className="flex items-start gap-3 rounded-md border border-line bg-surface px-3 py-2.5">
@@ -361,42 +445,7 @@ function CheckRow({
         {state === "pass" && <Check className="size-4 text-success-text" />}
         {state === "warn" && <AlertTriangle className="size-4 text-warning-text" />}
         {state === "fail" && <AlertTriangle className="size-4 text-danger-text" />}
-        {state === "pending" && <Spinner />}
       </span>
     </div>
-  );
-}
-
-function ServiceCard({
-  icon,
-  title,
-  detail,
-  status,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  detail: string;
-  status: "ok" | "local" | "not-configured";
-}) {
-  return (
-    <Card>
-      <CardBody className="flex items-start gap-3">
-        <span className="mt-0.5 shrink-0 text-fg-muted [&_svg]:size-4">{icon}</span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <p className="text-sm font-medium text-fg">{title}</p>
-            <Badge
-              tone={status === "ok" ? "success" : status === "local" ? "neutral" : "warning"}
-            >
-              {status === "ok" ? "Ready" : status === "local" ? "Local disk" : "Not configured"}
-            </Badge>
-          </div>
-          <p className="mt-1 text-xs leading-normal text-fg-muted">{detail}</p>
-        </div>
-        <Button variant="secondary" size="sm" leading={<UserPlus />}>
-          Configure
-        </Button>
-      </CardBody>
-    </Card>
   );
 }

@@ -39,6 +39,14 @@ type Entry<T = unknown> = {
   listeners: Set<() => void>;
   /** Snapshot handed to useSyncExternalStore; replaced whenever anything changes. */
   snapshot: QueryState<T>;
+  /**
+   * The most recently mounted `useQuery`'s fetch function, kept so
+   * `invalidate()` can force an actual network refetch for a key that is
+   * currently on screen — not just mark it stale for whenever it next
+   * happens to remount. Last writer wins; any mounted caller of the same key
+   * fetches the same thing, so it does not matter which one's closure runs.
+   */
+  refetch?: () => void;
 };
 
 export type QueryState<T> = {
@@ -207,6 +215,15 @@ export function useQuery<T>(
     load(false);
   }, [load]);
 
+  // Registers this mount as the one `invalidate()` wakes up when this key is
+  // marked stale while on screen (see the `refetch` field on Entry). Whoever
+  // registers last wins across multiple mounts of the same key, which is
+  // fine — they all fetch the same thing.
+  useEffect(() => {
+    if (!serialized || !active) return;
+    entryFor(serialized).refetch = () => load(true);
+  }, [serialized, active, load]);
+
   useEffect(() => {
     if (!refetchOnFocus || !active) return;
     const onFocus = () => load(false);
@@ -251,6 +268,12 @@ export function invalidate(prefix: QueryKey) {
     // while the refetch runs — invalidation should not blank the UI.
     entry.updatedAt = 0;
     publish(entry);
+
+    // A query with active listeners is on screen right now. Without this, a
+    // mounted query only picks up fresh data on its next mount — the mutation
+    // that just wrote the change would succeed while the visible list quietly
+    // kept showing the old one.
+    if (entry.listeners.size > 0) entry.refetch?.();
   }
 }
 
@@ -307,6 +330,15 @@ export type MutationState<TArgs, TResult> = {
   mutate: (args: TArgs) => Promise<TResult>;
   isPending: boolean;
   error: unknown;
+  /**
+   * True once a mutation has completed without error. Stays true across
+   * re-renders until `reset` is called or `mutate` runs again — the "show a
+   * confirmation screen" flag for one-shot actions like requesting a
+   * password reset, where §11.4 requires the response to look identical
+   * whether or not the account exists, so the component has nothing to
+   * branch on except "did the request finish".
+   */
+  isSuccess: boolean;
   reset: () => void;
 };
 
@@ -317,6 +349,7 @@ export function useMutation<TArgs, TResult>(
 ): MutationState<TArgs, TResult> {
   const [isPending, setPending] = useState(false);
   const [error, setError] = useState<unknown>(undefined);
+  const [isSuccess, setSuccess] = useState(false);
 
   const optionsRef = useRef(options);
   optionsRef.current = options;
@@ -328,12 +361,14 @@ export function useMutation<TArgs, TResult>(
 
     setPending(true);
     setError(undefined);
+    setSuccess(false);
 
     const rollback = optimistic?.(args);
 
     try {
       const result = await mutatorRef.current(args);
       invalidates?.forEach(invalidate);
+      setSuccess(true);
       onSuccess?.(result, args);
       return result;
     } catch (caught) {
@@ -348,9 +383,12 @@ export function useMutation<TArgs, TResult>(
     }
   }, []);
 
-  const reset = useCallback(() => setError(undefined), []);
+  const reset = useCallback(() => {
+    setError(undefined);
+    setSuccess(false);
+  }, []);
 
-  return { mutate, isPending, error, reset };
+  return { mutate, isPending, error, isSuccess, reset };
 }
 
 /**
