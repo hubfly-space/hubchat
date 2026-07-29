@@ -276,6 +276,63 @@ func (r *repository) memberInWorkspace(ctx context.Context, workspaceID, memberI
 	return exists, err
 }
 
+// byExternalID finds a customer by the id the workspace's own system assigns
+// them, when one is bound. Used by widget/SDK identify() to recognise a
+// returning, already-linked person before falling back to creating one.
+func (r *repository) byExternalID(ctx context.Context, workspaceID, externalID string) (*Customer, error) {
+	row := r.pool.QueryRow(ctx, `SELECT `+customerColumns+`
+		FROM customers WHERE workspace_id = $1 AND external_id = $2
+	`, workspaceID, externalID)
+	return scanCustomer(row)
+}
+
+// byVerifiedEmail finds a customer by a *verified* email — never an
+// unverified one, because matching on an unverified claim is exactly the weak
+// signal §6.9 forbids merging identities on: anyone can type someone else's
+// email into a form.
+func (r *repository) byVerifiedEmail(ctx context.Context, workspaceID, email string) (*Customer, error) {
+	row := r.pool.QueryRow(ctx, `SELECT `+customerColumns+`
+		FROM customers WHERE workspace_id = $1 AND email = $2 AND verification = 'verified'
+	`, workspaceID, email)
+	return scanCustomer(row)
+}
+
+// insertCustomer creates a new customer row. This is the one place a
+// customer record comes into existence outside of a merge-reversal replay
+// (merge.go's recreateCustomer) — every other path (widget identify, a
+// future manual "new customer" action) goes through Service.Identify, which
+// calls this after failing to find an existing match.
+func (r *repository) insertCustomer(
+	ctx context.Context, id, workspaceID string,
+	name, email, externalID *string, verification string,
+) (*Customer, error) {
+	row := r.pool.QueryRow(ctx, `
+		INSERT INTO customers (id, workspace_id, name, email, external_id, verification)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING `+customerColumns, id, workspaceID, name, email, externalID, verification)
+	return scanCustomer(row)
+}
+
+// touchIdentity records that a returning, already-identified visitor made
+// contact again, and raises verification from unverified to verified when a
+// signed identity token proves it this time — verification only ever
+// strengthens here, never weakens, so a later unsigned identify() call cannot
+// downgrade a customer a signed token already vouched for.
+func (r *repository) touchIdentity(
+	ctx context.Context, workspaceID, id string, name, email, externalID *string, verified bool,
+) (*Customer, error) {
+	row := r.pool.QueryRow(ctx, `
+		UPDATE customers SET
+			name = coalesce($3, name),
+			email = coalesce($4, email),
+			external_id = coalesce($5, external_id),
+			verification = CASE WHEN $6 THEN 'verified' ELSE verification END,
+			last_seen_at = now()
+		WHERE workspace_id = $1 AND id = $2
+		RETURNING `+customerColumns, workspaceID, id, name, email, externalID, verified)
+	return scanCustomer(row)
+}
+
 func uniqueViolation(err error) bool {
 	var pgErr interface{ SQLState() string }
 	if errors.As(err, &pgErr) {

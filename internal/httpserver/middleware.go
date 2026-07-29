@@ -156,6 +156,12 @@ func SecurityHeaders(surface Surface) func(http.Handler) http.Handler {
 				// configuration is requested, not from a frame-ancestors rule
 				// that cannot know the tenant at this layer.
 				header.Set("Cross-Origin-Resource-Policy", "cross-origin")
+				// v1.js loads app.js via a dynamic `import()`, and a module
+				// fetch is always CORS mode — unlike a plain <script src>,
+				// CORP alone does not satisfy it. The bundle itself carries no
+				// tenant data (it is the same file for every workspace), so
+				// there is nothing here for an allowlist to protect.
+				header.Set("Access-Control-Allow-Origin", "*")
 
 			case SurfaceAPI:
 				header.Set("X-Frame-Options", "DENY")

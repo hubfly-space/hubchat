@@ -109,6 +109,102 @@ func (s *Service) Update(
 	return s.repo.byID(ctx, workspaceID, id)
 }
 
+// Identify resolves a widget/SDK identify() call to a customer record,
+// creating one if this is the first time this person has been seen.
+//
+// verified marks whether the caller already proved this identity (a signed
+// HS256 token, checked by the widget layer before this is ever called) as
+// opposed to a bare claim typed into identify({email}) — see byVerifiedEmail
+// for why that distinction gates matching by email at all (§6.9: never merge
+// on weak signals). externalID has no such caveat: it is the workspace's own
+// system assigning its own id, so matching on it is never a spoofable claim
+// about *someone else's* identity in the way an unverified email is.
+//
+// existingCustomerID narrows the search to a specific record already linked
+// to this visitor (e.g. from a prior anonymous message) — when set and the
+// lookup below finds a *different* verified match, the two are deliberately
+// left unmerged and the existing record is returned unchanged; reconciling
+// two independently-established identities is a merge, and merges happen
+// through Merge/MergePreview with an agent looking at both sides, not as a
+// side effect of a page load.
+func (s *Service) Identify(
+	ctx context.Context, workspaceID string,
+	existingCustomerID *string,
+	name, email, externalID *string,
+	verified bool,
+) (*Customer, error) {
+	if existingCustomerID != nil {
+		if existing, err := s.repo.byID(ctx, workspaceID, *existingCustomerID); err == nil {
+			return s.touchIdentity(ctx, workspaceID, existing, name, email, externalID, verified)
+		} else if !errors.Is(err, ErrNotFound) {
+			return nil, err
+		}
+	}
+
+	if externalID != nil && *externalID != "" {
+		if found, err := s.repo.byExternalID(ctx, workspaceID, *externalID); err == nil {
+			return s.touchIdentity(ctx, workspaceID, found, name, email, externalID, verified)
+		} else if !errors.Is(err, ErrNotFound) {
+			return nil, err
+		}
+	}
+
+	if verified && email != nil && *email != "" {
+		if found, err := s.repo.byVerifiedEmail(ctx, workspaceID, *email); err == nil {
+			return s.touchIdentity(ctx, workspaceID, found, name, email, externalID, verified)
+		} else if !errors.Is(err, ErrNotFound) {
+			return nil, err
+		}
+	}
+
+	verification := "unverified"
+	if verified {
+		verification = "verified"
+	}
+
+	id := ids.New(ids.PrefixCustomer)
+	var created *Customer
+	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		var err error
+		created, err = s.repo.insertCustomer(ctx, id, workspaceID, name, email, externalID, verification)
+		if err != nil {
+			return err
+		}
+		return s.appendEvent(ctx, tx, events.Event{
+			WorkspaceID: workspaceID, Type: events.CustomerCreated,
+			EntityType: "customer", EntityID: id, ActorType: events.ActorCustomer, ActorID: id,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return created, nil
+}
+
+// touchIdentity records a repeat contact from an already-known customer,
+// inside a transaction so the customer.identified event commits with it.
+func (s *Service) touchIdentity(
+	ctx context.Context, workspaceID string, existing *Customer,
+	name, email, externalID *string, verified bool,
+) (*Customer, error) {
+	var updated *Customer
+	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		var err error
+		updated, err = s.repo.touchIdentity(ctx, workspaceID, existing.ID, name, email, externalID, verified)
+		if err != nil {
+			return err
+		}
+		return s.appendEvent(ctx, tx, events.Event{
+			WorkspaceID: workspaceID, Type: events.CustomerIdentified,
+			EntityType: "customer", EntityID: existing.ID, ActorType: events.ActorCustomer, ActorID: existing.ID,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
 // SetOwner assigns (or clears, when ownerID is nil) which agent owns this
 // customer's account — the "Assign owner" bulk action in the directory.
 func (s *Service) SetOwner(ctx context.Context, workspaceID, actorMemberID, customerID string, ownerID *string) (*Customer, error) {

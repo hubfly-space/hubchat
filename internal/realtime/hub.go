@@ -228,8 +228,38 @@ func (h *Hub) deliver(workspaceID string, record events.Record) {
 		if !c.wants(topic) {
 			continue
 		}
+		if !visibleTo(c, record) {
+			continue
+		}
 		c.send(h, record.Sequence, payload)
 	}
+}
+
+// visibleTo is the one place a visitor connection can see less than the
+// topic it is subscribed to would otherwise deliver.
+//
+// A conversation's internal notes travel the same "message.created" event
+// as a customer-visible reply — kind is the only thing that tells them
+// apart — and Grant only ever narrows *which conversations* a visitor may
+// see, not *what* within one. Without this check, an agent's note ("this
+// customer is being difficult") would reach the visitor's own browser over
+// the same socket a reply does, visible in a network inspector even if the
+// widget UI never renders it. Agent connections (Grant.MemberID set) are
+// unaffected — they already see every note through the workspace firehose.
+func visibleTo(c *client, record events.Record) bool {
+	if c.grant.MemberID != "" {
+		return true
+	}
+	if record.Type != events.MessageCreated {
+		return true
+	}
+	var partial struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.Unmarshal(record.Data, &partial); err != nil {
+		return true
+	}
+	return partial.Kind != "note"
 }
 
 // broadcastTyping relays a typing indicator live, to every other connection
