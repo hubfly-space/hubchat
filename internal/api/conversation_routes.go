@@ -200,7 +200,7 @@ func handleStartConversation(deps Deps) http.HandlerFunc {
 
 		conv, msg, err := deps.Conversation.Start(
 			r.Context(), actor.WorkspaceID, req.InboxID, req.Channel,
-			req.Subject, req.CustomerID, req.AuthorName, req.Body,
+			req.Subject, req.CustomerID, nil, req.AuthorName, req.Body,
 		)
 		if err != nil {
 			writeConversationError(w, r, err)
@@ -587,6 +587,7 @@ func conversationJSON(c conversation.Conversation, tagIDs []string, unread bool,
 		"state":                c.State,
 		"priority":             c.Priority,
 		"customer_id":          c.CustomerID,
+		"visitor_id":           c.VisitorID,
 		"assignee_id":          c.AssigneeID,
 		"team_id":              c.TeamID,
 		"tag_ids":              orEmpty(tagIDs),
