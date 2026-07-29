@@ -1,4 +1,6 @@
 import {
+  api,
+  ApiError,
   Badge,
   Button,
   Callout,
@@ -9,6 +11,8 @@ import {
   CodeBlock,
   ColorPicker,
   CopyField,
+  Dialog,
+  DialogContent,
   EmptyState,
   Field,
   Input,
@@ -25,23 +29,39 @@ import {
   Textarea,
   Toolbar,
   Tooltip,
+  useMutation,
+  useQuery,
   useToast,
+  formatRelativeShort,
 } from "@hubchat/shared";
 import {
   Eye,
   History,
   Monitor,
   Moon,
+  RotateCcw,
   Smartphone,
   Sparkles,
   Sun,
   Trash2,
 } from "lucide-react";
-import { useState } from "react";
-import { useParams } from "react-router-dom";
-import { inboxes, widgets } from "../../data/fixtures";
+import { useEffect, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { useWorkspace } from "../../app/workspace-context";
 import { WidgetPreview } from "./WidgetPreview";
 import type { Widget } from "@hubchat/shared";
+
+type WidgetVersion = {
+  id: string;
+  version: number;
+  modes: string[];
+  appearance: Widget["appearance"];
+  content: Widget["content"];
+  behavior: Widget["behavior"];
+  changed_by: string | null;
+  note: string | null;
+  created_at: string;
+};
 
 /**
  * Widget builder (§6.4).
@@ -55,15 +75,64 @@ import type { Widget } from "@hubchat/shared";
  */
 export default function WidgetBuilder() {
   const { widgetId } = useParams();
+  const navigate = useNavigate();
   const toast = useToast();
+  const { inboxes } = useWorkspace();
 
-  const source = widgets.find((item) => item.id === widgetId) ?? widgets[0];
-  const [draft, setDraft] = useState<Widget | undefined>(source);
+  const widgetQuery = useQuery<Widget>(
+    widgetId ? ["widget", widgetId] : null,
+    (signal) => api.get(`/widgets/${widgetId}`, { signal }),
+  );
+
+  const [draft, setDraft] = useState<Widget | undefined>(undefined);
   const [tab, setTab] = useState("appearance");
   const [device, setDevice] = useState<"desktop" | "mobile">("desktop");
   const [previewTheme, setPreviewTheme] = useState<"light" | "dark">("dark");
   const [previewState, setPreviewState] = useState<"launcher" | "home" | "chat">("home");
   const [dirty, setDirty] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  // The server is the source of truth; a fresh load (or a refetch after a
+  // successful save) replaces the draft. Local edits between saves live only
+  // in this component's state, exactly like before against fixtures.
+  useEffect(() => {
+    if (widgetQuery.data) {
+      setDraft(widgetQuery.data);
+      setDirty(false);
+    }
+  }, [widgetQuery.data]);
+
+  const save = useMutation<Widget, Widget>(
+    (payload) =>
+      api.put(`/widgets/${widgetId}`, {
+        name: payload.name,
+        inbox_id: payload.inbox_id,
+        modes: payload.modes,
+        appearance: payload.appearance,
+        content: payload.content,
+        behavior: payload.behavior,
+        environment: payload.environment,
+        rollout_percent: payload.rollout_percent,
+        enabled: payload.enabled,
+        domains: payload.domains,
+      }),
+    {
+      invalidates: [["widget", widgetId ?? ""], ["widgets"]],
+      onSuccess: (updated) => {
+        setDirty(false);
+        toast.success({
+          title: `Published v${updated.version}`,
+          description: `Live on ${updated.domains.length} domain${updated.domains.length === 1 ? "" : "s"}.`,
+        });
+      },
+    },
+  );
+
+  const remove = useMutation<void, unknown>(() => api.delete(`/widgets/${widgetId}`), {
+    onSuccess: () => navigate("/channels/widgets"),
+  });
+
+  if (widgetQuery.isLoading) return <Page>{null}</Page>;
 
   if (!draft) {
     return (
@@ -105,30 +174,38 @@ export default function WidgetBuilder() {
         }
         trailing={
           <>
-            <Button variant="ghost" size="sm" leading={<History />}>
+            <Button variant="ghost" size="sm" leading={<History />} onClick={() => setHistoryOpen(true)}>
               History
             </Button>
-            <Button variant="secondary" size="sm" disabled={!dirty} onClick={() => setDirty(false)}>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={!dirty}
+              onClick={() => {
+                setDraft(widgetQuery.data);
+                setDirty(false);
+              }}
+            >
               Discard
             </Button>
             <Button
               variant="primary"
               size="sm"
               disabled={!dirty}
-              onClick={() => {
-                setDirty(false);
-                toast.success({
-                  title: `Published v${draft.version + 1}`,
-                  description: "Live on 2 domains within 60 seconds.",
-                  action: { label: "Roll back", onClick: () => undefined },
-                });
-              }}
+              loading={save.isPending}
+              onClick={() => void save.mutate(draft).catch(() => {})}
             >
               Publish
             </Button>
           </>
         }
       />
+
+      {save.error ? (
+        <Callout tone="danger" className="mx-4 mt-3">
+          {save.error instanceof ApiError ? save.error.message : "Could not publish this configuration."}
+        </Callout>
+      ) : null}
 
       <div className="flex min-h-0 flex-1">
         {/* Editor -------------------------------------------------------- */}
@@ -758,7 +835,13 @@ export function App() {
                       title="Delete this widget"
                       description="Existing conversations are kept. The script stops loading on every site within a minute."
                       actions={
-                        <Button variant="danger" size="sm" leading={<Trash2 />}>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          leading={<Trash2 />}
+                          loading={remove.isPending}
+                          onClick={() => void remove.mutate().catch(() => {})}
+                        >
                           Delete
                         </Button>
                       }
@@ -829,6 +912,78 @@ export function App() {
           </div>
         </aside>
       </div>
+
+      {historyOpen && widgetId && (
+        <WidgetHistoryDialog
+          widgetId={widgetId}
+          onClose={() => setHistoryOpen(false)}
+          onRolledBack={() => setHistoryOpen(false)}
+        />
+      )}
     </Page>
+  );
+}
+
+function WidgetHistoryDialog({
+  widgetId,
+  onClose,
+  onRolledBack,
+}: {
+  widgetId: string;
+  onClose: () => void;
+  onRolledBack: () => void;
+}) {
+  const versions = useQuery<{ data: WidgetVersion[] }>(["widget-versions", widgetId], (signal) =>
+    api.get(`/widgets/${widgetId}/versions`, { signal }),
+  );
+
+  const rollback = useMutation<number, Widget>(
+    (version) => api.post(`/widgets/${widgetId}/rollback`, { version }),
+    { invalidates: [["widget", widgetId], ["widgets"], ["widget-versions", widgetId]], onSuccess: onRolledBack },
+  );
+
+  const rows = versions.data?.data ?? [];
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent title="Configuration history" description="Every publish is a full snapshot — roll back to any of them." size="md">
+        {rollback.error ? (
+          <Callout tone="danger" className="mb-3">
+            {rollback.error instanceof ApiError ? rollback.error.message : "Could not roll back."}
+          </Callout>
+        ) : null}
+        {rows.length === 0 ? (
+          <p className="py-6 text-center text-xs text-fg-muted">No history yet.</p>
+        ) : (
+          <ul className="divide-y divide-line-subtle">
+            {rows.map((version, index) => (
+              <li key={version.id} className="flex items-center justify-between gap-3 py-2.5">
+                <div className="min-w-0">
+                  <p className="text-sm text-fg">
+                    v{version.version}
+                    {index === 0 && <span className="ml-1.5 text-2xs text-fg-muted">(current)</span>}
+                  </p>
+                  <p className="mt-0.5 text-xs text-fg-muted">
+                    {formatRelativeShort(version.created_at, new Date())} ago
+                    {version.note ? ` · ${version.note}` : ""}
+                  </p>
+                </div>
+                {index !== 0 && (
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    leading={<RotateCcw />}
+                    loading={rollback.isPending}
+                    onClick={() => void rollback.mutate(version.version).catch(() => {})}
+                  >
+                    Roll back
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -1,10 +1,17 @@
 import {
+  api,
+  ApiError,
   Badge,
   Button,
+  Callout,
   Card,
   CardBody,
   CopyField,
+  Dialog,
+  DialogContent,
   EmptyState,
+  Field,
+  Input,
   Menu,
   MenuContent,
   MenuItem,
@@ -15,16 +22,26 @@ import {
   PageHeader,
   Section,
   Tooltip,
+  useMutation,
+  useQuery,
   formatRelativeShort,
+  type Widget,
 } from "@hubchat/shared";
 import { Copy, Globe, MoreHorizontal, Plus, Sparkles, Trash2 } from "lucide-react";
-import { Link } from "react-router-dom";
-import { useWorkspace } from "../../app/workspace-context";
-import { NOW, widgets } from "../../data/fixtures";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 
 /** Widget list (§6.4) — a workspace may run several for different brands. */
 export default function WidgetList() {
-  const { memberById } = useWorkspace();
+  const navigate = useNavigate();
+  const [creating, setCreating] = useState(false);
+
+  const list = useQuery<{ data: Widget[] }>(["widgets"], (signal) => api.get("/widgets", { signal }));
+  const widgets = list.data?.data ?? [];
+
+  const remove = useMutation<string, unknown>((id) => api.delete(`/widgets/${id}`), {
+    invalidates: [["widgets"]],
+  });
 
   return (
     <Page>
@@ -32,7 +49,7 @@ export default function WidgetList() {
         title="Widgets"
         description="Embeddable support surfaces. Each one has its own branding, domain allowlist, and destination inbox."
         actions={
-          <Button variant="primary" size="sm" leading={<Plus />}>
+          <Button variant="primary" size="sm" leading={<Plus />} onClick={() => setCreating(true)}>
             New widget
           </Button>
         }
@@ -40,13 +57,13 @@ export default function WidgetList() {
 
       <PageBody>
         <Section>
-          {widgets.length === 0 ? (
+          {list.isLoading ? null : widgets.length === 0 ? (
             <EmptyState
               icon={Sparkles}
               title="No widgets yet"
               description="A widget is the fastest way to start receiving conversations — one script tag and you are live."
               action={
-                <Button variant="primary" size="sm" leading={<Plus />}>
+                <Button variant="primary" size="sm" leading={<Plus />} onClick={() => setCreating(true)}>
                   Create a widget
                 </Button>
               }
@@ -84,19 +101,23 @@ export default function WidgetList() {
 
                         <p className="mt-1 text-xs text-fg-muted">
                           {widget.modes.join(" · ").replace(/_/g, " ")} · updated{" "}
-                          {formatRelativeShort(widget.updated_at, NOW)} ago
+                          {formatRelativeShort(widget.updated_at, new Date())} ago
                         </p>
 
                         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                          {widget.domains.map((domain) => (
-                            <span
-                              key={domain}
-                              className="inline-flex items-center gap-1 rounded-sm bg-fill px-1.5 py-0.5 font-mono text-2xs text-fg-secondary"
-                            >
-                              <Globe aria-hidden="true" className="size-2.5" />
-                              {domain}
-                            </span>
-                          ))}
+                          {widget.domains.length === 0 ? (
+                            <span className="text-2xs text-fg-disabled">No domains allowlisted yet</span>
+                          ) : (
+                            widget.domains.map((domain) => (
+                              <span
+                                key={domain}
+                                className="inline-flex items-center gap-1 rounded-sm bg-fill px-1.5 py-0.5 font-mono text-2xs text-fg-secondary"
+                              >
+                                <Globe aria-hidden="true" className="size-2.5" />
+                                {domain}
+                              </span>
+                            ))
+                          )}
                         </div>
                       </div>
 
@@ -115,11 +136,15 @@ export default function WidgetList() {
                             />
                           </MenuTrigger>
                           <MenuContent align="end">
-                            <MenuItem icon={<Copy />}>Duplicate</MenuItem>
-                            <MenuItem>View installation health</MenuItem>
-                            <MenuItem>Configuration history</MenuItem>
+                            <MenuItem icon={<Copy />} onSelect={() => navigator.clipboard.writeText(widget.public_key)}>
+                              Copy public key
+                            </MenuItem>
                             <MenuSeparator />
-                            <MenuItem icon={<Trash2 />} destructive>
+                            <MenuItem
+                              icon={<Trash2 />}
+                              destructive
+                              onSelect={() => void remove.mutate(widget.id).catch(() => {})}
+                            >
                               Delete widget
                             </MenuItem>
                           </MenuContent>
@@ -137,6 +162,48 @@ export default function WidgetList() {
           )}
         </Section>
       </PageBody>
+
+      {creating && (
+        <CreateWidgetDialog onClose={() => setCreating(false)} onCreated={(id) => navigate(`/channels/widgets/${id}`)} />
+      )}
     </Page>
+  );
+}
+
+function CreateWidgetDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
+  const [name, setName] = useState("");
+
+  const create = useMutation<string, Widget>((widgetName) => api.post("/widgets", { name: widgetName, inbox_id: null }), {
+    invalidates: [["widgets"]],
+    onSuccess: (widget) => onCreated(widget.id),
+  });
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        title="New widget"
+        description="You can customise branding, behaviour, and the domain allowlist next."
+        footer={
+          <Button
+            variant="primary"
+            size="sm"
+            loading={create.isPending}
+            disabled={!name.trim()}
+            onClick={() => void create.mutate(name.trim()).catch(() => {})}
+          >
+            Create widget
+          </Button>
+        }
+      >
+        {create.error ? (
+          <Callout tone="danger" className="mb-3">
+            {create.error instanceof ApiError ? create.error.message : "Could not create this widget."}
+          </Callout>
+        ) : null}
+        <Field label="Name">
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Marketing site" autoFocus />
+        </Field>
+      </DialogContent>
+    </Dialog>
   );
 }
