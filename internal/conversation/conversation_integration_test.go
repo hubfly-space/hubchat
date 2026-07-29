@@ -103,7 +103,7 @@ func TestStartCreatesConversationWithOpeningMessage(t *testing.T) {
 	svc := newTestService(t, pool)
 	ws := seedWorkspace(t, ctx, pool)
 
-	conv, msg, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, "Visitor", "Hello, I need help")
+	conv, msg, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "Hello, I need help")
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestPostMessageIsIdempotentByClientID(t *testing.T) {
 	svc := newTestService(t, pool)
 	ws := seedWorkspace(t, ctx, pool)
 
-	conv, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, "Visitor", "Hi")
+	conv, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "Hi")
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestSetAssigneeRejectsAMemberFromAnotherWorkspace(t *testing.T) {
 	wsA := seedWorkspace(t, ctx, pool)
 	wsB := seedWorkspace(t, ctx, pool)
 
-	conv, _, err := svc.Start(ctx, wsA.WorkspaceID, wsA.InboxID, "widget", nil, nil, "Visitor", "Hi")
+	conv, _, err := svc.Start(ctx, wsA.WorkspaceID, wsA.InboxID, "widget", nil, nil, nil, "Visitor", "Hi")
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestSetStateRejectsSnoozedAndRecordsHistory(t *testing.T) {
 	svc := newTestService(t, pool)
 	ws := seedWorkspace(t, ctx, pool)
 
-	conv, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, "Visitor", "Hi")
+	conv, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "Hi")
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestSnoozeRejectsPastTimesAndWakeSnoozedReopens(t *testing.T) {
 	svc := newTestService(t, pool)
 	ws := seedWorkspace(t, ctx, pool)
 
-	conv, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, "Visitor", "Hi")
+	conv, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "Hi")
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -270,7 +270,7 @@ func TestAddTagRejectsATagFromAnotherWorkspace(t *testing.T) {
 	wsA := seedWorkspace(t, ctx, pool)
 	wsB := seedWorkspace(t, ctx, pool)
 
-	conv, _, err := svc.Start(ctx, wsA.WorkspaceID, wsA.InboxID, "widget", nil, nil, "Visitor", "Hi")
+	conv, _, err := svc.Start(ctx, wsA.WorkspaceID, wsA.InboxID, "widget", nil, nil, nil, "Visitor", "Hi")
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -309,7 +309,7 @@ func TestListFiltersByStateAndAssigneeAndScopesToWorkspace(t *testing.T) {
 	wsB := seedWorkspace(t, ctx, pool)
 	otherMember := seedMember(t, ctx, pool, wsA.WorkspaceID)
 
-	open, _, err := svc.Start(ctx, wsA.WorkspaceID, wsA.InboxID, "widget", nil, nil, "Visitor", "Open one")
+	open, _, err := svc.Start(ctx, wsA.WorkspaceID, wsA.InboxID, "widget", nil, nil, nil, "Visitor", "Open one")
 	if err != nil {
 		t.Fatalf("start open: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestListFiltersByStateAndAssigneeAndScopesToWorkspace(t *testing.T) {
 		t.Fatalf("assign: %v", err)
 	}
 
-	resolved, _, err := svc.Start(ctx, wsA.WorkspaceID, wsA.InboxID, "widget", nil, nil, "Visitor", "Resolved one")
+	resolved, _, err := svc.Start(ctx, wsA.WorkspaceID, wsA.InboxID, "widget", nil, nil, nil, "Visitor", "Resolved one")
 	if err != nil {
 		t.Fatalf("start resolved: %v", err)
 	}
@@ -325,7 +325,7 @@ func TestListFiltersByStateAndAssigneeAndScopesToWorkspace(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 
-	if _, _, err := svc.Start(ctx, wsB.WorkspaceID, wsB.InboxID, "widget", nil, nil, "Visitor", "Other workspace"); err != nil {
+	if _, _, err := svc.Start(ctx, wsB.WorkspaceID, wsB.InboxID, "widget", nil, nil, nil, "Visitor", "Other workspace"); err != nil {
 		t.Fatalf("start in other workspace: %v", err)
 	}
 
@@ -368,7 +368,7 @@ func TestMarkReadReflectsInIsRead(t *testing.T) {
 	svc := newTestService(t, pool)
 	ws := seedWorkspace(t, ctx, pool)
 
-	conv, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, "Visitor", "Hi")
+	conv, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "Hi")
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -414,7 +414,7 @@ func TestEditMessageOnlyAllowsTheOriginalAuthor(t *testing.T) {
 	ws := seedWorkspace(t, ctx, pool)
 	otherMember := seedMember(t, ctx, pool, ws.WorkspaceID)
 
-	conv, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, "Visitor", "Hi")
+	conv, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "Hi")
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -452,7 +452,7 @@ func TestRedactMessageClearsBodyAndKeepsRevision(t *testing.T) {
 	svc := newTestService(t, pool)
 	ws := seedWorkspace(t, ctx, pool)
 
-	conv, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, "Visitor", "My card number is 4242 4242 4242 4242")
+	conv, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "My card number is 4242 4242 4242 4242")
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -486,11 +486,11 @@ func TestMergeMovesMessagesAndClosesTheSource(t *testing.T) {
 	svc := newTestService(t, pool)
 	ws := seedWorkspace(t, ctx, pool)
 
-	source, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, "Visitor", "Duplicate thread")
+	source, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "Duplicate thread")
 	if err != nil {
 		t.Fatalf("start source: %v", err)
 	}
-	target, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, "Visitor", "Main thread")
+	target, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "Main thread")
 	if err != nil {
 		t.Fatalf("start target: %v", err)
 	}
@@ -540,7 +540,7 @@ func TestTranscriptIncludesNotesAndRedactsAsExpected(t *testing.T) {
 	svc := newTestService(t, pool)
 	ws := seedWorkspace(t, ctx, pool)
 
-	conv, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, "Visitor", "Public message")
+	conv, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "Public message")
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -568,11 +568,11 @@ func TestCountsMatchTheSidebarBadges(t *testing.T) {
 	svc := newTestService(t, pool)
 	ws := seedWorkspace(t, ctx, pool)
 
-	if _, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, "Visitor", "Unassigned one"); err != nil {
+	if _, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "Unassigned one"); err != nil {
 		t.Fatalf("start unassigned: %v", err)
 	}
 
-	mine, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, "Visitor", "Assigned to me")
+	mine, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "Assigned to me")
 	if err != nil {
 		t.Fatalf("start mine: %v", err)
 	}
@@ -583,7 +583,7 @@ func TestCountsMatchTheSidebarBadges(t *testing.T) {
 		t.Fatalf("follow: %v", err)
 	}
 
-	spam, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, "Visitor", "Spam one")
+	spam, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "Spam one")
 	if err != nil {
 		t.Fatalf("start spam: %v", err)
 	}
@@ -622,7 +622,7 @@ func TestSetInboxRejectsAnInboxFromAnotherWorkspace(t *testing.T) {
 	wsA := seedWorkspace(t, ctx, pool)
 	wsB := seedWorkspace(t, ctx, pool)
 
-	conv, _, err := svc.Start(ctx, wsA.WorkspaceID, wsA.InboxID, "widget", nil, nil, "Visitor", "Hi")
+	conv, _, err := svc.Start(ctx, wsA.WorkspaceID, wsA.InboxID, "widget", nil, nil, nil, "Visitor", "Hi")
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}

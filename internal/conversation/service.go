@@ -118,6 +118,7 @@ func (s *Service) Start(
 	workspaceID, inboxID, channel string,
 	subject *string,
 	customerID *string,
+	visitorID *string,
 	authorName, body string,
 ) (*Conversation, *Message, error) {
 	body = strings.TrimSpace(body)
@@ -129,7 +130,7 @@ func (s *Service) Start(
 	var message *Message
 
 	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := s.repo.insert(ctx, tx, conversationID, workspaceID, inboxID, channel, subject, customerID); err != nil {
+		if err := s.repo.insert(ctx, tx, conversationID, workspaceID, inboxID, channel, subject, customerID, visitorID); err != nil {
 			return err
 		}
 
@@ -137,8 +138,12 @@ func (s *Service) Start(
 			return err
 		}
 
+		// A visitor with no proven identity yet still speaks as "customer" —
+		// there is no separate author_type for them (messages_author_type
+		// CHECK constraint), and semantically they are exactly that: the
+		// person on the other side of the conversation from an agent.
 		authorType := "agent"
-		if customerID != nil {
+		if customerID != nil || visitorID != nil {
 			authorType = "customer"
 		}
 
@@ -317,6 +322,14 @@ func derefOr(value *string, fallback string) string {
 // Get returns one conversation, scoped to workspaceID.
 func (s *Service) Get(ctx context.Context, workspaceID, id string) (*Conversation, error) {
 	return s.repo.byID(ctx, workspaceID, id)
+}
+
+// ConversationIDsForVisitor lists every conversation a visitor owns — the
+// realtime grant their WebSocket connection needs (§9), since a visitor may
+// have started more than one thread over time (e.g. a widget test call
+// versus a return visit) and must be able to resume all of them.
+func (s *Service) ConversationIDsForVisitor(ctx context.Context, workspaceID, visitorID string) ([]string, error) {
+	return s.repo.idsForVisitor(ctx, workspaceID, visitorID)
 }
 
 // Messages returns the timeline for one conversation, optionally resuming

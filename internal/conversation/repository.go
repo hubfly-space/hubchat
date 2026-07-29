@@ -21,6 +21,7 @@ type Conversation struct {
 	State              string
 	Priority           string
 	CustomerID         *string
+	VisitorID          *string
 	AssigneeID         *string
 	TeamID             *string
 	TicketID           *string
@@ -37,7 +38,7 @@ type Conversation struct {
 // reload after a write can never drift from each other's scan order.
 const conversationColumns = `
 	id, workspace_id, inbox_id, channel, subject, state, priority,
-	customer_id, assignee_id, team_id, ticket_id, message_count,
+	customer_id, visitor_id, assignee_id, team_id, ticket_id, message_count,
 	last_message_preview, last_message_at, last_customer_at, snoozed_until, created_at
 `
 
@@ -45,7 +46,7 @@ func scanConversation(row interface{ Scan(dest ...any) error }) (*Conversation, 
 	var c Conversation
 	err := row.Scan(
 		&c.ID, &c.WorkspaceID, &c.InboxID, &c.Channel, &c.Subject, &c.State, &c.Priority,
-		&c.CustomerID, &c.AssigneeID, &c.TeamID, &c.TicketID, &c.MessageCount,
+		&c.CustomerID, &c.VisitorID, &c.AssigneeID, &c.TeamID, &c.TicketID, &c.MessageCount,
 		&c.LastMessagePreview, &c.LastMessageAt, &c.LastCustomerAt, &c.SnoozedUntil, &c.CreatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -114,13 +115,37 @@ func (r *repository) insert(
 	id, workspaceID, inboxID, channel string,
 	subject *string,
 	customerID *string,
+	visitorID *string,
 ) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO conversations
-			(id, workspace_id, inbox_id, channel, subject, customer_id, state, priority)
-		VALUES ($1, $2, $3, $4, $5, $6, 'new', 'normal')
-	`, id, workspaceID, inboxID, channel, subject, customerID)
+			(id, workspace_id, inbox_id, channel, subject, customer_id, visitor_id, state, priority)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'new', 'normal')
+	`, id, workspaceID, inboxID, channel, subject, customerID, visitorID)
 	return err
+}
+
+// idsForVisitor lists every conversation a visitor has ever started, for
+// building the realtime grant their WebSocket connection needs (§9): a
+// visitor may resume all of their own threads, never just the most recent.
+func (r *repository) idsForVisitor(ctx context.Context, workspaceID, visitorID string) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id FROM conversations WHERE workspace_id = $1 AND visitor_id = $2
+	`, workspaceID, visitorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 func (r *repository) byID(ctx context.Context, workspaceID, id string) (*Conversation, error) {

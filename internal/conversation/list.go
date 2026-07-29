@@ -112,7 +112,7 @@ func (r *repository) list(ctx context.Context, workspaceID string, filter ListFi
 	// has the c alias for the WHERE/ORDER BY clauses above.
 	query := `
 		SELECT c.id, c.workspace_id, c.inbox_id, c.channel, c.subject, c.state, c.priority,
-		       c.customer_id, c.assignee_id, c.team_id, c.ticket_id, c.message_count,
+		       c.customer_id, c.visitor_id, c.assignee_id, c.team_id, c.ticket_id, c.message_count,
 		       c.last_message_preview, c.last_message_at, c.last_customer_at, c.snoozed_until, c.created_at
 		FROM conversations c
 		WHERE ` + strings.Join(where, " AND ") + `
