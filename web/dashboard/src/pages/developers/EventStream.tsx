@@ -1,43 +1,76 @@
 import {
+  api,
   Badge,
   Button,
   Callout,
-  Card,
-  CardBody,
   CodeBlock,
   EmptyState,
   Page,
   PageBody,
   PageHeader,
+  Pagination,
   SearchInput,
   Section,
   StatusDot,
   Toolbar,
   cn,
+  useInfinite,
+  useQuery,
+  useRealtimeEvents,
   formatRelativeShort,
+  type Customer,
+  type Paginated,
 } from "@hubchat/shared";
 import { Activity, Pause, Play } from "lucide-react";
 import { useState } from "react";
-import { useWorkspace } from "../../app/workspace-context";
-import { NOW, customerEvents } from "../../data/fixtures";
+
+type CustomerEvent = {
+  id: string;
+  workspace_id: string;
+  customer_id: string | null;
+  session_id: string | null;
+  type: string;
+  source: string;
+  url: string | null;
+  payload: Record<string, unknown>;
+  occurred_at: string;
+};
 
 /**
  * Live event stream (§6.10).
  *
- * The developer's equivalent of tailing a log: confirm the SDK is firing what
- * you think it is, with the payload you think it has, attributed to the
+ * The developer's equivalent of tailing a log: confirm the SDK is firing
+ * what you think it is, with the payload you think it has, attributed to the
  * customer you think it is.
  */
 export default function EventStream() {
-  const { customerById } = useWorkspace();
   const [live, setLive] = useState(true);
   const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<string | null>(customerEvents[0]?.id ?? null);
+  const [selected, setSelected] = useState<string | null>(null);
 
-  const rows = customerEvents.filter((event) =>
+  const list = useInfinite<CustomerEvent>(["events"], (cursor, signal) => {
+    const params = new URLSearchParams();
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<CustomerEvent>>(`/events?${params.toString()}`, { signal });
+  });
+
+  // Live means "refetch the head of the stream when a new event lands" — a
+  // real subscription, not a cosmetic pulse; pausing stops calling refetch
+  // rather than closing the socket, so resuming doesn't miss the gap.
+  useRealtimeEvents((event) => {
+    if (live && event.type === "event.received") void list.refetch();
+  });
+
+  const customerIds = [...new Set(list.items.map((e) => e.customer_id).filter((id): id is string => !!id))];
+  const customers = useQuery<{ data: Customer[] }>(
+    customerIds.length > 0 ? ["customers", "by-ids", customerIds.join(",")] : null,
+    (signal) => api.get(`/customers?ids=${customerIds.join(",")}`, { signal }),
+  );
+  const customerById = new Map((customers.data?.data ?? []).map((c) => [c.id, c]));
+
+  const rows = list.items.filter((event) =>
     `${event.type} ${JSON.stringify(event.payload)}`.toLowerCase().includes(query.toLowerCase()),
   );
-
   const active = rows.find((event) => event.id === selected);
 
   return (
@@ -70,7 +103,7 @@ export default function EventStream() {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 onClear={() => setQuery("")}
-                placeholder="Filter by type or payload"
+                placeholder="Filter loaded events by type or payload"
               />
             </div>
           </>
@@ -88,7 +121,7 @@ export default function EventStream() {
           ) : (
             <ul className="divide-y divide-line-subtle">
               {rows.map((event) => {
-                const customer = customerById(event.customer_id);
+                const customer = event.customer_id ? customerById.get(event.customer_id) : undefined;
                 const failed = event.type.includes("fail");
 
                 return (
@@ -102,7 +135,7 @@ export default function EventStream() {
                       )}
                     >
                       <span className="w-16 shrink-0 text-2xs tabular text-fg-muted">
-                        {formatRelativeShort(event.occurred_at, NOW)}
+                        {formatRelativeShort(event.occurred_at, new Date())}
                       </span>
                       <span
                         className={cn(
@@ -115,9 +148,7 @@ export default function EventStream() {
                       <span className="min-w-0 flex-1 truncate font-mono text-2xs text-fg-muted">
                         {JSON.stringify(event.payload)}
                       </span>
-                      <span className="shrink-0 text-xs text-fg-secondary">
-                        {customer?.name ?? "Anonymous"}
-                      </span>
+                      <span className="shrink-0 text-xs text-fg-secondary">{customer?.name ?? "Anonymous"}</span>
                       <Badge tone="neutral" variant="outline">
                         {event.source}
                       </Badge>
@@ -134,7 +165,7 @@ export default function EventStream() {
             <>
               <p className="mb-1 font-mono text-sm text-fg">{active.type}</p>
               <p className="mb-4 text-xs text-fg-muted">
-                {formatRelativeShort(active.occurred_at, NOW)} ago · via {active.source}
+                {formatRelativeShort(active.occurred_at, new Date())} ago · via {active.source}
               </p>
               <CodeBlock
                 language="json"
@@ -161,12 +192,20 @@ export default function EventStream() {
         </aside>
       </div>
 
+      <Pagination
+        hasPrevious={false}
+        hasNext={list.hasMore}
+        onPrevious={() => undefined}
+        onNext={() => void list.fetchNext()}
+        summary={`${list.items.length} loaded${list.hasMore ? "+" : ""}`}
+      />
+
       <PageBody className="border-t border-line">
         <Section title="Sending events">
           <Callout tone="info" className="mb-3">
-            Event types must be declared in the metadata schema before they are accepted. Unknown
-            types are rejected with a 422 rather than silently stored — an accidental typo should
-            not create a permanent second event stream.
+            Event types are logged as sent; declaring a type in the metadata schema is only required
+            for the *attributes* an event tries to set, not the event itself. An undeclared attribute
+            key is rejected with a 422 rather than silently stored.
           </Callout>
 
           <CodeBlock

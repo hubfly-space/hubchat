@@ -190,6 +190,13 @@ function useWorkspaceInvalidation() {
       case "customer":
         invalidate(["customers"]);
         if (event.entity_id) invalidate(["customer", event.entity_id]);
+        // event.received carries application events (§6.10), not a profile
+        // change — the timeline and developer event stream key off it
+        // separately from the general customer-record invalidation above.
+        if (event.type === "event.received") {
+          invalidate(["events"]);
+          if (event.entity_id) invalidate(["customer-timeline", event.entity_id]);
+        }
         break;
       case "company":
         invalidate(["companies"]);

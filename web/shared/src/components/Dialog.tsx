@@ -1,8 +1,9 @@
 import * as RadixDialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { cn } from "../lib/cn";
 import { Button } from "./Button";
+import { Input } from "./Input";
 
 export const Dialog = RadixDialog.Root;
 export const DialogTrigger = RadixDialog.Trigger;
@@ -113,8 +114,20 @@ export function ConfirmDialog({
   destructive,
   loading,
   onConfirm,
+  confirmationPhrase,
   children,
 }: ConfirmDialogProps) {
+  const [typed, setTyped] = useState("");
+
+  // A phrase typed for one open of the dialog must not silently authorise a
+  // later one — reset whenever the dialog closes (including a successful
+  // confirm, which closes it) or the required phrase itself changes.
+  useEffect(() => {
+    if (!open) setTyped("");
+  }, [open, confirmationPhrase]);
+
+  const phraseSatisfied = !confirmationPhrase || typed === confirmationPhrase;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -132,6 +145,7 @@ export function ConfirmDialog({
               variant={destructive ? "danger" : "primary"}
               size="sm"
               loading={loading}
+              disabled={!phraseSatisfied}
               onClick={onConfirm}
             >
               {confirmLabel}
@@ -139,7 +153,30 @@ export function ConfirmDialog({
           </>
         }
       >
-        {children}
+        {/* DialogContent only renders its body wrapper when `children` is
+            truthy — an implicit `{a}{b}` pair here would always be a
+            non-empty array (truthy) even when both a and b are nothing,
+            reintroducing an empty wrapper div for callers like ApiKeys.tsx
+            that pass neither children nor confirmationPhrase. */}
+        {(children || confirmationPhrase) && (
+          <>
+            {children}
+            {confirmationPhrase && (
+              <div className={children ? "mt-3" : undefined}>
+                <label className="mb-1.5 block text-xs text-fg-secondary">
+                  Type <span className="font-mono font-medium text-fg">{confirmationPhrase}</span> to confirm.
+                </label>
+                <Input
+                  value={typed}
+                  onChange={(event) => setTyped(event.target.value)}
+                  autoComplete="off"
+                  autoFocus
+                  aria-label={`Type "${confirmationPhrase}" to confirm`}
+                />
+              </div>
+            )}
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );

@@ -1,17 +1,15 @@
 import {
+  api,
+  ApiError,
   Badge,
   Button,
   Callout,
   Card,
   CardBody,
-  CardHeader,
   Checkbox,
-  CodeBlock,
   DataTable,
   Dialog,
-  DialogClose,
   DialogContent,
-  DialogTrigger,
   EmptyState,
   Field,
   Input,
@@ -20,15 +18,19 @@ import {
   PageHeader,
   Section,
   Select,
-  Switch,
+  Textarea,
   Tooltip,
+  useMutation,
+  useQuery,
+  type AttributeDefinition,
+  type AttributeType,
   type Column,
-  type FieldDefinition,
+  type MetadataSource,
 } from "@hubchat/shared";
-import { Braces, EyeOff, Plus, ShieldAlert } from "lucide-react";
-import { fieldDefinitions } from "../../data/fixtures";
+import { Braces, EyeOff, Pencil, Plus, ShieldAlert, Trash2 } from "lucide-react";
+import { useState } from "react";
 
-const SOURCES = [
+const SOURCES: { value: MetadataSource; label: string }[] = [
   { value: "js_sdk", label: "JavaScript SDK" },
   { value: "rest_api", label: "REST API" },
   { value: "identity_token", label: "Signed identity token" },
@@ -40,15 +42,40 @@ const SOURCES = [
   { value: "cookie", label: "Cookies" },
 ];
 
+const TYPES: { value: AttributeType; label: string }[] = [
+  { value: "string", label: "String" },
+  { value: "integer", label: "Integer" },
+  { value: "decimal", label: "Decimal" },
+  { value: "boolean", label: "Boolean" },
+  { value: "timestamp", label: "Timestamp" },
+  { value: "date", label: "Date" },
+  { value: "enum", label: "Enum" },
+  { value: "string_list", label: "String list" },
+  { value: "url", label: "URL" },
+  { value: "json", label: "JSON object" },
+];
+
 /**
- * Metadata schema (§6.10).
- *
- * The allowlist. Nothing reaches a customer record unless it is declared here,
- * which is what makes §3.3 ("collection must be explicit, allowlisted,
- * documented, and controllable") enforceable rather than aspirational.
+ * Metadata schema (§6.10). The allowlist. Nothing reaches a customer or
+ * company record unless it is declared here — enforced server-side, not
+ * just by this UI's own form.
  */
 export default function MetadataSchema() {
-  const columns: Column<FieldDefinition>[] = [
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<AttributeDefinition | null>(null);
+
+  const definitions = useQuery<{ data: AttributeDefinition[] }>(
+    ["attribute-definitions", "customer"],
+    (signal) => api.get(`/attribute-definitions?entity_type=customer`, { signal }),
+  );
+  const rows = definitions.data?.data ?? [];
+
+  const archive = useMutation<string, unknown>(
+    (id) => api.delete(`/attribute-definitions/${id}`),
+    { invalidates: [["attribute-definitions", "customer"]] },
+  );
+
+  const columns: Column<AttributeDefinition>[] = [
     {
       key: "key",
       header: "Key",
@@ -64,7 +91,7 @@ export default function MetadataSchema() {
       key: "type",
       header: "Type",
       width: "116px",
-      cell: (field) => <Badge tone="neutral">{field.type}</Badge>,
+      cell: (field) => <Badge tone="neutral">{TYPES.find((t) => t.value === field.type)?.label ?? field.type}</Badge>,
     },
     {
       key: "sources",
@@ -72,7 +99,7 @@ export default function MetadataSchema() {
       width: "220px",
       hideBelow: "lg",
       cell: (field) => (
-        <Tooltip content={field.allowed_sources.join(", ")}>
+        <Tooltip content={field.allowed_sources.join(", ") || "None — this key is never accepted"}>
           <span className="flex flex-wrap gap-1">
             {field.allowed_sources.slice(0, 2).map((source) => (
               <Badge key={source} tone="neutral" variant="outline">
@@ -82,6 +109,7 @@ export default function MetadataSchema() {
             {field.allowed_sources.length > 2 && (
               <span className="text-2xs text-fg-muted">+{field.allowed_sources.length - 2}</span>
             )}
+            {field.allowed_sources.length === 0 && <span className="text-2xs text-fg-disabled">none</span>}
           </span>
         </Tooltip>
       ),
@@ -92,12 +120,7 @@ export default function MetadataSchema() {
       width: "104px",
       align: "center",
       hideBelow: "md",
-      cell: (field) =>
-        field.searchable ? (
-          <Badge tone="success">Yes</Badge>
-        ) : (
-          <span className="text-xs text-fg-disabled">No</span>
-        ),
+      cell: (field) => (field.searchable ? <Badge tone="success">Yes</Badge> : <span className="text-xs text-fg-disabled">No</span>),
     },
     {
       key: "sensitive",
@@ -124,91 +147,16 @@ export default function MetadataSchema() {
         title="Metadata schema"
         description="The allowlist of custom attributes Hubchat will accept, and which sources may set each one."
         actions={
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button variant="primary" size="sm" leading={<Plus />}>
-                New attribute
-              </Button>
-            </DialogTrigger>
-            <DialogContent
-              title="Define an attribute"
-              description="Attributes not declared here are rejected at ingestion with a 422."
-              size="lg"
-              footer={
-                <>
-                  <DialogClose asChild>
-                    <Button variant="ghost" size="sm">
-                      Cancel
-                    </Button>
-                  </DialogClose>
-                  <Button variant="primary" size="sm">
-                    Create attribute
-                  </Button>
-                </>
-              }
-            >
-              <div className="space-y-4 pb-2">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field label="Key" description="Immutable once data exists.">
-                    <Input mono placeholder="subscription_plan" />
-                  </Field>
-                  <Field label="Display name">
-                    <Input placeholder="Subscription plan" />
-                  </Field>
-                </div>
-
-                <Field label="Type">
-                  <Select
-                    aria-label="Type"
-                    options={[
-                      { value: "string", label: "String" },
-                      { value: "integer", label: "Integer" },
-                      { value: "decimal", label: "Decimal" },
-                      { value: "boolean", label: "Boolean" },
-                      { value: "timestamp", label: "Timestamp" },
-                      { value: "date", label: "Date" },
-                      { value: "enum", label: "Enum" },
-                      { value: "string_list", label: "String list" },
-                      { value: "url", label: "URL" },
-                      { value: "json", label: "JSON object", description: "Size and depth limited" },
-                    ]}
-                  />
-                </Field>
-
-                <Field
-                  label="Accepted sources"
-                  description="A value arriving from any other source is dropped and logged."
-                >
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {SOURCES.map((source) => (
-                      <Checkbox key={source.value} label={source.label} />
-                    ))}
-                  </div>
-                </Field>
-
-                <Field label="Handling">
-                  <div className="space-y-3">
-                    <Switch
-                      label="Searchable"
-                      description="Indexed for global search. Costs write throughput; enable only where you will actually search."
-                    />
-                    <Switch
-                      label="Sensitive"
-                      description="Masked in the interface, excluded from search and export, and every reveal is written to the audit log."
-                    />
-                  </div>
-                </Field>
-              </div>
-            </DialogContent>
-          </Dialog>
+          <Button variant="primary" size="sm" leading={<Plus />} onClick={() => setCreating(true)}>
+            New attribute
+          </Button>
         }
       />
 
       <PageBody>
         <Callout tone="warning" className="mb-5" icon={<ShieldAlert />}>
-          Marking an attribute sensitive changes behaviour retroactively: existing values are masked
-          immediately, dropped from the search index on the next rebuild, and excluded from every
-          future export.
+          Marking an attribute sensitive changes behaviour immediately: existing values are masked in the UI
+          unless the viewer holds customer.read_sensitive, and revealing one is recorded in the audit log.
         </Callout>
 
         <Section title="Attributes">
@@ -216,9 +164,23 @@ export default function MetadataSchema() {
             <CardBody className="p-0">
               <DataTable
                 aria-label="Metadata attributes"
-                rows={fieldDefinitions}
+                rows={rows}
                 columns={columns}
                 rowKey={(field) => field.id}
+                loading={definitions.isLoading}
+                rowActions={(field) => (
+                  <div className="flex items-center gap-0.5">
+                    <Button variant="ghost" size="xs" iconOnly aria-label="Edit attribute" leading={<Pencil />} onClick={() => setEditing(field)} />
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      iconOnly
+                      aria-label="Archive attribute"
+                      leading={<Trash2 />}
+                      onClick={() => void archive.mutate(field.id).catch(() => {})}
+                    />
+                  </div>
+                )}
                 empty={
                   <EmptyState
                     icon={Braces}
@@ -231,52 +193,144 @@ export default function MetadataSchema() {
           </Card>
         </Section>
 
-        <Section title="Privacy controls" description="Applied across every ingestion path (§12).">
-          <Card>
-            <CardBody className="space-y-4">
-              <Switch
-                label="Reject undeclared keys"
-                description="Recommended. When off, unknown keys are dropped silently instead of returning an error — harder to debug, and easy to leave broken."
-                defaultChecked
-              />
-              <Switch
-                label="Anonymise IP addresses"
-                description="Stores only the /24 network for IPv4 and /48 for IPv6."
-                defaultChecked
-              />
-              <Field
-                label="Blocked key patterns"
-                description="Keys matching any of these are refused regardless of the schema."
-              >
-                <Input mono defaultValue="*password*, *secret*, *token*, *ssn*, *card_number*" />
-              </Field>
-              <Field label="Maximum payload size" description="Per event, after JSON encoding.">
-                <Input type="number" suffix="KB" defaultValue={32} className="max-w-32" />
-              </Field>
-            </CardBody>
-          </Card>
-        </Section>
-
         <Section title="Setting attributes">
-          <CodeBlock
-            language="javascript"
-            code={`// Browser — only keys whose accepted sources include js_sdk are applied.
-Hubchat('update', {
-  plan: 'enterprise',
-  seats: 240,
-  region: 'eu',
-});`}
-          />
-          <CodeBlock
-            className="mt-2"
-            language="bash"
-            code={`# Server — the only path permitted to set sensitive attributes.
-curl -X PATCH https://support.northwind.cloud/api/v1/customers/cus_mariana \\
-  -H "Authorization: Bearer hc_live_9f2a…" \\
-  -d '{"attributes":{"tax_id":"PT123456789"}}'`}
-          />
+          <p className="mb-2 text-xs text-fg-muted">
+            Only keys declared above, from a pipeline listed in that key's accepted sources, are ever written.
+          </p>
         </Section>
       </PageBody>
+
+      {creating && <AttributeDialog onClose={() => setCreating(false)} />}
+      {editing && <AttributeDialog existing={editing} onClose={() => setEditing(null)} />}
     </Page>
   );
+}
+
+function AttributeDialog({ existing, onClose }: { existing?: AttributeDefinition; onClose: () => void }) {
+  const [label, setLabel] = useState(existing?.label ?? "");
+  const [key, setKey] = useState(existing?.key ?? "");
+  const [type, setType] = useState<AttributeType>(existing?.type ?? "string");
+  const [description, setDescription] = useState(existing?.description ?? "");
+  const [options, setOptions] = useState((existing?.options ?? []).join(", "));
+  const [sources, setSources] = useState<Set<MetadataSource>>(new Set(existing?.allowed_sources ?? []));
+  const [sensitive, setSensitive] = useState(existing?.sensitive ?? false);
+  const [searchable, setSearchable] = useState(existing?.searchable ?? false);
+
+  const keyEdited = key !== "" && key !== deriveKey(label);
+  const effectiveKey = existing ? existing.key : keyEdited ? key : deriveKey(label);
+  const needsOptions = type === "enum";
+  const parsedOptions = options.split(",").map((o) => o.trim()).filter(Boolean);
+
+  const toggleSource = (source: MetadataSource) => {
+    setSources((current) => {
+      const next = new Set(current);
+      if (next.has(source)) next.delete(source);
+      else next.add(source);
+      return next;
+    });
+  };
+
+  const save = useMutation<void, AttributeDefinition>(
+    () => {
+      const body = {
+        entity_type: "customer",
+        key: effectiveKey,
+        label,
+        type,
+        description: description || null,
+        options: needsOptions ? parsedOptions : [],
+        allowed_sources: [...sources],
+        sensitive,
+        searchable,
+      };
+      return existing
+        ? api.patch<AttributeDefinition>(`/attribute-definitions/${existing.id}`, body)
+        : api.post<AttributeDefinition>("/attribute-definitions", body);
+    },
+    { invalidates: [["attribute-definitions", "customer"]], onSuccess: onClose },
+  );
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        title={existing ? "Edit attribute" : "Define an attribute"}
+        description="Attributes not declared here are rejected at ingestion."
+        footer={
+          <Button
+            variant="primary"
+            size="sm"
+            loading={save.isPending}
+            disabled={!label.trim() || !effectiveKey}
+            onClick={() => void save.mutate().catch(() => {})}
+          >
+            {existing ? "Save changes" : "Create attribute"}
+          </Button>
+        }
+      >
+        {save.error ? (
+          <Callout tone="danger" className="mb-3">
+            {save.error instanceof ApiError ? save.error.message : "Could not save this attribute."}
+          </Callout>
+        ) : null}
+
+        <div className="space-y-4 pb-2">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Key" hint={existing ? "Immutable once created." : undefined}>
+              <Input mono value={effectiveKey} onChange={(e) => setKey(e.target.value)} placeholder="subscription_plan" disabled={!!existing} />
+            </Field>
+            <Field label="Display name">
+              <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Subscription plan" autoFocus />
+            </Field>
+          </div>
+
+          <Field label="Type">
+            <Select value={type} onValueChange={(v) => setType(v as AttributeType)} options={TYPES} disabled={!!existing} aria-label="Type" />
+          </Field>
+
+          {needsOptions && (
+            <Field label="Options" hint="Comma-separated.">
+              <Input value={options} onChange={(e) => setOptions(e.target.value)} placeholder="starter, growth, enterprise" />
+            </Field>
+          )}
+
+          <Field label="Description">
+            <Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
+          </Field>
+
+          <Field label="Accepted sources" description="A value arriving from any other source is dropped and logged.">
+            <div className="grid gap-2 sm:grid-cols-2">
+              {SOURCES.map((source) => (
+                <Checkbox key={source.value} label={source.label} checked={sources.has(source.value)} onCheckedChange={() => toggleSource(source.value)} />
+              ))}
+            </div>
+          </Field>
+
+          <Field label="Handling">
+            <div className="space-y-3">
+              <Checkbox
+                label="Searchable"
+                description="Indexed for global search. Costs write throughput; enable only where you will actually search."
+                checked={searchable}
+                onCheckedChange={(c) => setSearchable(c === true)}
+              />
+              <Checkbox
+                label="Sensitive"
+                description="Masked in the interface, excluded from search and export, and every reveal is written to the audit log."
+                checked={sensitive}
+                onCheckedChange={(c) => setSensitive(c === true)}
+              />
+            </div>
+          </Field>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function deriveKey(label: string): string {
+  return label
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
