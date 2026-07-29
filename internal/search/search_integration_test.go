@@ -59,11 +59,11 @@ func TestSearchFindsBothMessagesAndCustomers(t *testing.T) {
 	workspaceID, inboxID := seedWorkspace(t, ctx, pool)
 	otherWorkspaceID, otherInboxID := seedWorkspace(t, ctx, pool)
 
-	if _, _, err := convSvc.Start(ctx, workspaceID, inboxID, "widget", nil, nil, "Visitor", "My refund never arrived"); err != nil {
+	if _, _, err := convSvc.Start(ctx, workspaceID, inboxID, "widget", nil, nil, nil, "Visitor", "My refund never arrived"); err != nil {
 		t.Fatalf("start: %v", err)
 	}
 	// Same search term in a different workspace must never surface here.
-	if _, _, err := convSvc.Start(ctx, otherWorkspaceID, otherInboxID, "widget", nil, nil, "Visitor", "My refund never arrived either"); err != nil {
+	if _, _, err := convSvc.Start(ctx, otherWorkspaceID, otherInboxID, "widget", nil, nil, nil, "Visitor", "My refund never arrived either"); err != nil {
 		t.Fatalf("start in other workspace: %v", err)
 	}
 	custID := ids.New(ids.PrefixCustomer)
