@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Book,
@@ -12,9 +12,33 @@ import {
   Ticket,
   X,
 } from "lucide-react";
+import {
+  clearSession,
+  identify as apiIdentify,
+  issueVisitor,
+  listMessages,
+  loadSession,
+  postMessage,
+  saveSession,
+  startConversation,
+  track as apiTrack,
+  type WireMessage,
+} from "../lib/api";
+import { VisitorSocket, type WireEvent } from "../lib/socket";
 import type { WidgetConfig, WidgetMessage } from "../types";
 
 type Screen = "home" | "chat" | "articles" | "article" | "form";
+
+function fromWire(m: WireMessage): WidgetMessage {
+  return {
+    id: m.id,
+    from: m.author_type === "agent" ? "agent" : m.author_type === "system" ? "system" : "visitor",
+    author: m.author_name,
+    body: m.body,
+    at: m.created_at,
+    delivery: "sent",
+  };
+}
 
 /**
  * The widget interface.
@@ -27,10 +51,12 @@ type Screen = "home" | "chat" | "articles" | "article" | "form";
  */
 export function Widget({
   host,
+  publicKey,
   config,
   onEvent,
 }: {
   host: string;
+  publicKey: string;
   config: WidgetConfig;
   onEvent: (name: string, payload?: unknown) => void;
 }) {
@@ -46,6 +72,15 @@ export function Widget({
   const timelineRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // The visitor's own token and, once one exists, the conversation it owns —
+  // both persisted so a page reload (or a return visit, when
+  // behavior.persist_conversation is set) resumes the same thread instead of
+  // starting a new one. Refs, not state: reading the current value inside
+  // `send` must never race a stale render.
+  const tokenRef = useRef<string | null>(null);
+  const conversationRef = useRef<string | null>(null);
+  const socketRef = useRef<VisitorSocket | null>(null);
+
   const { appearance, content } = config;
   const theme = useResolvedTheme(appearance.theme);
 
@@ -60,9 +95,100 @@ export function Widget({
     onEvent("close");
   }, [onEvent]);
 
+  /* ------------------------------------------------------------- realtime */
+
+  // openSocket is called once a conversation exists — never before, because
+  // the server computes a visitor's realtime grant from their conversations
+  // at connect time (internal/realtime's Grant "only ever narrows", never
+  // widens after the fact). A visitor with no conversation yet would open a
+  // socket with an empty grant and never receive anything for one started
+  // moments later.
+  const openSocket = useCallback(
+    (token: string) => {
+      socketRef.current?.close();
+      socketRef.current = new VisitorSocket({
+        host,
+        publicKey,
+        token,
+        onStatusChange: () => {},
+        onEvent: (event: WireEvent) => {
+          if (event.type === "presence.typing") {
+            const typing = event.data as { actor_type: string; typing: boolean };
+            if (typing.actor_type === "agent") setAgentTyping(typing.typing);
+            return;
+          }
+          if (event.type !== "message.created") return;
+          const data = event.data as { author_type: string; id: string; author_name: string; body: string; created_at: string };
+          // The visitor's own message is already rendered optimistically the
+          // moment they hit send — this channel delivering it back would
+          // duplicate it. Internal notes never reach here at all (filtered
+          // server-side), so nothing else needs excluding.
+          if (data.author_type === "customer") return;
+
+          setMessages((current) => {
+            if (current.some((m) => m.id === data.id)) return current;
+            return [...current, fromWire({ ...data, kind: "reply", sequence: event.sequence } as WireMessage)];
+          });
+          setAgentTyping(false);
+          if (!openRef.current) setUnread((count) => count + 1);
+          onEvent("message:received", { id: data.id, body: data.body });
+        },
+      });
+    },
+    [host, publicKey, onEvent],
+  );
+
+  // Mirrors `open` into a ref so the socket callback above (created once per
+  // token, not per render) always reads the current value rather than the
+  // one captured when openSocket last ran.
+  const openRef = useRef(open);
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
+
+  // Resume a persisted session on mount: same visitor, same conversation,
+  // history reloaded and the socket reconnected — this is what makes a page
+  // reload (or a return visit, when persist_conversation is set) pick up
+  // exactly where the visitor left off rather than starting over.
+  useEffect(() => {
+    if (!config.behavior.persist_conversation) return;
+    const session = loadSession(publicKey);
+    if (!session?.token) return;
+    tokenRef.current = session.token;
+
+    if (session.conversationId) {
+      conversationRef.current = session.conversationId;
+      listMessages(host, publicKey, session.token, session.conversationId)
+        .then((wire) => setMessages(wire.filter((m) => m.kind !== "note").map(fromWire)))
+        .catch(() => {});
+      openSocket(session.token);
+    }
+
+    return () => socketRef.current?.close();
+    // Intentionally runs once per widget mount — a new publicKey means a
+    // different widget instance entirely, which React already remounts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /* ---------------------------------------------------------------- SDK API */
 
-  useEffect(() => {
+  // A command dispatched before this listener is attached is lost —
+  // `dispatchEvent` has no queue of its own, unlike v1.js's own `state.q`.
+  // That case is not hypothetical: `boot` immediately followed by `show` (or
+  // `startConversation`) in the same script block, or a "trigger: immediate"
+  // widget, both fire a command the instant the interface finishes loading.
+  // React does not guarantee an effect — layout or passive — has run by the
+  // time `root.render()` returns, so main.tsx cannot simply call this
+  // synchronously and assume it is safe to replay commands next.
+  //
+  // The fix is ordering, not timing: main.tsx attaches its own listener for
+  // "hubchat:internal:mounted" *before* calling render() at all, and does
+  // not resolve mount()'s promise — which is what unblocks v1.js's pending
+  // command replay — until that fires. Dispatching it here, as the last
+  // thing this effect does after its own listener is already attached,
+  // guarantees no command can arrive before this component is ready for it,
+  // regardless of which tick React chooses to run the effect in.
+  useLayoutEffect(() => {
     const onCommand = (event: Event) => {
       const { method, payload } = (event as CustomEvent).detail as {
         method: string;
@@ -93,21 +219,52 @@ export function Widget({
           setScreen("form");
           show();
           break;
+        case "identify": {
+          const ensureTokenThenIdentify = async () => {
+            let token = tokenRef.current;
+            if (!token) {
+              const issued = await issueVisitor(host, publicKey);
+              token = issued.token;
+              tokenRef.current = token;
+              saveSession(publicKey, { token, conversationId: conversationRef.current });
+            }
+            await apiIdentify(host, publicKey, token, {
+              name: typeof payload?.name === "string" ? payload.name : undefined,
+              email: typeof payload?.email === "string" ? payload.email : undefined,
+              external_id: typeof payload?.external_id === "string" ? payload.external_id : undefined,
+              signed_token: typeof payload?.token === "string" ? payload.token : undefined,
+            });
+          };
+          void ensureTokenThenIdentify().catch(() => {});
+          break;
+        }
+        case "track": {
+          const type = typeof payload?.type === "string" ? payload.type : "";
+          if (!type || !tokenRef.current) break;
+          void apiTrack(host, publicKey, tokenRef.current, type, (payload?.payload as Record<string, unknown>) ?? {}).catch(
+            () => {},
+          );
+          break;
+        }
         case "reset":
+          socketRef.current?.close();
+          socketRef.current = null;
+          tokenRef.current = null;
+          conversationRef.current = null;
+          clearSession(publicKey);
           setMessages([]);
           setScreen("home");
           setOpen(false);
           break;
         default:
-          // identify / update / track are network-only; the panel does not
-          // re-render for them.
           break;
       }
     };
 
     window.addEventListener("hubchat:command", onCommand);
+    window.dispatchEvent(new CustomEvent("hubchat:internal:mounted"));
     return () => window.removeEventListener("hubchat:command", onCommand);
-  }, [show, hide]);
+  }, [show, hide, host, publicKey]);
 
   useEffect(() => {
     onEvent("ready");
@@ -127,9 +284,9 @@ export function Widget({
     const body = draft.trim();
     if (!body) return;
 
+    const clientId = `cli_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const message: WidgetMessage = {
-      // Client-generated so the send is idempotent if the socket retries (§9).
-      id: `cli_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+      id: clientId,
       from: "visitor",
       author: "You",
       body,
@@ -139,30 +296,40 @@ export function Widget({
 
     setMessages((current) => [...current, message]);
     setDraft("");
-    onEvent("conversation:started", { id: message.id });
 
-    window.setTimeout(() => {
-      setMessages((current) =>
-        current.map((item) => (item.id === message.id ? { ...item, delivery: "sent" } : item)),
-      );
-      setAgentTyping(true);
-    }, 400);
+    const markDelivery = (delivery: WidgetMessage["delivery"]) =>
+      setMessages((current) => current.map((item) => (item.id === clientId ? { ...item, delivery } : item)));
 
-    window.setTimeout(() => {
-      setAgentTyping(false);
-      setMessages((current) => [
-        ...current,
-        {
-          id: `srv_${Date.now().toString(36)}`,
-          from: "agent",
-          author: "Ada",
-          body: "Thanks — I can see your account. Give me a moment to check the delivery log.",
-          at: new Date().toISOString(),
-        },
-      ]);
-      if (!open) setUnread((count) => count + 1);
-      onEvent("message:received", {});
-    }, 2200);
+    void (async () => {
+      try {
+        let token = tokenRef.current;
+        if (!token) {
+          const issued = await issueVisitor(host, publicKey);
+          token = issued.token;
+          tokenRef.current = token;
+        }
+
+        if (!conversationRef.current) {
+          const result = await startConversation(host, publicKey, token, body);
+          conversationRef.current = result.conversation_id;
+          // The server mints a fresh token only when the request arrived
+          // without one; otherwise it echoes back an empty string and the
+          // token this browser already holds keeps being the right one.
+          if (result.token) token = result.token;
+          tokenRef.current = token;
+          saveSession(publicKey, { token, conversationId: result.conversation_id });
+          openSocket(token);
+          onEvent("conversation:started", { id: result.conversation_id });
+        } else {
+          await postMessage(host, publicKey, token, conversationRef.current, body);
+          saveSession(publicKey, { token, conversationId: conversationRef.current });
+        }
+
+        markDelivery("sent");
+      } catch {
+        markDelivery("failed");
+      }
+    })();
   };
 
   const article = config.articles.find((item) => item.slug === activeArticle);

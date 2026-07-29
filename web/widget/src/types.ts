@@ -41,6 +41,7 @@ export type WidgetConfig = {
     delay_seconds: number;
     scroll_percent: number;
     allow_anonymous: boolean;
+    persist_conversation: boolean;
   };
   /** A small pre-fetched set for instant search; full search hits the API. */
   articles: { slug: string; title: string; excerpt: string }[];

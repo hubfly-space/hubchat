@@ -23,6 +23,14 @@ import { defineConfig } from "vite";
 export default defineConfig({
   base: "/widget/",
   plugins: [react(), tailwindcss()],
+  // App builds get this for free; a library build does not, because a
+  // published library expects its own consumer's bundler to define it. This
+  // is not a published library — it is the final artifact a browser runs
+  // directly — so without it, React's own dev-mode checks throw on the very
+  // first render: "process is not defined".
+  define: {
+    "process.env.NODE_ENV": JSON.stringify(process.env.NODE_ENV ?? "production"),
+  },
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
@@ -37,10 +45,20 @@ export default defineConfig({
     // A hard ceiling, not a suggestion. If the widget crosses this, something
     // was imported that belongs in the dashboard.
     chunkSizeWarningLimit: 220,
+    // Library mode, not an application build: v1.js loads this file with a
+    // dynamic `import()` and reads `module.mount` off the result (see
+    // main.tsx's exported `mount`). An application build does not preserve
+    // an entry's exports in its output — Rollup only keeps them for a
+    // declared library entry — so without this, the import resolves to an
+    // empty namespace object and `module.mount is not a function` at the one
+    // moment a visitor actually opens the widget.
+    lib: {
+      entry: fileURLToPath(new URL("./src/main.tsx", import.meta.url)),
+      formats: ["es"],
+      fileName: () => "app.js",
+    },
     rollupOptions: {
-      input: fileURLToPath(new URL("./src/main.tsx", import.meta.url)),
       output: {
-        entryFileNames: "app.js",
         chunkFileNames: "[name]-[hash].js",
         assetFileNames: "[name][extname]",
       },
