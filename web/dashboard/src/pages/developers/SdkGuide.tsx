@@ -1,4 +1,5 @@
 import {
+  api,
   Badge,
   Callout,
   Card,
@@ -12,6 +13,8 @@ import {
   Tabs,
   TabsContent,
   TabsList,
+  useQuery,
+  type Widget,
 } from "@hubchat/shared";
 import { ShieldAlert } from "lucide-react";
 import { useState } from "react";
@@ -32,6 +35,16 @@ const SDK_METHODS = [
 /** SDK and installation reference (§6.16). */
 export default function SdkGuide() {
   const [tab, setTab] = useState("install");
+
+  const widgets = useQuery<{ data: Widget[] }>(["widgets"], (signal) => api.get("/widgets", { signal }));
+  const widget = widgets.data?.data[0];
+  const publicKey = widget?.public_key ?? "pk_…";
+
+  const secret = useQuery<{ secret: string }>(
+    widget ? ["widget-identity-secret", widget.id] : null,
+    (signal) => api.get(`/widgets/${widget?.id}/identity-secret`, { signal }),
+  );
+  const identitySecret = secret.data?.secret ?? "<your widget's identity secret — see below>";
 
   return (
     <Page>
@@ -66,7 +79,7 @@ export default function SdkGuide() {
   var s=u.createElement('script');s.async=1;s.src=b;u.head.appendChild(s)})
   (window,document,'https://support.northwind.cloud/widget/v1.js');
 
-  Hubchat('boot', { key: 'pk_live_8f2a41cd9b7e' });
+  Hubchat('boot', { key: '${publicKey}' });
 </script>`}
               />
             </Section>
@@ -87,7 +100,7 @@ export function App() {
   return (
     <>
       <Routes />
-      <HubchatWidget publicKey="pk_live_8f2a41cd9b7e" identity={{ token }} />
+      <HubchatWidget publicKey="${publicKey}" identity={{ token }} />
     </>
   );
 }`}
@@ -115,6 +128,15 @@ style-src   'unsafe-inline'   # widget styles are injected into a shadow root`}
               sees — this is the difference between a Verified and an Unverified badge in the agent's
               context panel, and agents are trained to treat them differently.
             </Callout>
+
+            <Section
+              title="Your widget's identity secret"
+              description="Generated from your deployment's master key — never stored separately, and safe to regenerate by rotating that key. Keep it on your server only."
+            >
+              <Card>
+                <CardBody className="font-mono text-xs text-fg break-all">{identitySecret}</CardBody>
+              </Card>
+            </Section>
 
             <Section title="1. Generate the token on your server">
               <CodeBlock

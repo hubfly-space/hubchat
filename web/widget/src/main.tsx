@@ -34,8 +34,8 @@ export function mount({
 }: {
   host: string;
   config: { key: string; remote?: WidgetConfig };
-}): WidgetHandle {
-  if (container) return handle;
+}): Promise<WidgetHandle> {
+  if (container) return Promise.resolve(handle);
 
   container = document.createElement("div");
   container.id = "hubchat-widget";
@@ -65,18 +65,34 @@ export function mount({
   mountPoint.setAttribute("data-density", "comfortable");
   shadow.appendChild(mountPoint);
 
-  root = createRoot(mountPoint);
-  root.render(
-    <StrictMode>
-      <Widget
-        host={host}
-        config={config.remote ?? FALLBACK_CONFIG}
-        onEvent={(name, payload) => emit(name, payload)}
-      />
-    </StrictMode>,
-  );
+  // v1.js replays any commands queued before the interface finished loading
+  // (`boot` immediately followed by `show`, a "trigger: immediate" widget)
+  // the moment this promise resolves. React gives no guarantee that Widget's
+  // effects — where its own "hubchat:command" listener gets attached — have
+  // run by the time `root.render()` returns, so waiting for that call to
+  // return is not enough: a command dispatched before the listener exists is
+  // simply lost. Listening for Widget's own "mounted" signal *before*
+  // rendering at all, and resolving only once it fires, closes that window
+  // regardless of which tick React chooses to run the effect in.
+  return new Promise((resolve) => {
+    window.addEventListener(
+      "hubchat:internal:mounted",
+      () => resolve(handle),
+      { once: true },
+    );
 
-  return handle;
+    root = createRoot(mountPoint);
+    root.render(
+      <StrictMode>
+        <Widget
+          host={host}
+          publicKey={config.key}
+          config={config.remote ?? FALLBACK_CONFIG}
+          onEvent={(name, payload) => emit(name, payload)}
+        />
+      </StrictMode>,
+    );
+  });
 }
 
 const commands = new Set([
@@ -153,7 +169,7 @@ const FALLBACK_CONFIG: WidgetConfig = {
     response_time_text: "",
     offline_message: "We're offline — leave a message and we'll reply by email.",
   },
-  behavior: { trigger: "manual", delay_seconds: 0, scroll_percent: 0, allow_anonymous: true },
+  behavior: { trigger: "manual", delay_seconds: 0, scroll_percent: 0, allow_anonymous: true, persist_conversation: false },
   modes: ["chat"],
   online: true,
   articles: [],
