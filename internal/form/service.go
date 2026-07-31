@@ -116,12 +116,13 @@ type FieldInput struct {
 }
 
 type SubmissionInput struct {
-	CustomerID string         `json:"customer_id"`
-	VisitorID  string         `json:"visitor_id"`
-	Values     map[string]any `json:"values"`
-	SourceURL  string         `json:"source_url"`
-	IP         string         `json:"ip"`
-	UserAgent  string         `json:"user_agent"`
+	CustomerID string            `json:"customer_id"`
+	VisitorID  string            `json:"visitor_id"`
+	Values     map[string]any    `json:"values"`
+	FileIDs    map[string]string `json:"file_ids,omitempty"`
+	SourceURL  string            `json:"source_url"`
+	IP         string            `json:"ip"`
+	UserAgent  string            `json:"user_agent"`
 }
 
 func New(pool *database.Pool, targets ...TargetServices) *Service {
@@ -343,6 +344,9 @@ func (s *Service) Submit(ctx context.Context, workspaceID, slug string, input Su
 	if err := validateSubmission(form.Fields, input.Values); err != nil {
 		return "", err
 	}
+	if err := validateFileSubmission(form.Fields, input.Values, input.FileIDs); err != nil {
+		return "", err
+	}
 	if err := s.checkRateLimit(ctx, workspaceID, form, input.IP); err != nil {
 		return "", err
 	}
@@ -367,6 +371,35 @@ func (s *Service) Submit(ctx context.Context, workspaceID, slug string, input Su
 			return err
 		}
 		for _, field := range form.Fields {
+			if field.Type == "file" {
+				fileID := strings.TrimSpace(input.FileIDs[field.Key])
+				if fileID == "" {
+					continue
+				}
+				// Public upload endpoints stage files as workspace-owned objects.
+				// Claiming them here makes the submission the durable authorization
+				// boundary and prevents a file id from being reused by another
+				// workspace or submission.
+				result, claimErr := tx.Exec(ctx, `
+					UPDATE files
+					SET owner_type='form_submission', owner_id=$3
+					WHERE workspace_id=$1 AND id=$2 AND committed_at IS NOT NULL
+					  AND ((owner_type IS NULL AND owner_id IS NULL) OR (owner_type='workspace' AND owner_id=$1))
+				`, workspaceID, fileID, id)
+				if claimErr != nil {
+					return claimErr
+				}
+				if result.RowsAffected() != 1 {
+					return fmt.Errorf("%w: %s file is not available", ErrInvalidSubmission, field.Key)
+				}
+				if _, err := tx.Exec(ctx, `
+					INSERT INTO form_submission_values (submission_id, field_id, value, file_id)
+					VALUES ($1, $2, NULL, $3)
+				`, id, field.ID, fileID); err != nil {
+					return err
+				}
+				continue
+			}
 			value, ok := input.Values[field.Key]
 			if !ok {
 				continue
@@ -694,6 +727,9 @@ func validFieldType(kind string) bool {
 
 func validateSubmission(fields []Field, values map[string]any) error {
 	for _, field := range fields {
+		if field.Type == "file" {
+			continue
+		}
 		value, present := values[field.Key]
 		if !conditionApplies(field.Condition, values) {
 			continue
@@ -737,6 +773,48 @@ func validateSubmission(fields []Field, values map[string]any) error {
 			if !ok || n < 1 || n > 5 {
 				return fmt.Errorf("%w: %s must be between 1 and 5", ErrInvalidSubmission, field.Key)
 			}
+		}
+	}
+	return nil
+}
+
+func validateFileSubmission(fields []Field, values map[string]any, fileIDs map[string]string) error {
+	seen := make(map[string]string)
+	for _, field := range fields {
+		if !conditionApplies(field.Condition, values) {
+			continue
+		}
+		fileID := strings.TrimSpace(fileIDs[field.Key])
+		if field.Type == "file" {
+			if fileID == "" {
+				if field.Required {
+					return fmt.Errorf("%w: %s is required", ErrInvalidSubmission, field.Key)
+				}
+				continue
+			}
+			if previous, ok := seen[fileID]; ok {
+				return fmt.Errorf("%w: file %s is used by both %s and %s", ErrInvalidSubmission, fileID, previous, field.Key)
+			}
+			seen[fileID] = field.Key
+			continue
+		}
+		if fileID != "" {
+			return fmt.Errorf("%w: %s does not accept a file", ErrInvalidSubmission, field.Key)
+		}
+	}
+	for key, fileID := range fileIDs {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(fileID) == "" {
+			return fmt.Errorf("%w: file field and id are required", ErrInvalidSubmission)
+		}
+		found := false
+		for _, field := range fields {
+			if field.Key == key && field.Type == "file" && conditionApplies(field.Condition, values) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("%w: unknown file field %s", ErrInvalidSubmission, key)
 		}
 	}
 	return nil

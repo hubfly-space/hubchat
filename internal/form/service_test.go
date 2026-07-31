@@ -61,3 +61,30 @@ func TestValidateSubmissionSkipsInactiveConditionalFields(t *testing.T) {
 		t.Fatal("active conditional field was not required")
 	}
 }
+
+func TestValidateFileSubmission(t *testing.T) {
+	fields := []Field{
+		{Key: "kind", Label: "Kind", Type: "enum", Options: []string{"bug"}, Required: true},
+		{Key: "screenshot", Label: "Screenshot", Type: "file", Required: true},
+		{Key: "log", Label: "Log", Type: "file"},
+	}
+	values := map[string]any{"kind": "bug"}
+	if err := validateSubmission(fields, values); err != nil {
+		t.Fatalf("file field should not be validated as a scalar: %v", err)
+	}
+	if err := validateFileSubmission(fields, values, map[string]string{"screenshot": "fil_1"}); err != nil {
+		t.Fatalf("valid file submission rejected: %v", err)
+	}
+	for name, fileIDs := range map[string]map[string]string{
+		"missing required": {},
+		"unknown field":    {"not_a_field": "fil_1"},
+		"duplicate file":   {"screenshot": "fil_1", "log": "fil_1"},
+	} {
+		if err := validateFileSubmission(fields, values, fileIDs); err == nil {
+			t.Errorf("%s file submission was accepted", name)
+		}
+	}
+	if err := validateFileSubmission(fields, values, map[string]string{"screenshot": "fil_1", "log": "fil_2"}); err != nil {
+		t.Fatalf("two distinct files rejected: %v", err)
+	}
+}

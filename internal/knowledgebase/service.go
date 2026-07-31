@@ -30,6 +30,8 @@ var (
 	ErrFeedbackAlreadyRecorded = errors.New("knowledgebase: article feedback already recorded")
 )
 
+const JobPublishScheduled = "knowledgebase.publish_scheduled"
+
 var slugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
 type Options struct {
@@ -295,6 +297,20 @@ func (s *Service) GetArticle(ctx context.Context, workspaceID, id string) (*Arti
 	return &items[0], nil
 }
 
+// FindArticleBySlug resolves an article inside one workspace and knowledge
+// base. The language predicate keeps translated articles independent.
+func (s *Service) FindArticleBySlug(ctx context.Context, workspaceID, knowledgeBaseID, language, slug string) (*Article, error) {
+	var id string
+	err := s.pool.QueryRow(ctx, `SELECT id FROM articles WHERE workspace_id=$1 AND knowledge_base_id=$2 AND language=$3 AND slug=$4`, workspaceID, knowledgeBaseID, language, strings.ToLower(strings.TrimSpace(slug))).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.GetArticle(ctx, workspaceID, id)
+}
+
 func (s *Service) GetPublishedBySlug(ctx context.Context, workspaceID, slug string) (*Article, error) {
 	var id string
 	err := s.pool.QueryRow(ctx, `UPDATE articles SET view_count=view_count+1 WHERE workspace_id=$1 AND slug=$2 AND state='published' RETURNING id`, workspaceID, strings.ToLower(strings.TrimSpace(slug))).Scan(&id)
@@ -414,6 +430,61 @@ func (s *Service) PublishArticle(ctx context.Context, workspaceID, id string) (*
 		return nil, err
 	}
 	return s.GetArticle(ctx, workspaceID, id)
+}
+
+// PublishScheduled promotes every due article in one transaction. The event
+// is committed with the state transition, so a worker retry cannot expose a
+// published article without notifying the normal webhook, analytics, and
+// realtime consumers.
+func (s *Service) PublishScheduled(ctx context.Context, now time.Time) (int, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	} else {
+		now = now.UTC()
+	}
+	count := 0
+	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			UPDATE articles
+			SET state='published', published_at=coalesce(published_at,$1), updated_at=$1
+			WHERE state='scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= $1
+			RETURNING id,workspace_id,title
+		`, now)
+		if err != nil {
+			return err
+		}
+		type publishedArticle struct {
+			id, workspaceID, title string
+		}
+		published := make([]publishedArticle, 0)
+		for rows.Next() {
+			var item publishedArticle
+			if err := rows.Scan(&item.id, &item.workspaceID, &item.title); err != nil {
+				rows.Close()
+				return err
+			}
+			published = append(published, item)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		if s.events != nil {
+			for _, item := range published {
+				if _, err := s.events.Append(ctx, tx, events.Event{
+					WorkspaceID: item.workspaceID, Type: events.ArticlePublished,
+					EntityType: "article", EntityID: item.id, ActorType: events.ActorSystem,
+					Data: map[string]any{"id": item.id, "title": item.title},
+				}); err != nil {
+					return err
+				}
+			}
+		}
+		count = len(published)
+		return nil
+	})
+	return count, err
 }
 
 func (s *Service) SaveChangelog(ctx context.Context, workspaceID, memberID, id string, input ChangelogInput) (*ChangelogEntry, error) {
