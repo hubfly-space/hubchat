@@ -299,6 +299,12 @@ func handlePortalTicketReply(deps Deps) http.HandlerFunc {
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not send your reply.")
 			return
 		}
+		if deps.Notification != nil {
+			if notifyErr := deps.Notification.NotifyConversationMessage(r.Context(), session.WorkspaceID, *ticket.ConversationID,
+				message.ID, message.AuthorType, "", message.Body); notifyErr != nil && deps.Logger != nil {
+				deps.Logger.Warn("could not create portal reply notification", "ticket_id", id, "error", notifyErr)
+			}
+		}
 		httpserver.WriteJSON(w, http.StatusCreated, portalMessageJSON(*message))
 	}
 }

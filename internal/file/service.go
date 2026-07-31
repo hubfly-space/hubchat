@@ -11,6 +11,7 @@ import (
 
 	"github.com/hubchat/hubchat/internal/database"
 	"github.com/hubchat/hubchat/internal/ids"
+	"github.com/jackc/pgx/v5"
 )
 
 // Service owns file metadata and uses Store for the bytes. The database row is
@@ -153,6 +154,97 @@ func (s *Service) Get(ctx context.Context, workspaceID, id string) (*Record, err
 		return nil, fmt.Errorf("file: get %s: %w", id, err)
 	}
 	return &record, nil
+}
+
+// AttachToMessage links already-uploaded files to a message. Uploads are kept
+// separate from message creation so a client can stream a file first and then
+// submit one idempotent message containing all selected files. Every lookup is
+// workspace-scoped and the transaction prevents a partial attachment list.
+func (s *Service) AttachToMessage(ctx context.Context, workspaceID, messageID string, fileIDs []string) error {
+	if messageID == "" || len(fileIDs) == 0 {
+		return nil
+	}
+	unique := make([]string, 0, len(fileIDs))
+	seen := make(map[string]struct{}, len(fileIDs))
+	for _, id := range fileIDs {
+		if id == "" {
+			return ErrInvalidAttachment
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+
+	return database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		var messageExists bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM messages WHERE workspace_id = $1 AND id = $2)
+		`, workspaceID, messageID).Scan(&messageExists); err != nil {
+			return fmt.Errorf("file: validate message attachment target: %w", err)
+		}
+		if !messageExists {
+			return ErrInvalidAttachment
+		}
+
+		var fileCount int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM files
+			WHERE workspace_id = $1 AND id = ANY($2::text[]) AND committed_at IS NOT NULL
+		`, workspaceID, unique).Scan(&fileCount); err != nil {
+			return fmt.Errorf("file: validate message attachments: %w", err)
+		}
+		if fileCount != len(unique) {
+			return ErrInvalidAttachment
+		}
+
+		for position, fileID := range unique {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO message_attachments (message_id, file_id, position)
+				VALUES ($1, $2, $3)
+				ON CONFLICT (message_id, file_id) DO UPDATE SET position = EXCLUDED.position
+			`, messageID, fileID, position); err != nil {
+				return fmt.Errorf("file: attach %s: %w", fileID, err)
+			}
+		}
+		return nil
+	})
+}
+
+// MessageAttachments returns committed files in the order selected by the
+// sender. It is intentionally a second query from message loading so callers
+// that do not render attachments do not pay for the join.
+func (s *Service) MessageAttachments(ctx context.Context, workspaceID, messageID string) ([]Record, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT f.id, f.workspace_id, f.storage_key, f.backend, f.name, f.mime_type,
+		       f.size_bytes, coalesce(f.checksum, ''::bytea), coalesce(f.owner_type, ''),
+		       coalesce(f.owner_id, ''), f.uploaded_by_type, coalesce(f.uploaded_by_id, ''),
+		       f.committed_at, f.created_at
+		FROM message_attachments ma
+		JOIN files f ON f.id = ma.file_id AND f.workspace_id = $1 AND f.committed_at IS NOT NULL
+		WHERE ma.message_id = $2
+		ORDER BY ma.position ASC, f.created_at ASC, f.id ASC
+	`, workspaceID, messageID)
+	if err != nil {
+		return nil, fmt.Errorf("file: list message attachments: %w", err)
+	}
+	defer rows.Close()
+
+	attachments := make([]Record, 0)
+	for rows.Next() {
+		var record Record
+		if err := rows.Scan(
+			&record.ID, &record.WorkspaceID, &record.StorageKey, &record.Backend,
+			&record.Name, &record.MIMEType, &record.SizeBytes, &record.Checksum,
+			&record.OwnerType, &record.OwnerID, &record.UploadedByType, &record.UploadedByID,
+			&record.CommittedAt, &record.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		attachments = append(attachments, record)
+	}
+	return attachments, rows.Err()
 }
 
 func (s *Service) Open(ctx context.Context, workspaceID, id string) (*Record, io.ReadCloser, error) {
