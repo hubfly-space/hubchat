@@ -10,8 +10,12 @@ import {
   SegmentedControl,
   StatusDot,
   Tooltip,
+  api,
   cn,
   formatRelativeShort,
+  idempotencyKey,
+  useMutation,
+  useQuery,
   useTheme,
   type ThemeMode,
 } from "@hubchat/shared";
@@ -30,7 +34,6 @@ import {
   UserPlus,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { NOW, notifications } from "../../data/fixtures";
 
 export type ConnectionState = "connected" | "reconnecting" | "offline";
 
@@ -42,7 +45,12 @@ export function TopBar({
   connection: ConnectionState;
 }) {
   const navigate = useNavigate();
-  const unread = notifications.filter((item) => item.read_at === null);
+  const count = useQuery<{ count: number }>(["notifications-count"], (signal) =>
+    api.get("/notifications/count", { signal }),
+  );
+  const notifications = useQuery<{ data: LiveNotification[] }>(["notifications"], (signal) =>
+    api.get("/notifications?limit=20", { signal }),
+  );
   const { mode, setMode, density, setDensity } = useTheme();
 
   return (
@@ -120,7 +128,12 @@ export function TopBar({
           </MenuContent>
         </Menu>
 
-        <NotificationsMenu unreadCount={unread.length} />
+        <NotificationsMenu
+          unreadCount={count.data?.count ?? 0}
+          items={notifications.data?.data ?? []}
+          loading={notifications.isLoading}
+          error={notifications.isError}
+        />
       </div>
     </header>
   );
@@ -155,8 +168,44 @@ function ConnectionIndicator({ state }: { state: ConnectionState }) {
   );
 }
 
-function NotificationsMenu({ unreadCount }: { unreadCount: number }) {
+type LiveNotification = {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  url: string | null;
+  read_at: string | null;
+  created_at: string;
+};
+
+function NotificationsMenu({
+  unreadCount,
+  items,
+  loading,
+  error,
+}: {
+  unreadCount: number;
+  items: LiveNotification[];
+  loading: boolean;
+  error: boolean;
+}) {
   const navigate = useNavigate();
+  const markRead = useMutation<string, void>(
+    (id) => api.post(`/notifications/${id}/read`),
+    { invalidates: [["notifications"], ["notifications-count"]] },
+  );
+  const markAllRead = useMutation<void, void>(
+    () => api.post("/notifications/read-all", undefined, { idempotencyKey: idempotencyKey() }),
+    { invalidates: [["notifications"], ["notifications-count"]] },
+  );
+
+  const openNotification = (item: LiveNotification) => {
+    if (item.read_at === null) void markRead.mutate(item.id).catch(() => {});
+    if (item.url) navigate(item.url);
+    else if (item.entity_id) navigate(`/inbox?conversation=${encodeURIComponent(item.entity_id)}`);
+  };
 
   return (
     <Menu>
@@ -178,6 +227,8 @@ function NotificationsMenu({ unreadCount }: { unreadCount: number }) {
           <MenuLabel className="p-0">Notifications</MenuLabel>
           <button
             type="button"
+            disabled={markAllRead.isPending || unreadCount === 0}
+            onClick={() => void markAllRead.mutate().catch(() => {})}
             className="text-xs text-accent-text transition-colors hover:underline"
           >
             Mark all read
@@ -185,11 +236,17 @@ function NotificationsMenu({ unreadCount }: { unreadCount: number }) {
         </div>
 
         <div className="max-h-96 overflow-y-auto p-1">
-          {notifications.map((item) => (
+          {loading ? (
+            <p className="px-2 py-5 text-center text-xs text-fg-muted">Loading notifications…</p>
+          ) : error ? (
+            <p className="px-2 py-5 text-center text-xs text-danger">Could not load notifications.</p>
+          ) : items.length === 0 ? (
+            <p className="px-2 py-5 text-center text-xs text-fg-muted">You’re all caught up.</p>
+          ) : items.map((item) => (
             <button
               key={item.id}
               type="button"
-              onClick={() => item.entity_id && navigate(`/inbox/all/${item.entity_id}`)}
+              onClick={() => openNotification(item)}
               className={cn(
                 "flex w-full items-start gap-2.5 rounded-md p-2 text-left transition-colors hover:bg-fill",
                 item.read_at === null && "bg-accent-subtle/40",
@@ -206,7 +263,7 @@ function NotificationsMenu({ unreadCount }: { unreadCount: number }) {
                 <span className="flex items-baseline justify-between gap-2">
                   <span className="truncate text-xs font-medium text-fg">{item.title}</span>
                   <span className="shrink-0 text-2xs tabular text-fg-muted">
-                    {formatRelativeShort(item.created_at, NOW)}
+                    {formatRelativeShort(item.created_at)}
                   </span>
                 </span>
                 <span className="mt-0.5 block truncate text-xs text-fg-muted">{item.body}</span>

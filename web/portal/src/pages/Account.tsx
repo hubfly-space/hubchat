@@ -6,16 +6,21 @@ import {
   Card,
   CardBody,
   CardHeader,
+  EmptyState,
   Input,
   Section,
   SettingsRow,
   Switch,
 } from "@hubchat/shared";
-import { Download, Trash2 } from "lucide-react";
-import { viewer } from "../data";
+import { Download, Trash2, UserRound } from "lucide-react";
+import { usePortal } from "../portal-context";
+import { Link } from "react-router-dom";
 
 /** Customer profile and communication preferences (§6.5). */
 export default function Account() {
+  const { data } = usePortal();
+  if (!data?.viewer) return <EmptyState icon={UserRound} title="Sign in to view your profile" description="Your portal profile is available after email sign-in." action={<Button variant="primary" size="sm" asChild><Link to="/sign-in">Sign in</Link></Button>} />;
+  const viewer = data.viewer;
   return (
     <div className="mx-auto max-w-2xl">
       <header className="mb-6">

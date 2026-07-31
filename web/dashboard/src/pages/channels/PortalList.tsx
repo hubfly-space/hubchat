@@ -5,17 +5,25 @@ import {
   Card,
   CardBody,
   EmptyState,
+  Callout,
+  Dialog,
+  DialogContent,
+  Field,
+  Input,
   Page,
   PageBody,
   PageHeader,
   Section,
   Tooltip,
   api,
+  idempotencyKey,
   formatRelativeShort,
+  useMutation,
   useQuery,
 } from "@hubchat/shared";
 import { CheckCircle2, ExternalLink, Globe, Plus, Settings2 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { useState } from "react";
 
 type PortalRow = {
   id: string;
@@ -29,7 +37,11 @@ type PortalRow = {
 
 /** Customer portals (§6.5). Configuration is loaded from the tenant API. */
 export default function PortalList() {
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [subdomain, setSubdomain] = useState("");
   const query = useQuery<{ data: PortalRow[] }>(["portals"], (signal) => api.get("/portals", { signal }));
+  const create = useMutation<void, PortalRow>(() => api.post<PortalRow>("/portals", { name, subdomain }, { idempotencyKey: idempotencyKey() }), { invalidates: [["portals"]], onSuccess: () => { setName(""); setSubdomain(""); setCreating(false); } });
   const portals = query.data?.data ?? [];
 
   return (
@@ -37,7 +49,7 @@ export default function PortalList() {
       <PageHeader
         title="Portals"
         description="Hosted, branded sites where customers submit tickets, track history, and browse help."
-        actions={<Button variant="primary" size="sm" leading={<Plus />} disabled title="Portal creation is available through the API while the builder migration is in progress">New portal</Button>}
+        actions={<Button variant="primary" size="sm" leading={<Plus />} onClick={() => setCreating(true)}>New portal</Button>}
       />
       <PageBody>
         <Section>
@@ -64,6 +76,12 @@ export default function PortalList() {
           )}
         </Section>
       </PageBody>
+      <Dialog open={creating} onOpenChange={setCreating}>
+        <DialogContent title="New portal" description="Create the customer-facing shell first; branding and sections can be customised next." footer={<Button variant="primary" size="sm" loading={create.isPending} disabled={!name.trim() || !subdomain.trim()} onClick={() => void create.mutate().catch(() => {})}>Create portal</Button>}>
+          {Boolean(create.error) && <Callout tone="danger" className="mb-3">{create.error instanceof ApiError ? create.error.message : "Could not create this portal."}</Callout>}
+          <div className="flex flex-col gap-3 pb-4"><Field label="Name"><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Northwind Help Centre" autoFocus /></Field><Field label="Subdomain" description="Lowercase letters, numbers, and hyphens."><Input value={subdomain} onChange={(event) => setSubdomain(event.target.value.toLowerCase())} placeholder="northwind" /></Field></div>
+        </DialogContent>
+      </Dialog>
     </Page>
   );
 }
