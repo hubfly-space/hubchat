@@ -111,6 +111,14 @@
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceID" }, { "$ref": "#/components/parameters/Slug" }],
       "get": { "$ref": "#/components/operations/publicGet", "operationId": "getPublicForm", "security": [], "tags": ["Forms"] }
     },
+    "/v1/public/forms/{workspaceID}/{slug}/files": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceID" }, { "$ref": "#/components/parameters/Slug" }],
+      "post": {
+        "operationId": "uploadPublicFormFile", "security": [], "tags": ["Forms"],
+        "requestBody": { "required": true, "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["file"], "properties": { "file": { "type": "string", "format": "binary" } } } } } },
+        "responses": { "201": { "$ref": "#/components/responses/Json" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
     "/v1/public/forms/{workspaceID}/{slug}/submissions": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceID" }, { "$ref": "#/components/parameters/Slug" }],
       "post": { "$ref": "#/components/operations/publicCreate", "operationId": "submitPublicForm", "security": [], "tags": ["Forms"] }
@@ -334,7 +342,14 @@
     },
     "/v1/portability/imports": {
       "get": { "$ref": "#/components/operations/list", "operationId": "listImports", "tags": ["Portability"] },
-      "post": { "$ref": "#/components/operations/create", "operationId": "createImport", "tags": ["Portability"] }
+      "post": { "$ref": "#/components/operations/create", "operationId": "createImport", "tags": ["Portability"], "description": "Create a resumable import. Kinds are workspace, customers_csv, companies_csv, tickets_csv, or knowledgebase_markdown." }
+    },
+    "/v1/portability/import-files": {
+      "post": {
+        "operationId": "uploadPortabilityImportFile", "tags": ["Portability"],
+        "requestBody": { "required": true, "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["file"], "properties": { "file": { "type": "string", "format": "binary" } } } } } },
+        "responses": { "201": { "$ref": "#/components/responses/Json" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
     },
     "/v1/portability/imports/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/Id" }],
