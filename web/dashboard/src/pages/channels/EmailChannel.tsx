@@ -1,11 +1,15 @@
 import {
   Badge,
+  ApiError,
   Button,
   Callout,
   Card,
   CardBody,
   CardHeader,
   CodeBlock,
+  Dialog,
+  DialogContent,
+  DialogTrigger,
   Field,
   Input,
   Page,
@@ -19,21 +23,56 @@ import {
   Tabs,
   TabsContent,
   TabsList,
+  api,
+  idempotencyKey,
+  useMutation,
+  useQuery,
 } from "@hubchat/shared";
 import { AlertTriangle, CheckCircle2, Send } from "lucide-react";
-import { useState } from "react";
-import { inboxes } from "../../data/fixtures";
+import { useEffect, useState } from "react";
+import { useWorkspace } from "../../app/workspace-context";
+
+type Mailbox = {
+  id: string;
+  address: string;
+  display_name: string;
+  inbox_id: string;
+  inbound_mode: "webhook" | "imap" | "off";
+  imap_configured: boolean;
+  inbound_secret_configured: boolean;
+  enabled: boolean;
+  last_error?: string | null;
+};
+type CreatedMailbox = { mailbox: Mailbox; inbound_secret: string };
 
 /** Email channel (§6.15). */
 export default function EmailChannel() {
+  const { inboxes } = useWorkspace();
   const [tab, setTab] = useState("outbound");
-  const [inboundMode, setInboundMode] = useState("webhook");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newAddress, setNewAddress] = useState("");
+  const [newInboxID, setNewInboxID] = useState("");
+  const [newSecret, setNewSecret] = useState("");
+  const mailboxes = useQuery<{ data: Mailbox[] }>(["email-mailboxes"], (signal) => api.get("/email/mailboxes", { signal }));
+  const [activeID, setActiveID] = useState("");
+  const active = mailboxes.data?.data.find((item) => item.id === activeID) ?? mailboxes.data?.data[0];
+  const [inboundMode, setInboundMode] = useState<Mailbox["inbound_mode"]>("off");
+  const update = useMutation<Partial<Mailbox>, Mailbox>((input) => api.patch(`/email/mailboxes/${encodeURIComponent(active?.id ?? "")}`, input, { idempotencyKey: idempotencyKey() }), { invalidates: [["email-mailboxes"]] });
+  const create = useMutation<{ address: string; inbox_id: string; inbound_mode: "webhook"; enabled: boolean }, CreatedMailbox>((input) => api.post("/email/mailboxes", input, { idempotencyKey: idempotencyKey() }), { invalidates: [["email-mailboxes"]], onSuccess: (value) => { setCreateOpen(false); setNewAddress(""); setNewInboxID(""); setNewSecret(value.inbound_secret); } });
+
+  useEffect(() => {
+    if (active) {
+      setActiveID(active.id);
+      setInboundMode(active.inbound_mode);
+    }
+  }, [active]);
 
   return (
     <Page>
       <PageHeader
         title="Email channel"
         description="Outbound notifications and inbound reply handling. Processed inside the Hubchat binary — no external worker."
+        actions={<Dialog open={createOpen} onOpenChange={setCreateOpen}><DialogTrigger asChild><Button variant="primary" size="sm">Add mailbox</Button></DialogTrigger><DialogContent title="Add inbound mailbox" footer={<><Button variant="ghost" size="sm" onClick={() => setCreateOpen(false)}>Cancel</Button><Button variant="primary" size="sm" loading={create.isPending} disabled={!newAddress.trim() || (!newInboxID && !inboxes[0]?.id)} onClick={() => void create.mutate({ address: newAddress.trim(), inbox_id: newInboxID || inboxes[0]?.id || "", inbound_mode: "webhook", enabled: true }).catch(() => {})}>Create mailbox</Button></>}><div className="space-y-4"><Field label="Support address"><Input autoFocus value={newAddress} onChange={(event) => setNewAddress(event.target.value)} placeholder="support@example.com" /></Field><Field label="Default inbox"><Select value={newInboxID || inboxes[0]?.id} onValueChange={setNewInboxID} options={inboxes.map((inbox) => ({ value: inbox.id, label: inbox.name }))} /></Field>{Boolean(create.error) && <p className="text-sm text-danger">Could not create mailbox.</p>}</div></DialogContent></Dialog>}
         tabs={
           <Tabs value={tab} onValueChange={setTab}>
             <TabsList
@@ -49,6 +88,10 @@ export default function EmailChannel() {
       />
 
       <PageBody>
+        {mailboxes.isLoading && <Callout tone="info" className="mb-5">Loading live mailbox configuration…</Callout>}
+        {mailboxes.isError && <Callout tone="danger" className="mb-5">{mailboxes.error instanceof ApiError ? mailboxes.error.message : "Mailbox configuration is unavailable."}</Callout>}
+        {newSecret && <Callout tone="success" className="mb-5" title="Save this inbound webhook secret now">It is shown only once: <code className="ml-1 font-mono text-xs">{newSecret}</code><Button className="ml-2" variant="ghost" size="xs" onClick={() => setNewSecret("")}>Dismiss</Button></Callout>}
+        {active && <div className="mb-5 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2"><span className="text-xs text-fg-muted">Mailbox</span>{mailboxes.data?.data.map((item) => <Button key={item.id} variant={item.id === active.id ? "secondary" : "ghost"} size="xs" onClick={() => setActiveID(item.id)}>{item.address}</Button>)}<Badge tone={active.inbound_secret_configured ? "success" : "warning"}>{active.inbound_secret_configured ? "Webhook secret configured" : "Webhook secret missing"}</Badge></div>}
         <Tabs value={tab} onValueChange={setTab}>
           <TabsContent value="outbound">
             <Callout tone="warning" className="mb-5" icon={<AlertTriangle />}>
@@ -129,7 +172,11 @@ export default function EmailChannel() {
                     variant="cards"
                     aria-label="Inbound mode"
                     value={inboundMode}
-                    onValueChange={setInboundMode}
+                    onValueChange={(value) => {
+                      const mode = value as Mailbox["inbound_mode"];
+                      setInboundMode(mode);
+                      if (active) void update.mutate({ inbound_mode: mode });
+                    }}
                     options={[
                       {
                         value: "webhook",
@@ -193,9 +240,10 @@ export default function EmailChannel() {
                   <SettingsRow label="Default inbox" description="Where mail lands when no rule matches.">
                     <Select
                       size="sm"
-                      defaultValue={inboxes[0]!.id}
+                      value={active?.inbox_id ?? inboxes[0]?.id}
                       aria-label="Default inbox"
                       options={inboxes.map((inbox) => ({ value: inbox.id, label: inbox.name }))}
+                      onValueChange={(value) => { if (active) void update.mutate({ inbox_id: value }); }}
                     />
                   </SettingsRow>
                   <SettingsRow

@@ -1,170 +1,19 @@
-import {
-  Badge,
-  Button,
-  Card,
-  CardBody,
-  Callout,
-  EmptyState,
-  Menu,
-  MenuContent,
-  MenuItem,
-  MenuSeparator,
-  MenuTrigger,
-  Page,
-  PageBody,
-  PageHeader,
-  Section,
-  Switch,
-  Tooltip,
-  formatRelativeShort,
-} from "@hubchat/shared";
-import { AlertTriangle, Copy, FlaskConical, History, MoreHorizontal, Plus, Trash2, Workflow } from "lucide-react";
+import { ApiError, Badge, Button, Card, CardBody, Dialog, DialogContent, DialogTrigger, EmptyState, Field, Input, Page, PageBody, PageHeader, Section, Switch, api, idempotencyKey, useMutation, useQuery } from "@hubchat/shared";
+import { Plus, Workflow } from "lucide-react";
 import { Link } from "react-router-dom";
-import { NOW, automationRules } from "../../data/fixtures";
+import { useState } from "react";
 
-const TRIGGER_LABEL: Record<string, string> = {
-  "conversation.created": "When a conversation is created",
-  "message.received": "When a message arrives",
-  "ticket.created": "When a ticket is created",
-  "ticket.updated": "When a ticket changes",
-  "customer.identified": "When a customer identifies",
-  "customer.attribute_changed": "When a customer attribute changes",
-  "event.received": "When an application event arrives",
-  "form.submitted": "When a form is submitted",
-  "feedback.submitted": "When feedback is submitted",
-  "sla.approaching": "When an SLA is about to breach",
-  "sla.breached": "When an SLA breaches",
-  "conversation.idle": "When a conversation goes idle",
-  "business_hours.changed": "When business hours start or end",
-  schedule: "On a schedule",
-};
+type Action = { id: string; type: string; params: Record<string, unknown> };
+type Rule = { id: string; name: string; description: string; trigger: string; enabled: boolean; version: number; run_count_24h: number; error_count_24h: number; last_run_at: string | null; conditions: Record<string, unknown>; actions: Action[] };
+type RuleInput = { name: string; trigger: string; conditions: Record<string, never>; actions: never[]; enabled: boolean };
 
-/** Automation rules (§6.13). */
 export default function RuleList() {
-  const failing = automationRules.filter((rule) => rule.error_count_24h > 0);
-
-  return (
-    <Page>
-      <PageHeader
-        title="Rules"
-        description="Explicit triggers, conditions, and actions. Deterministic — the same input always produces the same outcome."
-        actions={
-          <Button variant="primary" size="sm" leading={<Plus />} asChild>
-            <Link to="/automation/rules/new">New rule</Link>
-          </Button>
-        }
-      />
-
-      <PageBody>
-        {failing.length > 0 && (
-          <Callout
-            tone="warning"
-            className="mb-5"
-            icon={<AlertTriangle />}
-            title={`${failing.length} rule${failing.length === 1 ? "" : "s"} failed in the last 24 hours`}
-            actions={
-              <Button variant="secondary" size="sm" asChild>
-                <Link to="/automation/executions">View log</Link>
-              </Button>
-            }
-          >
-            A failing action does not stop the rest of the rule — remaining actions still apply.
-          </Callout>
-        )}
-
-        <Section>
-          {automationRules.length === 0 ? (
-            <EmptyState
-              icon={Workflow}
-              title="No rules yet"
-              description="Rules handle the repetitive decisions: routing by account tier, escalating breaches, closing idle threads."
-            />
-          ) : (
-            <div className="space-y-3">
-              {automationRules.map((rule) => (
-                <Card key={rule.id}>
-                  <CardBody>
-                    <div className="flex flex-wrap items-start gap-4">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Link
-                            to={`/automation/rules/${rule.id}`}
-                            className="truncate text-sm font-medium text-fg hover:underline"
-                          >
-                            {rule.name}
-                          </Link>
-                          <Badge tone="neutral">v{rule.version}</Badge>
-                          {rule.error_count_24h > 0 && (
-                            <Tooltip content={`${rule.error_count_24h} failed executions in 24h`}>
-                              <span>
-                                <Badge tone="danger" leading={<AlertTriangle />}>
-                                  {rule.error_count_24h}
-                                </Badge>
-                              </span>
-                            </Tooltip>
-                          )}
-                        </div>
-
-                        <p className="mt-1 text-xs text-fg-secondary">
-                          {TRIGGER_LABEL[rule.trigger] ?? rule.trigger}
-                          {rule.conditions.conditions.length > 0 && (
-                            <>
-                              {" "}
-                              <span className="text-fg-muted">
-                                and {rule.conditions.conditions.length} condition
-                                {rule.conditions.conditions.length === 1 ? "" : "s"} match
-                              </span>
-                            </>
-                          )}
-                          {" → "}
-                          <span className="text-fg-muted">
-                            {rule.actions.length} action{rule.actions.length === 1 ? "" : "s"}
-                          </span>
-                        </p>
-
-                        {rule.description && (
-                          <p className="mt-1 text-xs text-fg-muted">{rule.description}</p>
-                        )}
-
-                        <p className="mt-2 text-2xs tabular text-fg-disabled">
-                          Ran {rule.run_count_24h}× in 24h ·{" "}
-                          {rule.last_run_at
-                            ? `last ${formatRelativeShort(rule.last_run_at, NOW)} ago`
-                            : "never run"}
-                        </p>
-                      </div>
-
-                      <div className="flex shrink-0 items-center gap-2">
-                        <Switch defaultChecked={rule.enabled} aria-label={`Enable ${rule.name}`} />
-                        <Menu>
-                          <MenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              iconOnly
-                              aria-label={`Actions for ${rule.name}`}
-                              leading={<MoreHorizontal />}
-                            />
-                          </MenuTrigger>
-                          <MenuContent align="end">
-                            <MenuItem icon={<FlaskConical />}>Dry run against recent data</MenuItem>
-                            <MenuItem icon={<History />}>Version history</MenuItem>
-                            <MenuItem icon={<Copy />}>Duplicate</MenuItem>
-                            <MenuSeparator />
-                            <MenuItem icon={<Trash2 />} destructive>
-                              Delete rule
-                            </MenuItem>
-                          </MenuContent>
-                        </Menu>
-                      </div>
-                    </div>
-                  </CardBody>
-                </Card>
-              ))}
-            </div>
-          )}
-        </Section>
-      </PageBody>
-    </Page>
-  );
+  const query = useQuery<{ data: Rule[] }>(["automation-rules"], (signal) => api.get("/automation/rules", { signal }));
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [trigger, setTrigger] = useState("conversation.created");
+  const create = useMutation<RuleInput, Rule>((input) => api.post("/automation/rules", input, { idempotencyKey: idempotencyKey() }), { invalidates: [["automation-rules"]], onSuccess: () => { setOpen(false); setName(""); } });
+  const toggle = useMutation<{ rule: Rule; enabled: boolean }, Rule>(({ rule, enabled }) => api.patch(`/automation/rules/${encodeURIComponent(rule.id)}`, { name: rule.name, description: rule.description, trigger: rule.trigger, conditions: rule.conditions, actions: rule.actions, enabled }), { invalidates: [["automation-rules"]] });
+  const rules = query.data?.data ?? [];
+  return <Page><PageHeader title="Automation rules" description="Deterministic event rules with explicit conditions, actions, versions, and execution logs." actions={<Dialog open={open} onOpenChange={setOpen}><DialogTrigger asChild><Button variant="primary" size="sm" leading={<Plus />}>New rule</Button></DialogTrigger><DialogContent title="Create automation rule" footer={<><Button variant="ghost" size="sm" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" size="sm" loading={create.isPending} disabled={!name.trim()} onClick={() => void create.mutate({ name: name.trim(), trigger, conditions: {}, actions: [], enabled: false }).catch(() => {})}>Create rule</Button></>}><div className="space-y-4"><Field label="Name"><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Tag urgent conversations" /></Field><Field label="Trigger"><select className="h-9 w-full rounded-md border border-line bg-surface px-3 text-sm text-fg" value={trigger} onChange={(event) => setTrigger(event.target.value)}><option value="conversation.created">Conversation created</option><option value="message.received">Message received</option><option value="ticket.created">Ticket created</option><option value="form.submitted">Form submitted</option><option value="sla.breached">SLA breached</option></select></Field>{Boolean(create.error) && <p className="text-sm text-danger">Could not create rule.</p>}</div></DialogContent></Dialog>} /><PageBody><Section>{query.isLoading ? <p className="text-sm text-fg-muted">Loading rules…</p> : query.error ? <EmptyState icon={Workflow} title="Automation unavailable" description={query.error instanceof ApiError ? query.error.message : "Try again in a moment."} /> : rules.length === 0 ? <EmptyState icon={Workflow} title="No automation rules" description="Create a rule when you are ready to make one deterministic change on a known event." /> : <div className="space-y-3">{rules.map((rule) => <Card key={rule.id}><CardBody className="flex flex-wrap items-center gap-4"><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><Link to={`/automation/rules/${rule.id}`} className="truncate text-sm font-medium text-fg hover:underline">{rule.name}</Link><Badge tone={rule.enabled ? "success" : "neutral"}>{rule.enabled ? "Active" : "Draft"}</Badge></div><p className="mt-1 text-xs text-fg-muted">When {rule.trigger} · {rule.actions.length} action{rule.actions.length === 1 ? "" : "s"} · v{rule.version}</p></div><div className="flex items-center gap-4 text-xs tabular text-fg-muted"><span>{rule.run_count_24h} runs / 24h</span>{rule.error_count_24h > 0 && <Badge tone="danger">{rule.error_count_24h} errors</Badge>}</div><Switch checked={rule.enabled} onCheckedChange={(enabled) => void toggle.mutate({ rule, enabled }).catch(() => {})} aria-label={`Enable ${rule.name}`} /></CardBody></Card>)}</div>}</Section></PageBody></Page>;
 }

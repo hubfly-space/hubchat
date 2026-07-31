@@ -21,7 +21,12 @@ import {
   Textarea,
   Toolbar,
   Tooltip,
+  ApiError,
+  api,
   cn,
+  idempotencyKey,
+  useMutation,
+  useQuery,
   useToast,
 } from "@hubchat/shared";
 import {
@@ -35,9 +40,9 @@ import {
   Workflow,
   Zap,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { automationRules, inboxes, members, tags, teams } from "../../data/fixtures";
+import { useWorkspace } from "../../app/workspace-context";
 import type { AutomationAction, AutomationActionType, FilterCondition } from "@hubchat/shared";
 
 const TRIGGERS = [
@@ -102,8 +107,11 @@ const CONDITION_FIELDS = [
 export default function RuleBuilder() {
   const { ruleId } = useParams();
   const toast = useToast();
+  const { members, teams, inboxes, tags } = useWorkspace();
 
-  const source = automationRules.find((rule) => rule.id === ruleId);
+  type Rule = { id: string; name: string; description: string; trigger: string; conditions: { match?: "all" | "any"; conditions?: FilterCondition[] }; actions: AutomationAction[]; enabled: boolean; version: number };
+  const ruleQuery = useQuery<Rule>(ruleId ? ["automation-rule", ruleId] : null, (signal) => api.get(`/automation/rules/${encodeURIComponent(ruleId ?? "")}`, { signal }), { enabled: Boolean(ruleId) });
+  const source = ruleQuery.data;
   const [name, setName] = useState(source?.name ?? "Untitled rule");
   const [trigger, setTrigger] = useState(source?.trigger ?? "conversation.created");
   const [match, setMatch] = useState<"all" | "any">(source?.conditions.match ?? "all");
@@ -112,6 +120,21 @@ export default function RuleBuilder() {
   );
   const [actions, setActions] = useState<AutomationAction[]>(source?.actions ?? []);
   const [enabled, setEnabled] = useState(source?.enabled ?? false);
+  const [description, setDescription] = useState(source?.description ?? "");
+
+  useEffect(() => {
+    if (!source) return;
+    setName(source.name);
+    setTrigger(source.trigger);
+    setMatch(source.conditions.match ?? "all");
+    setConditions(source.conditions.conditions ?? []);
+    setActions(source.actions ?? []);
+    setEnabled(source.enabled);
+    setDescription(source.description ?? "");
+  }, [source]);
+
+  const save = useMutation<{ name: string; description: string; trigger: string; conditions: { match: string; conditions: FilterCondition[] }; actions: AutomationAction[]; enabled: boolean }, Rule>((input) => ruleId ? api.patch(`/automation/rules/${encodeURIComponent(ruleId)}`, input) : api.post("/automation/rules", input, { idempotencyKey: idempotencyKey() }), { invalidates: [["automation-rules"]], onSuccess: () => toast.toast({ title: "Rule saved", description: "The live automation rule was updated." }) });
+  const dryRun = useMutation<Record<string, unknown>, Record<string, unknown>>((input) => api.post(`/automation/rules/${encodeURIComponent(ruleId ?? "")}/dry-run`, input));
 
   const addAction = (type: AutomationActionType) =>
     setActions((current) => [
@@ -145,17 +168,11 @@ export default function RuleBuilder() {
               variant="secondary"
               size="sm"
               leading={<FlaskConical />}
-              onClick={() =>
-                toast.toast({
-                  title: "Dry run complete",
-                  description: "Would have matched 38 of the last 500 conversations. No changes were applied.",
-                  action: { label: "View matches", onClick: () => undefined },
-                })
-              }
+              onClick={() => void dryRun.mutate({}).then(() => toast.toast({ title: "Dry run complete", description: "No changes were applied." })).catch((error) => toast.toast({ title: "Dry run failed", description: error instanceof ApiError ? error.message : "Try again." }))}
             >
               Dry run
             </Button>
-            <Button variant="primary" size="sm">
+            <Button variant="primary" size="sm" loading={save.isPending} onClick={() => void save.mutate({ name: name.trim(), description, trigger, conditions: { match, conditions }, actions, enabled }).catch(() => {})}>
               Save rule
             </Button>
           </>
@@ -310,7 +327,7 @@ export default function RuleBuilder() {
                         <Zap aria-hidden="true" className="size-3 text-accent-text" />
                         {meta?.label ?? action.type}
                       </p>
-                      <ActionParams action={action} />
+                      <ActionParams action={action} members={members} teams={teams} inboxes={inboxes} tags={tags} />
                     </div>
                     <Button
                       variant="ghost"
@@ -375,7 +392,7 @@ export default function RuleBuilder() {
                 <Input inputSize="sm" type="number" defaultValue={60} className="max-w-32" />
               </Field>
               <Field label="Notes" description="Why this rule exists. Future you will want this.">
-                <Textarea rows={2} defaultValue={source?.description ?? ""} />
+                <Textarea rows={2} value={description} onChange={(event) => setDescription(event.target.value)} />
               </Field>
             </CardBody>
           </Card>
@@ -431,7 +448,7 @@ function Connector() {
   );
 }
 
-function ActionParams({ action }: { action: AutomationAction }) {
+function ActionParams({ action, members, teams, inboxes, tags }: { action: AutomationAction; members: { id: string; name: string }[]; teams: { id: string; name: string }[]; inboxes: { id: string; name: string }[]; tags: { id: string; name: string }[] }) {
   switch (action.type) {
     case "assign_member":
       return (
