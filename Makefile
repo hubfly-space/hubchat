@@ -126,7 +126,9 @@ openapi-check: ## Validate the checked-in public API contract
 # Deliberately a separate variable from HUBCHAT_DATABASE_URL: these tests
 # truncate tenant data, so pointing them at a database has to be a choice
 # rather than something a stray export does for you.
-TEST_DATABASE_URL ?= postgres://hubchat:hubchat@localhost:5432/hubchat?sslmode=disable
+# 127.0.0.1 avoids the common Docker-on-Linux IPv6 localhost timeout while
+# remaining equivalent in CI and local development.
+TEST_DATABASE_URL ?= postgres://hubchat:hubchat@127.0.0.1:5432/hubchat?sslmode=disable
 
 # -p 1 runs one package at a time. These tests share one database and reset it
 # between cases, so running two packages concurrently has them deleting each

@@ -23,7 +23,7 @@ database. Do not use a database containing local work.
 
 ```bash
 make dev-db
-export HUBCHAT_TEST_DATABASE_URL="postgres://hubchat:hubchat@localhost:5432/hubchat?sslmode=disable"
+export HUBCHAT_TEST_DATABASE_URL="postgres://hubchat:hubchat@127.0.0.1:5432/hubchat?sslmode=disable"
 make test-integration
 ```
 
