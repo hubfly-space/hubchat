@@ -12,6 +12,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -29,6 +30,7 @@ import (
 	"github.com/hubchat/hubchat/internal/customer"
 	"github.com/hubchat/hubchat/internal/database"
 	"github.com/hubchat/hubchat/internal/events"
+	filemodule "github.com/hubchat/hubchat/internal/file"
 	"github.com/hubchat/hubchat/internal/ids"
 	"github.com/hubchat/hubchat/internal/inbox"
 	"github.com/hubchat/hubchat/internal/jobs"
@@ -56,6 +58,7 @@ type Service struct {
 	inbox        *inbox.Service
 	key          []byte
 	jobs         *jobs.Client
+	files        *filemodule.Service
 	seenMu       sync.Mutex
 	seen         map[string]int64
 }
@@ -117,14 +120,21 @@ type Created struct {
 }
 
 type InboundEmail struct {
-	To         []string  `json:"to"`
-	From       string    `json:"from"`
-	Subject    string    `json:"subject"`
-	Body       string    `json:"body"`
-	MessageID  string    `json:"message_id"`
-	InReplyTo  string    `json:"in_reply_to"`
-	References []string  `json:"references"`
-	ReceivedAt time.Time `json:"received_at"`
+	To          []string            `json:"to"`
+	From        string              `json:"from"`
+	Subject     string              `json:"subject"`
+	Body        string              `json:"body"`
+	MessageID   string              `json:"message_id"`
+	InReplyTo   string              `json:"in_reply_to"`
+	References  []string            `json:"references"`
+	Attachments []InboundAttachment `json:"attachments,omitempty"`
+	ReceivedAt  time.Time           `json:"received_at"`
+}
+
+type InboundAttachment struct {
+	Name     string
+	MIMEType string
+	Body     []byte
 }
 
 type IngestResult struct {
@@ -177,12 +187,15 @@ type Suppression struct {
 // outboundPayload is intentionally small and stable: it is persisted in the
 // jobs table and may be retried by a later binary version.
 type outboundPayload struct {
-	WorkspaceID    string `json:"workspace_id"`
-	EmailMessageID string `json:"email_message_id"`
-	To             string `json:"to"`
-	Subject        string `json:"subject"`
-	Body           string `json:"body"`
-	ReplyTo        string `json:"reply_to,omitempty"`
+	WorkspaceID    string   `json:"workspace_id"`
+	EmailMessageID string   `json:"email_message_id"`
+	To             string   `json:"to"`
+	Subject        string   `json:"subject"`
+	Body           string   `json:"body"`
+	ReplyTo        string   `json:"reply_to,omitempty"`
+	MessageID      string   `json:"message_id,omitempty"`
+	InReplyTo      string   `json:"in_reply_to,omitempty"`
+	AttachmentIDs  []string `json:"attachment_ids,omitempty"`
 }
 
 const (
@@ -197,6 +210,10 @@ func New(pool *database.Pool, secretKey []byte, conversationService *conversatio
 		jobClient = queue[0]
 	}
 	return &Service{pool: pool, key: key[:], conversation: conversationService, customer: customerService, inbox: inboxService, jobs: jobClient, seen: make(map[string]int64)}
+}
+
+func (s *Service) SetFileService(files *filemodule.Service) {
+	s.files = files
 }
 
 // RunEventConsumer queues one durable outbound email for each agent reply in
@@ -330,12 +347,23 @@ func (s *Service) queueOutbound(ctx context.Context, workspaceID string, message
 	} else if err != nil {
 		return fmt.Errorf("emailchannel: record outbound message: %w", err)
 	}
+	var attachmentIDs []string
+	if s.files != nil {
+		attachments, attachmentErr := s.files.MessageAttachments(ctx, workspaceID, message.MessageID)
+		if attachmentErr != nil {
+			return fmt.Errorf("emailchannel: load outbound attachments: %w", attachmentErr)
+		}
+		attachmentIDs = make([]string, 0, len(attachments))
+		for _, attachment := range attachments {
+			attachmentIDs = append(attachmentIDs, attachment.ID)
+		}
+	}
 	_, err = s.jobs.Enqueue(ctx, jobs.Spec{
 		WorkspaceID: workspaceID,
 		Queue:       "email",
 		Type:        jobSend,
 		Payload: outboundPayload{WorkspaceID: workspaceID, EmailMessageID: emailID, To: recipient,
-			Subject: subject, Body: message.Body, ReplyTo: mailboxAddress},
+			Subject: subject, Body: message.Body, ReplyTo: mailboxAddress, MessageID: header, InReplyTo: inReplyTo, AttachmentIDs: attachmentIDs},
 		DedupeKey: "email-outbound:" + emailID,
 	})
 	if errors.Is(err, jobs.ErrDuplicate) {
@@ -512,6 +540,10 @@ func (s *Service) Ingest(ctx context.Context, raw []byte, signature string, inpu
 	if err := verifySignature(raw, signature, secret); err != nil {
 		return nil, err
 	}
+	return s.ingestResolved(ctx, mailbox, input)
+}
+
+func (s *Service) ingestResolved(ctx context.Context, mailbox *Mailbox, input InboundEmail) (*IngestResult, error) {
 	from, err := normalizeAddress(input.From)
 	if err != nil {
 		return nil, ErrInvalidMessage
@@ -580,6 +612,28 @@ func (s *Service) Ingest(ctx context.Context, raw []byte, signature string, inpu
 			return nil, err
 		}
 		conversationID, messageID = threadID, message.ID
+	}
+	if s.files != nil && len(input.Attachments) > 0 {
+		fileIDs := make([]string, 0, len(input.Attachments))
+		for _, attachment := range input.Attachments {
+			if strings.TrimSpace(attachment.Name) == "" || len(attachment.Body) == 0 {
+				continue
+			}
+			stored, storeErr := s.files.Create(ctx, mailbox.WorkspaceID, filemodule.UploadInput{
+				Name: attachment.Name, MIMEType: attachment.MIMEType, SizeBytes: int64(len(attachment.Body)),
+				Body: bytes.NewReader(attachment.Body), OwnerType: "message", OwnerID: messageID,
+				UploadedByType: "customer", UploadedByID: customerID,
+			})
+			if storeErr != nil {
+				markFailed(storeErr)
+				return nil, fmt.Errorf("emailchannel: store inbound attachment: %w", storeErr)
+			}
+			fileIDs = append(fileIDs, stored.ID)
+		}
+		if err := s.files.AttachToMessage(ctx, mailbox.WorkspaceID, messageID, fileIDs); err != nil {
+			markFailed(err)
+			return nil, fmt.Errorf("emailchannel: attach inbound files: %w", err)
+		}
 	}
 	_, err = s.pool.Exec(ctx, `UPDATE email_messages SET message_id=$3,conversation_id=$4,status='received',error=NULL WHERE workspace_id=$1 AND id=$2`, mailbox.WorkspaceID, emailID, messageID, conversationID)
 	if err != nil {
@@ -1069,11 +1123,13 @@ func UnmarshalProviderPayloadFor(provider, contentType string, data []byte) (Inb
 	if strings.HasPrefix(strings.ToLower(contentType), "application/json") || provider == "postmark" || provider == "generic" {
 		return unmarshalJSONInbound(data)
 	}
-	values, err := parseFormValues(contentType, data)
+	values, attachments, err := parseFormPayload(contentType, data)
 	if err != nil {
 		return InboundEmail{}, ErrInvalidMessage
 	}
-	return inboundFromValues(values), nil
+	input := inboundFromValues(values)
+	input.Attachments = attachments
+	return input, nil
 }
 
 func unmarshalJSONInbound(data []byte) (InboundEmail, error) {
@@ -1097,6 +1153,11 @@ func unmarshalJSONInbound(data []byte) (InboundEmail, error) {
 			Name  string `json:"Name"`
 			Value string `json:"Value"`
 		} `json:"Headers"`
+		Attachments []struct {
+			Name        string `json:"Name"`
+			ContentType string `json:"ContentType"`
+			Content     string `json:"Content"`
+		} `json:"Attachments"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return InboundEmail{}, ErrInvalidMessage
@@ -1123,43 +1184,81 @@ func unmarshalJSONInbound(data []byte) (InboundEmail, error) {
 			refs = append(refs, strings.Fields(header.Value)...)
 		}
 	}
-	return InboundEmail{To: to, From: from, Subject: raw.Subject, Body: body, MessageID: messageID, InReplyTo: inReplyTo, References: uniqueStrings(refs)}, nil
+	attachments := make([]InboundAttachment, 0, len(raw.Attachments))
+	for _, attachment := range raw.Attachments {
+		decoded, err := decodeAttachment(attachment.Content)
+		if err != nil {
+			return InboundEmail{}, ErrInvalidMessage
+		}
+		attachments = append(attachments, InboundAttachment{Name: attachment.Name, MIMEType: nonEmpty(attachment.ContentType, "application/octet-stream"), Body: decoded})
+	}
+	return InboundEmail{To: to, From: from, Subject: raw.Subject, Body: body, MessageID: messageID, InReplyTo: inReplyTo, References: uniqueStrings(refs), Attachments: attachments}, nil
 }
 
 func parseFormValues(contentType string, data []byte) (url.Values, error) {
+	values, _, err := parseFormPayload(contentType, data)
+	return values, err
+}
+
+func parseFormPayload(contentType string, data []byte) (url.Values, []InboundAttachment, error) {
 	mediaType, params, err := mime.ParseMediaType(contentType)
 	if err != nil {
 		mediaType = strings.TrimSpace(strings.Split(contentType, ";")[0])
 	}
 	switch strings.ToLower(mediaType) {
 	case "application/x-www-form-urlencoded", "":
-		return url.ParseQuery(string(data))
+		values, err := url.ParseQuery(string(data))
+		return values, nil, err
 	case "multipart/form-data":
 		boundary := params["boundary"]
 		if boundary == "" {
-			return nil, ErrInvalidMessage
+			return nil, nil, ErrInvalidMessage
 		}
 		reader := multipart.NewReader(bytes.NewReader(data), boundary)
 		values := make(url.Values)
+		attachments := make([]InboundAttachment, 0)
 		for {
 			part, nextErr := reader.NextPart()
 			if errors.Is(nextErr, io.EOF) {
 				break
 			}
 			if nextErr != nil {
-				return nil, nextErr
+				return nil, nil, nextErr
 			}
-			value, readErr := io.ReadAll(io.LimitReader(part, 2<<20))
+			fileName := part.FileName()
+			mimeType := part.Header.Get("Content-Type")
+			value, readErr := io.ReadAll(io.LimitReader(part, (2<<20)+1))
 			part.Close()
 			if readErr != nil {
-				return nil, readErr
+				return nil, nil, readErr
 			}
-			values.Add(part.FormName(), string(value))
+			if len(value) > 2<<20 {
+				return nil, nil, ErrInvalidMessage
+			}
+			if fileName != "" || strings.HasPrefix(strings.ToLower(part.FormName()), "attachment") {
+				attachments = append(attachments, InboundAttachment{Name: fileName, MIMEType: nonEmpty(mimeType, "application/octet-stream"), Body: value})
+			} else {
+				values.Add(part.FormName(), string(value))
+			}
 		}
-		return values, nil
+		return values, attachments, nil
 	default:
+		return nil, nil, ErrInvalidMessage
+	}
+}
+
+func decodeAttachment(value string) ([]byte, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		decoded, err = base64.RawStdEncoding.DecodeString(value)
+	}
+	if err != nil || len(decoded) > 2<<20 {
 		return nil, ErrInvalidMessage
 	}
+	return decoded, nil
 }
 
 func inboundFromValues(values url.Values) InboundEmail {

@@ -1,9 +1,11 @@
 package emailchannel
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"mime/multipart"
 	"testing"
 	"time"
 )
@@ -65,6 +67,80 @@ func TestUnmarshalPostmarkInboundPayload(t *testing.T) {
 	}
 	if len(input.To) != 1 || input.To[0] != "support@example.com" || input.From != "Person <person@example.com>" || input.Body != "new reply" || input.InReplyTo != "<old@example.com>" || len(input.References) != 2 {
 		t.Fatalf("unexpected Postmark payload: %+v", input)
+	}
+}
+
+func TestUnmarshalJSONInboundAttachments(t *testing.T) {
+	input, err := UnmarshalProviderPayloadFor("postmark", "application/json", []byte(`{
+		"to":["support@example.com"],
+		"from":"person@example.com",
+		"text":"see attached",
+		"Attachments":[{"Name":"log.txt","ContentType":"text/plain","Content":"aGVsbG8="}]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(input.Attachments) != 1 || input.Attachments[0].Name != "log.txt" || input.Attachments[0].MIMEType != "text/plain" || string(input.Attachments[0].Body) != "hello" {
+		t.Fatalf("unexpected JSON attachment: %+v", input.Attachments)
+	}
+}
+
+func TestUnmarshalMultipartInboundAttachment(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("recipient", "support@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteField("sender", "person@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("attachment-1", "log.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	input, err := UnmarshalProviderPayloadFor("mailgun", writer.FormDataContentType(), body.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(input.Attachments) != 1 || input.Attachments[0].Name != "log.txt" || string(input.Attachments[0].Body) != "hello" {
+		t.Fatalf("unexpected multipart attachment: %+v", input.Attachments)
+	}
+}
+
+func TestParseIMAPMessageExtractsThreadingAndAttachment(t *testing.T) {
+	raw := []byte("From: Person <person@example.com>\r\n" +
+		"To: support@example.com\r\n" +
+		"Subject: Re: Help\r\n" +
+		"Message-ID: <incoming-2@example.com>\r\n" +
+		"In-Reply-To: <outgoing-1@example.com>\r\n" +
+		"References: <root@example.com> <outgoing-1@example.com>\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=hubchat-test\r\n\r\n" +
+		"--hubchat-test\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n\r\n" +
+		"new reply\r\n" +
+		"--hubchat-test\r\n" +
+		"Content-Type: text/plain\r\n" +
+		"Content-Disposition: attachment; filename=log.txt\r\n" +
+		"Content-Transfer-Encoding: base64\r\n\r\n" +
+		"aGVsbG8=\r\n" +
+		"--hubchat-test--\r\n")
+	input, err := parseIMAPMessage(raw, "support@example.com", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if input.From != "person@example.com" || input.MessageID != "<incoming-2@example.com>" || input.InReplyTo != "<outgoing-1@example.com>" || input.Body != "new reply" {
+		t.Fatalf("unexpected IMAP message: %+v", input)
+	}
+	if len(input.References) != 2 || len(input.Attachments) != 1 || string(input.Attachments[0].Body) != "hello" {
+		t.Fatalf("unexpected IMAP threading or attachment data: %+v", input)
 	}
 }
 
