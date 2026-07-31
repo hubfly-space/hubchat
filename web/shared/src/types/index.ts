@@ -1009,17 +1009,22 @@ export type WebhookEndpoint = {
   auto_disabled_at: Timestamp | null;
   success_24h: number;
   failure_24h: number;
+  consecutive_failures?: number;
+  created_by?: Id | null;
   created_at: Timestamp;
+  updated_at?: Timestamp;
 };
 
 export type WebhookDelivery = {
   id: Id;
   endpoint_id: Id;
-  event_id: Id;
+  event_id: Id | null;
   event_type: string;
-  status: "pending" | "succeeded" | "failed" | "dead";
+  status: "pending" | "delivered" | "failed" | "exhausted" | "cancelled" | "succeeded" | "dead";
   attempt: number;
+  max_attempts?: number;
   response_status: number | null;
+  response_body?: string;
   duration_ms: number | null;
   error: string | null;
   next_attempt_at: Timestamp | null;
