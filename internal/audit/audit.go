@@ -61,6 +61,8 @@ const (
 	WidgetUpdated Action = "widget.updated"
 	PortalUpdated Action = "portal.updated"
 	RuleChanged   Action = "automation_rule.changed"
+	FeedbackLinked Action = "feedback.linked"
+	FeedbackMerged Action = "feedback.merged"
 
 	ConversationDeleted Action = "conversation.deleted"
 	MessageRedacted     Action = "message.redacted"

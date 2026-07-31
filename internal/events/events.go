@@ -77,6 +77,8 @@ const (
 
 	FeedbackCreated       Type = "feedback.created"
 	FeedbackStatusChanged Type = "feedback.status_changed"
+	FeedbackLinked        Type = "feedback.linked"
+	FeedbackMerged        Type = "feedback.merged"
 	ChangelogPublished    Type = "changelog.published"
 	SurveyResponseCreated Type = "survey.response_created"
 

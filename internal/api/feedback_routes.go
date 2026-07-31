@@ -20,6 +20,10 @@ func registerFeedbackRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/feedback/items/{id}", requireCapability(deps, authorization.FeedbackModerate, handleGetFeedbackItem(deps)))
 	mux.HandleFunc("GET /v1/feedback/roadmap", requireCapability(deps, authorization.FeedbackModerate, handleListFeedbackRoadmap(deps)))
 	mux.HandleFunc("GET /v1/feedback/items/{id}/comments", requireCapability(deps, authorization.FeedbackModerate, handleListFeedbackComments(deps)))
+	mux.HandleFunc("GET /v1/feedback/items/{id}/links", requireCapability(deps, authorization.FeedbackModerate, handleListFeedbackLinks(deps)))
+	mux.HandleFunc("POST /v1/feedback/items/{id}/links", requireCapability(deps, authorization.FeedbackModerate, Idempotency(deps)(handleAddFeedbackLink(deps))))
+	mux.HandleFunc("DELETE /v1/feedback/items/{id}/links/{linkID}", requireCapability(deps, authorization.FeedbackModerate, idempotent(handleRemoveFeedbackLink(deps))))
+	mux.HandleFunc("POST /v1/feedback/items/{id}/merge", requireCapability(deps, authorization.FeedbackModerate, Idempotency(deps)(handleMergeFeedbackItem(deps))))
 	mux.HandleFunc("PATCH /v1/feedback/items/{id}/status", requireCapability(deps, authorization.FeedbackModerate, idempotent(handleSetFeedbackStatus(deps))))
 	mux.HandleFunc("POST /v1/feedback/items/{id}/votes", requireCapability(deps, authorization.FeedbackModerate, idempotent(handleVoteFeedbackItem(deps))))
 	mux.HandleFunc("POST /v1/feedback/items/{id}/comments", requireCapability(deps, authorization.FeedbackModerate, idempotent(handleAddFeedbackComment(deps))))
@@ -162,6 +166,61 @@ func handleListFeedbackComments(deps Deps) http.HandlerFunc {
 			return
 		}
 		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": comments})
+	}
+}
+func handleListFeedbackLinks(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		links, err := deps.Feedback.ListLinks(r.Context(), actor.WorkspaceID, r.PathValue("id"))
+		if err != nil {
+			writeFeedbackError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": links})
+	}
+}
+func handleAddFeedbackLink(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input feedback.LinkInput
+		if err := httpserver.DecodeJSON(r, &input); err != nil {
+			writeFeedbackValidation(w, r, err)
+			return
+		}
+		actor := actorFromRequest(r)
+		link, err := deps.Feedback.AddLink(r.Context(), actor.WorkspaceID, r.PathValue("id"), actor.MemberID, input)
+		if err != nil {
+			writeFeedbackError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, link)
+	}
+}
+func handleRemoveFeedbackLink(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		if err := deps.Feedback.RemoveLink(r.Context(), actor.WorkspaceID, r.PathValue("id"), r.PathValue("linkID")); err != nil {
+			writeFeedbackError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+func handleMergeFeedbackItem(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			TargetID string `json:"target_id"`
+		}
+		if err := httpserver.DecodeJSON(r, &input); err != nil || input.TargetID == "" {
+			writeFeedbackValidation(w, r, errors.New("target_id is required"))
+			return
+		}
+		actor := actorFromRequest(r)
+		item, err := deps.Feedback.MergeItems(r.Context(), actor.WorkspaceID, r.PathValue("id"), input.TargetID, actor.MemberID)
+		if err != nil {
+			writeFeedbackError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, item)
 	}
 }
 func handleSetFeedbackStatus(deps Deps) http.HandlerFunc {
@@ -320,7 +379,7 @@ func writeFeedbackError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, feedback.ErrNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Feedback resource not found.")
-	case errors.Is(err, feedback.ErrInvalidName), errors.Is(err, feedback.ErrInvalidSlug), errors.Is(err, feedback.ErrInvalidStatus), errors.Is(err, feedback.ErrInvalidType), errors.Is(err, feedback.ErrInvalidComment):
+	case errors.Is(err, feedback.ErrInvalidName), errors.Is(err, feedback.ErrInvalidSlug), errors.Is(err, feedback.ErrInvalidStatus), errors.Is(err, feedback.ErrInvalidType), errors.Is(err, feedback.ErrInvalidComment), errors.Is(err, feedback.ErrInvalidLink), errors.Is(err, feedback.ErrInvalidMerge):
 		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, err.Error())
 	case errors.Is(err, feedback.ErrAlreadyVoted), errors.Is(err, feedback.ErrVoteLimit):
 		httpserver.WriteError(w, r, http.StatusConflict, httpserver.CodeConflict, err.Error())

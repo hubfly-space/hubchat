@@ -31,6 +31,7 @@ var (
 	ErrCommentsDisabled = errors.New("feedback: comments are disabled")
 	ErrInvalidComment   = errors.New("feedback: comment must not be empty")
 	ErrInvalidMerge     = errors.New("feedback: items cannot be merged into themselves")
+	ErrInvalidLink      = errors.New("feedback: exactly one valid support target is required")
 )
 
 var statuses = map[string]bool{"open": true, "reviewing": true, "planned": true, "in_progress": true, "completed": true, "declined": true, "held": true}
@@ -77,6 +78,8 @@ type Item struct {
 	ViewerHasVoted   bool      `json:"viewer_has_voted"`
 	ViewerSubscribed bool      `json:"viewer_subscribed"`
 	MergedIntoID     *string   `json:"merged_into_id,omitempty"`
+	LinkedConversationIDs []string `json:"linked_conversation_ids"`
+	LinkedTicketIDs       []string `json:"linked_ticket_ids"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
 }
@@ -111,6 +114,20 @@ type ItemInput struct {
 	CompanyID   string `json:"company_id"`
 	ProductArea string `json:"product_area"`
 	Priority    string `json:"priority"`
+}
+
+type Link struct {
+	ID             string    `json:"id"`
+	WorkspaceID    string    `json:"workspace_id"`
+	ItemID         string    `json:"item_id"`
+	ConversationID *string   `json:"conversation_id,omitempty"`
+	TicketID       *string   `json:"ticket_id,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type LinkInput struct {
+	ConversationID string `json:"conversation_id"`
+	TicketID       string `json:"ticket_id"`
 }
 
 func New(pool *database.Pool, eventLog *events.Log, auditLog *audit.Log) *Service {
@@ -315,7 +332,254 @@ func (s *Service) GetItem(ctx context.Context, workspaceID, id, customerID strin
 	if len(items) == 0 {
 		return nil, ErrNotFound
 	}
+	if err := s.loadLinks(ctx, workspaceID, items[0]); err != nil {
+		return nil, err
+	}
 	return &items[0], nil
+}
+
+// ListLinks returns the support records connected to a feedback item. Both
+// the item and targets are workspace-scoped, so a leaked id cannot disclose
+// another tenant's support work.
+func (s *Service) ListLinks(ctx context.Context, workspaceID, itemID string) ([]Link, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, workspace_id, item_id, conversation_id, ticket_id, created_at
+		FROM feedback_links
+		WHERE workspace_id=$1 AND item_id=$2
+		ORDER BY created_at ASC, id ASC
+	`, workspaceID, itemID)
+	if err != nil {
+		return nil, fmt.Errorf("feedback: list links: %w", err)
+	}
+	defer rows.Close()
+	links := make([]Link, 0)
+	for rows.Next() {
+		var link Link
+		if err := rows.Scan(&link.ID, &link.WorkspaceID, &link.ItemID, &link.ConversationID, &link.TicketID, &link.CreatedAt); err != nil {
+			return nil, err
+		}
+		links = append(links, link)
+	}
+	return links, rows.Err()
+}
+
+// AddLink associates exactly one conversation or ticket with an item. The
+// unique migration makes retries idempotent even when two dashboard tabs
+// submit the same link concurrently.
+func (s *Service) AddLink(ctx context.Context, workspaceID, itemID, memberID string, input LinkInput) (*Link, error) {
+	conversationID := strings.TrimSpace(input.ConversationID)
+	ticketID := strings.TrimSpace(input.TicketID)
+	if (conversationID == "") == (ticketID == "") {
+		return nil, ErrInvalidLink
+	}
+	var link Link
+	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM feedback_items WHERE workspace_id=$1 AND id=$2)`, workspaceID, itemID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return ErrNotFound
+		}
+		targetID := conversationID
+		targetTable := "conversations"
+		if ticketID != "" {
+			targetID = ticketID
+			targetTable = "tickets"
+		}
+		var targetExists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+targetTable+` WHERE workspace_id=$1 AND id=$2)`, workspaceID, targetID).Scan(&targetExists); err != nil {
+			return err
+		}
+		if !targetExists {
+			return ErrInvalidLink
+		}
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO feedback_links(id,workspace_id,item_id,conversation_id,ticket_id)
+			VALUES($1,$2,$3,NULLIF($4,''),NULLIF($5,''))
+			ON CONFLICT DO NOTHING
+			RETURNING id,workspace_id,item_id,conversation_id,ticket_id,created_at
+		`, ids.New(ids.PrefixFeedbackLink), workspaceID, itemID, conversationID, ticketID).Scan(
+			&link.ID, &link.WorkspaceID, &link.ItemID, &link.ConversationID, &link.TicketID, &link.CreatedAt,
+		); errors.Is(err, pgx.ErrNoRows) {
+			err = tx.QueryRow(ctx, `
+				SELECT id,workspace_id,item_id,conversation_id,ticket_id,created_at
+				FROM feedback_links
+				WHERE workspace_id=$1 AND item_id=$2
+				  AND coalesce(conversation_id,'')= $3 AND coalesce(ticket_id,'')=$4
+			`, workspaceID, itemID, conversationID, ticketID).Scan(
+				&link.ID, &link.WorkspaceID, &link.ItemID, &link.ConversationID, &link.TicketID, &link.CreatedAt,
+			)
+		}
+		if err != nil {
+			return err
+		}
+		if s.audit != nil {
+			if err := audit.RecordTx(ctx, tx, audit.Entry{WorkspaceID: workspaceID, ActorType: audit.ActorUser, ActorID: memberID, Action: audit.FeedbackLinked, EntityType: "feedback_item", EntityID: itemID, Metadata: map[string]any{"conversation_id": conversationID, "ticket_id": ticketID}}); err != nil {
+				return err
+			}
+		}
+		if s.events != nil {
+			if _, err := s.events.Append(ctx, tx, events.Event{WorkspaceID: workspaceID, Type: events.FeedbackLinked, EntityType: "feedback_item", EntityID: itemID, ActorType: events.ActorUser, ActorID: memberID, Data: map[string]any{"conversation_id": conversationID, "ticket_id": ticketID}}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &link, nil
+}
+
+func (s *Service) RemoveLink(ctx context.Context, workspaceID, itemID, linkID string) error {
+	result, err := s.pool.Exec(ctx, `DELETE FROM feedback_links WHERE workspace_id=$1 AND item_id=$2 AND id=$3`, workspaceID, itemID, linkID)
+	if err != nil {
+		return fmt.Errorf("feedback: remove link: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// MergeItems folds duplicate votes, comments, subscribers, links, and status
+// history into targetID, then leaves sourceID as a durable redirect. The
+// entire operation is transactional so public counters never describe a
+// partially merged item.
+func (s *Service) MergeItems(ctx context.Context, workspaceID, sourceID, targetID, memberID string) (*Item, error) {
+	if strings.TrimSpace(sourceID) == "" || sourceID == targetID {
+		return nil, ErrInvalidMerge
+	}
+	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		type row struct {
+			id, status string
+			mergedInto *string
+		}
+		rows, err := tx.Query(ctx, `
+			SELECT id,status,merged_into_id
+			FROM feedback_items
+			WHERE workspace_id=$1 AND id=ANY($2::text[])
+			ORDER BY id
+			FOR UPDATE
+		`, workspaceID, []string{sourceID, targetID})
+		if err != nil {
+			return err
+		}
+		items := make(map[string]row, 2)
+		for rows.Next() {
+			var item row
+			if err := rows.Scan(&item.id, &item.status, &item.mergedInto); err != nil {
+				rows.Close()
+				return err
+			}
+			items[item.id] = item
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		source, sourceOK := items[sourceID]
+		target, targetOK := items[targetID]
+		if !sourceOK || !targetOK || source.mergedInto != nil || target.mergedInto != nil {
+			return ErrInvalidMerge
+		}
+
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO feedback_votes(item_id,customer_id,workspace_id,weight)
+			SELECT $2,customer_id,workspace_id,weight FROM feedback_votes WHERE item_id=$1
+			ON CONFLICT (item_id,customer_id) DO UPDATE SET weight=GREATEST(feedback_votes.weight,EXCLUDED.weight)
+		`, sourceID, targetID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM feedback_votes WHERE item_id=$1`, sourceID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE feedback_comments SET item_id=$2 WHERE workspace_id=$1 AND item_id=$3`, workspaceID, targetID, sourceID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO feedback_subscriptions(item_id,customer_id)
+			SELECT $2,customer_id FROM feedback_subscriptions WHERE item_id=$1
+			ON CONFLICT DO NOTHING
+		`, sourceID, targetID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM feedback_subscriptions WHERE item_id=$1`, sourceID); err != nil {
+			return err
+		}
+
+		linkRows, err := tx.Query(ctx, `SELECT conversation_id,ticket_id FROM feedback_links WHERE workspace_id=$1 AND item_id=$2`, workspaceID, sourceID)
+		if err != nil {
+			return err
+		}
+		type linkTarget struct{ conversationID, ticketID *string }
+		linkTargets := make([]linkTarget, 0)
+		for linkRows.Next() {
+			var link linkTarget
+			if err := linkRows.Scan(&link.conversationID, &link.ticketID); err != nil {
+				linkRows.Close()
+				return err
+			}
+			linkTargets = append(linkTargets, link)
+		}
+		if err := linkRows.Err(); err != nil {
+			linkRows.Close()
+			return err
+		}
+		linkRows.Close()
+		for _, link := range linkTargets {
+			if _, err := tx.Exec(ctx, `INSERT INTO feedback_links(id,workspace_id,item_id,conversation_id,ticket_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, ids.New(ids.PrefixFeedbackLink), workspaceID, targetID, link.conversationID, link.ticketID); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM feedback_links WHERE workspace_id=$1 AND item_id=$2`, workspaceID, sourceID); err != nil {
+			return err
+		}
+
+		if _, err := tx.Exec(ctx, `
+			UPDATE feedback_items SET
+				vote_count=(SELECT count(*) FROM feedback_votes WHERE item_id=$1),
+				comment_count=(SELECT count(*) FROM feedback_comments WHERE workspace_id=$2 AND item_id=$1 AND hidden_at IS NULL),
+				subscriber_count=(SELECT count(*) FROM feedback_subscriptions WHERE item_id=$1),
+				updated_at=now()
+			WHERE workspace_id=$2 AND id=$1
+		`, targetID, workspaceID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE feedback_items SET merged_into_id=$3,status='declined',vote_count=0,comment_count=0,subscriber_count=0,updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, sourceID, targetID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO feedback_status_history(id,item_id,from_status,to_status,note,actor_id) VALUES($1,$2,$3,'declined',$4,NULLIF($5,''))`, ids.New(ids.PrefixStatusHistory), sourceID, source.status, "Merged into "+targetID, memberID); err != nil {
+			return err
+		}
+		if s.audit != nil {
+			if err := audit.RecordTx(ctx, tx, audit.Entry{WorkspaceID: workspaceID, ActorType: audit.ActorUser, ActorID: memberID, Action: audit.FeedbackMerged, EntityType: "feedback_item", EntityID: sourceID, Metadata: map[string]any{"target_id": targetID}}); err != nil {
+				return err
+			}
+		}
+		if s.events != nil {
+			if _, err := s.events.Append(ctx, tx, events.Event{WorkspaceID: workspaceID, Type: events.FeedbackMerged, EntityType: "feedback_item", EntityID: sourceID, ActorType: events.ActorUser, ActorID: memberID, Data: map[string]any{"target_id": targetID}}); err != nil {
+				return err
+			}
+		}
+		_ = target
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.GetItem(ctx, workspaceID, targetID, "")
+}
+
+func (s *Service) loadLinks(ctx context.Context, workspaceID string, item *Item) error {
+	return s.pool.QueryRow(ctx, `
+		SELECT
+			coalesce(array_agg(conversation_id ORDER BY id) FILTER (WHERE conversation_id IS NOT NULL), '{}'::text[]),
+			coalesce(array_agg(ticket_id ORDER BY id) FILTER (WHERE ticket_id IS NOT NULL), '{}'::text[])
+		FROM feedback_links WHERE workspace_id=$1 AND item_id=$2
+	`, workspaceID, item.ID).Scan(&item.LinkedConversationIDs, &item.LinkedTicketIDs)
 }
 
 // Subscribe follows a public feedback item for the authenticated customer.

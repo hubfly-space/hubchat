@@ -754,6 +754,15 @@ export type FeedbackItem = {
   updated_at: Timestamp;
 };
 
+export type FeedbackLink = {
+  id: Id;
+  workspace_id: Id;
+  item_id: Id;
+  conversation_id: Id | null;
+  ticket_id: Id | null;
+  created_at: Timestamp;
+};
+
 export type FeedbackComment = {
   id: Id;
   item_id: Id;
