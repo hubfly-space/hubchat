@@ -9,14 +9,17 @@ import {
   Page,
   PageBody,
   PageHeader,
+  Pagination,
   Section,
   Tabs,
   TabsContent,
   TabsList,
   api,
   idempotencyKey,
+  useInfinite,
   useMutation,
   useQuery,
+  type Paginated,
 } from "@hubchat/shared";
 import { Download, FileArchive, RefreshCw, Upload } from "lucide-react";
 import { useRef, useState } from "react";
@@ -47,6 +50,18 @@ type ImportRequest = {
 };
 
 type PreviewSummary = { name: string; rows: number; existing?: number; new?: number };
+type ExportManifest = {
+  export_id: string;
+  file_id: string;
+  file_name: string;
+  size_bytes: number;
+  checksum: string;
+  expires_at?: string;
+  row_count: number;
+  attachment_count: number;
+  attachment_bytes: number;
+  tables: Array<{ name: string; rows: number }>;
+};
 
 const statusTone = (state: string): "neutral" | "info" | "success" | "warning" | "danger" => {
   if (state === "completed") return "success";
@@ -73,19 +88,31 @@ export default function ImportExport() {
   const [tab, setTab] = useState("export");
   const [downloadError, setDownloadError] = useState("");
   const [previewRows, setPreviewRows] = useState<PreviewSummary[] | null>(null);
+  const [manifestID, setManifestID] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const { workspace } = useWorkspace();
   const workspaceId = workspace.id;
 
-  const exportsQuery = useQuery<{ data: ExportRequest[] }>(
+  const exportsQuery = useInfinite<ExportRequest>(
     ["portability-exports", workspaceId],
-    (signal) => api.get("/portability/exports", { signal, workspaceId }),
-    { staleTime: 5_000 },
+    (cursor, signal) => {
+      const params = new URLSearchParams({ limit: "50" });
+      if (cursor) params.set("cursor", cursor);
+      return api.get<Paginated<ExportRequest>>(`/portability/exports?${params.toString()}`, { signal, workspaceId });
+    },
   );
-  const importsQuery = useQuery<{ data: ImportRequest[] }>(
+  const importsQuery = useInfinite<ImportRequest>(
     ["portability-imports", workspaceId],
-    (signal) => api.get("/portability/imports", { signal, workspaceId }),
-    { staleTime: 5_000 },
+    (cursor, signal) => {
+      const params = new URLSearchParams({ limit: "50" });
+      if (cursor) params.set("cursor", cursor);
+      return api.get<Paginated<ImportRequest>>(`/portability/imports?${params.toString()}`, { signal, workspaceId });
+    },
+  );
+  const manifestQuery = useQuery<ExportManifest>(
+    ["portability-manifest", workspaceId, manifestID],
+    (signal) => api.get(`/portability/exports/${encodeURIComponent(manifestID ?? "")}/manifest`, { signal, workspaceId }),
+    { enabled: Boolean(manifestID) },
   );
 
   const startExport = useMutation<void, ExportRequest>(
@@ -124,8 +151,8 @@ export default function ImportExport() {
     (id) => api.post(`/portability/imports/${encodeURIComponent(id)}/preview`, undefined, { workspaceId }),
   );
 
-  const exportRows = exportsQuery.data?.data ?? [];
-  const importRows = importsQuery.data?.data ?? [];
+  const exportRows = exportsQuery.items;
+  const importRows = importsQuery.items;
   const activeExports = exportRows.filter((item) => item.state === "pending" || item.state === "running");
   const uploadError = createImport.error;
 
@@ -170,10 +197,12 @@ export default function ImportExport() {
             <Section title="Export history">
               <Card>
                 <CardBody className="p-0">
-                  {exportRows.length === 0 && !exportsQuery.isLoading ? <p className="px-4 py-6 text-sm text-fg-muted">Completed archives will appear here.</p> : <ul className="divide-y divide-line-subtle">{exportRows.map((item) => <li key={item.id} className="flex items-center gap-3 px-4 py-3"><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate font-mono text-xs text-fg">{item.id}</span><Badge tone={statusTone(item.state)}>{statusLabel(item.state)}</Badge></div><p className="mt-1 text-xs text-fg-muted">{item.row_count === undefined ? "Rows pending" : `${item.row_count.toLocaleString()} rows`} · created {displayDate(item.created_at)}{item.expires_at ? ` · expires ${displayDate(item.expires_at)}` : ""}</p>{item.error && <p className="mt-1 text-xs text-danger">{item.error}</p>}</div>{item.file_id && item.state === "completed" && <Button variant="ghost" size="sm" onClick={() => void downloadExport(item.file_id ?? "")}>Download</Button>}</li>)}</ul>}
+                  {exportRows.length === 0 && !exportsQuery.isLoading ? <p className="px-4 py-6 text-sm text-fg-muted">Completed archives will appear here.</p> : <ul className="divide-y divide-line-subtle">{exportRows.map((item) => <li key={item.id} className="flex items-center gap-3 px-4 py-3"><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate font-mono text-xs text-fg">{item.id}</span><Badge tone={statusTone(item.state)}>{statusLabel(item.state)}</Badge></div><p className="mt-1 text-xs text-fg-muted">{item.row_count === undefined ? "Rows pending" : `${item.row_count.toLocaleString()} rows`} · created {displayDate(item.created_at)}{item.expires_at ? ` · expires ${displayDate(item.expires_at)}` : ""}</p>{item.error && <p className="mt-1 text-xs text-danger">{item.error}</p>}</div>{item.file_id && item.state === "completed" && <div className="flex shrink-0 gap-1"><Button variant="ghost" size="sm" onClick={() => setManifestID(item.id)}>Manifest</Button><Button variant="ghost" size="sm" onClick={() => void downloadExport(item.file_id ?? "")}>Download</Button></div>}</li>)}</ul>}
                 </CardBody>
               </Card>
+              <Pagination hasPrevious={false} hasNext={exportsQuery.hasMore} onPrevious={() => undefined} onNext={() => void exportsQuery.fetchNext()} summary={`${exportRows.length} export${exportRows.length === 1 ? "" : "s"} loaded`} />
               {downloadError && <p className="mt-2 text-sm text-danger">{downloadError}</p>}
+              {manifestID && <Card className="mt-3"><CardBody>{manifestQuery.isLoading ? <p className="text-sm text-fg-muted">Loading archive manifest…</p> : manifestQuery.error ? <div className="space-y-2"><p className="text-sm text-danger">Could not load the archive manifest.</p><Button variant="secondary" size="sm" onClick={manifestQuery.refetch}>Retry</Button></div> : manifestQuery.data && <><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-medium text-fg">Archive manifest</p><p className="mt-1 text-xs text-fg-muted">{manifestQuery.data.file_name} · {manifestQuery.data.size_bytes.toLocaleString()} bytes · expires {displayDate(manifestQuery.data.expires_at)}</p></div><Button variant="ghost" size="sm" onClick={() => setManifestID(null)}>Dismiss</Button></div><dl className="mt-3 grid gap-3 text-xs sm:grid-cols-3"><div><dt className="text-fg-muted">Rows</dt><dd className="mt-0.5 tabular text-fg">{manifestQuery.data.row_count.toLocaleString()}</dd></div><div><dt className="text-fg-muted">Attachments</dt><dd className="mt-0.5 tabular text-fg">{manifestQuery.data.attachment_count.toLocaleString()} · {manifestQuery.data.attachment_bytes.toLocaleString()} bytes</dd></div><div><dt className="text-fg-muted">SHA-256</dt><dd className="mt-0.5 break-all font-mono text-2xs text-fg-secondary">{manifestQuery.data.checksum || "Not recorded"}</dd></div></dl><div className="mt-3 max-h-48 overflow-auto rounded-md border border-line"><table className="w-full text-left text-xs"><thead className="border-b border-line bg-inset text-fg-muted"><tr><th className="px-3 py-2 font-medium">Table</th><th className="px-3 py-2 text-right font-medium">Rows</th></tr></thead><tbody className="divide-y divide-line-subtle">{manifestQuery.data.tables.filter((table) => table.rows > 0).map((table) => <tr key={table.name}><td className="px-3 py-2 font-mono text-fg-secondary">{table.name}</td><td className="px-3 py-2 text-right tabular text-fg-secondary">{table.rows.toLocaleString()}</td></tr>)}</tbody></table></div></>}</CardBody></Card>}
             </Section>
 
             <Section title="From the command line">
@@ -190,6 +219,7 @@ export default function ImportExport() {
             </Section>
             <Section title="Import history">
               <Card><CardBody className="p-0">{importsQuery.isLoading ? <p className="px-4 py-6 text-sm text-fg-muted">Loading import jobs…</p> : importsQuery.error ? <div className="space-y-2 px-4 py-6"><p className="text-sm text-danger">Could not load import jobs.</p><Button variant="secondary" size="sm" leading={<RefreshCw />} onClick={importsQuery.refetch}>Retry</Button></div> : importRows.length === 0 ? <p className="px-4 py-6 text-sm text-fg-muted">Uploaded archives will appear here.</p> : <ul className="divide-y divide-line-subtle">{importRows.map((item) => <li key={item.id} className="flex items-center gap-3 px-4 py-3"><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate font-mono text-xs text-fg">{item.id}</span><Badge tone={statusTone(item.state)}>{statusLabel(item.state)}</Badge></div><p className="mt-1 text-xs text-fg-muted">{item.processed_rows.toLocaleString()} processed · {item.failed_rows.toLocaleString()} failed · created {displayDate(item.created_at)}</p></div>{item.state === "pending" && <Button variant="ghost" size="sm" loading={preview.isPending} onClick={() => void preview.mutate(item.id).then((result) => setPreviewRows(result.data)).catch(() => {})}>Preview</Button>}</li>)}</ul>}</CardBody></Card>
+              <Pagination hasPrevious={false} hasNext={importsQuery.hasMore} onPrevious={() => undefined} onNext={() => void importsQuery.fetchNext()} summary={`${importRows.length} import${importRows.length === 1 ? "" : "s"} loaded`} />
               {Boolean(preview.error) && <p className="mt-2 text-sm text-danger">{errorMessage(preview.error, "The archive preview failed.")}</p>}
               {previewRows && <Card className="mt-3"><CardBody><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-medium text-fg">Preview result</p><p className="mt-1 text-xs text-fg-muted">Existing rows will be skipped by the idempotent importer. New rows are candidates for insertion.</p></div><Button variant="ghost" size="sm" onClick={() => setPreviewRows(null)}>Dismiss</Button></div><div className="mt-3 max-h-64 overflow-auto rounded-md border border-line"><table className="w-full text-left text-xs"><thead className="border-b border-line bg-inset text-fg-muted"><tr><th className="px-3 py-2 font-medium">Table</th><th className="px-3 py-2 text-right font-medium">Rows</th><th className="px-3 py-2 text-right font-medium">Existing</th><th className="px-3 py-2 text-right font-medium">New</th></tr></thead><tbody className="divide-y divide-line-subtle">{previewRows.filter((summary) => summary.rows > 0).map((summary) => <tr key={summary.name}><td className="px-3 py-2 font-mono text-fg-secondary">{summary.name}</td><td className="px-3 py-2 text-right tabular text-fg-secondary">{summary.rows.toLocaleString()}</td><td className="px-3 py-2 text-right tabular text-warning-text">{(summary.existing ?? 0).toLocaleString()}</td><td className="px-3 py-2 text-right tabular text-success-text">{(summary.new ?? summary.rows).toLocaleString()}</td></tr>)}</tbody></table></div></CardBody></Card>}
             </Section>

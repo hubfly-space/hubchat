@@ -15,14 +15,15 @@ import {
   Page,
   PageBody,
   PageHeader,
-  QueryBoundary,
+  Pagination,
   Section,
   Switch,
   formatCompact,
   idempotencyKey,
   api,
   useMutation,
-  useQuery,
+  useInfinite,
+  type Paginated,
   type WebhookEndpoint,
 } from "@hubchat/shared";
 import { AlertTriangle, Plus, Webhook } from "lucide-react";
@@ -36,26 +37,32 @@ const EVENTS = [
 ];
 
 export default function WebhookList() {
-  const query = useQuery<{ data: WebhookEndpoint[] }>(["webhooks"], (signal) => api.get("/webhooks", { signal }));
+  const query = useInfinite<WebhookEndpoint>(
+    ["webhooks"],
+    (cursor, signal) => {
+      const params = new URLSearchParams({ limit: "50" });
+      if (cursor) params.set("cursor", cursor);
+      return api.get<Paginated<WebhookEndpoint>>(`/webhooks?${params.toString()}`, { signal });
+    },
+  );
   const update = useMutation<{ id: string; enabled: boolean }, WebhookEndpoint>(
-    ({ id, enabled }) => { const endpoint = query.data?.data.find((item) => item.id === id); return api.patch(`/webhooks/${id}`, { url: endpoint?.url, description: endpoint?.description ?? "", events: endpoint?.events ?? [], enabled }); },
+    ({ id, enabled }) => { const endpoint = query.items.find((item) => item.id === id); return api.patch(`/webhooks/${id}`, { url: endpoint?.url, description: endpoint?.description ?? "", events: endpoint?.events ?? [], enabled }); },
     { invalidates: [["webhooks"]] },
   );
-  const disabled = (query.data?.data ?? []).filter((endpoint) => endpoint.auto_disabled_at);
+  const disabled = query.items.filter((endpoint) => endpoint.auto_disabled_at);
 
   return (
     <Page>
       <PageHeader title="Webhooks" description="Signed, timestamped HTTP callbacks with retry, replay, and delivery history." actions={<CreateWebhook />} />
       <PageBody>
-        <QueryBoundary query={query}>
-          {() => (
+        {query.isLoading ? <p className="text-sm text-fg-muted">Loading webhook endpoints…</p> : query.error ? <EmptyState icon={Webhook} title="Webhooks unavailable" description={query.error instanceof ApiError ? query.error.message : "Could not load webhooks."} action={<Button variant="secondary" onClick={query.refetch}>Try again</Button>} /> : (
             <>
               {disabled.length > 0 && <Callout tone="danger" className="mb-5" icon={<AlertTriangle />} title={`${disabled.length} endpoint disabled automatically`}>
                 Hubchat paused delivery after six consecutive failures. Fix the receiving service, re-enable the endpoint, then replay the failed deliveries.
               </Callout>}
               <Section>
-                {(query.data?.data ?? []).length === 0 ? <EmptyState icon={Webhook} title="No webhook endpoints" description="Webhooks tell your systems when something happens in Hubchat." /> : <div className="space-y-3">
-                  {(query.data?.data ?? []).map((endpoint) => {
+                {query.items.length === 0 ? <EmptyState icon={Webhook} title="No webhook endpoints" description="Webhooks tell your systems when something happens in Hubchat." /> : <div className="space-y-3">
+                  {query.items.map((endpoint) => {
                     const total = endpoint.success_24h + endpoint.failure_24h;
                     const failureRate = total > 0 ? endpoint.failure_24h / total : 0;
                     return <Card key={endpoint.id}><CardBody><div className="flex flex-wrap items-start gap-4">
@@ -72,10 +79,9 @@ export default function WebhookList() {
                   })}
                 </div>}
               </Section>
-              {query.isError && <p className="mt-3 text-sm text-danger">{query.error instanceof ApiError ? query.error.message : "Could not load webhooks."}</p>}
+              <Pagination hasPrevious={false} hasNext={query.hasMore} onPrevious={() => undefined} onNext={() => void query.fetchNext()} summary={`${query.items.length} endpoint${query.items.length === 1 ? "" : "s"} loaded`} />
             </>
-          )}
-        </QueryBoundary>
+        )}
       </PageBody>
     </Page>
   );
