@@ -86,24 +86,39 @@ func (r *repository) insertDefaultInbox(ctx context.Context, tx pgx.Tx, id, work
 	return err
 }
 
-// Inbox is the subset of the inboxes row exposed today. Full inbox management
-// (§6.1) — creating additional inboxes, editing channels, team access — is
-// internal/inbox's territory once that module has a service layer; this
-// method exists only so a caller can discover the id Bootstrap already
-// created, without reaching into the database directly.
+// Inbox is what the dashboard's opening payload carries for one inbox. Full
+// inbox management (§6.1) — creating additional inboxes, editing channels,
+// team access — is internal/inbox's territory; this method exists only so
+// Bootstrap can serve the Overview's inbox section without a second request.
+// The query mirrors internal/inbox's selectInbox, so the number this payload
+// reports for open volume always matches what the inbox's own list screen
+// shows.
 type Inbox struct {
-	ID        string
-	Name      string
-	Slug      string
-	IsDefault bool
+	ID          string
+	WorkspaceID string
+	Name        string
+	Slug        string
+	Description *string
+	Channels    []string
+	TeamIDs     []string
+	IsDefault   bool
+	SLAPolicyID *string
+	OpenCount   int
+	CreatedAt   time.Time
 }
 
 func (r *repository) listInboxes(ctx context.Context, workspaceID string) ([]Inbox, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, name, slug, is_default
-		FROM inboxes
-		WHERE workspace_id = $1
-		ORDER BY is_default DESC, name ASC
+		SELECT i.id, i.workspace_id, i.name, i.slug::text, i.description, i.channels,
+		       i.is_default, i.sla_policy_id, i.created_at,
+		       coalesce(array_agg(it.team_id) FILTER (WHERE it.team_id IS NOT NULL), '{}'),
+		       (SELECT count(*) FROM conversations c
+		        WHERE c.inbox_id = i.id AND c.state NOT IN ('closed', 'spam'))
+		FROM inboxes i
+		LEFT JOIN inbox_teams it ON it.inbox_id = i.id
+		WHERE i.workspace_id = $1
+		GROUP BY i.id
+		ORDER BY i.is_default DESC, i.name ASC
 	`, workspaceID)
 	if err != nil {
 		return nil, err
@@ -113,7 +128,10 @@ func (r *repository) listInboxes(ctx context.Context, workspaceID string) ([]Inb
 	var out []Inbox
 	for rows.Next() {
 		var i Inbox
-		if err := rows.Scan(&i.ID, &i.Name, &i.Slug, &i.IsDefault); err != nil {
+		if err := rows.Scan(
+			&i.ID, &i.WorkspaceID, &i.Name, &i.Slug, &i.Description, &i.Channels,
+			&i.IsDefault, &i.SLAPolicyID, &i.CreatedAt, &i.TeamIDs, &i.OpenCount,
+		); err != nil {
 			return nil, err
 		}
 		out = append(out, i)
