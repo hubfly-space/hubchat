@@ -40,6 +40,10 @@ type Summary struct {
 	SLAInstances          int64     `json:"sla_instances"`
 	SLAMet                int64     `json:"sla_met"`
 	SLABreached           int64     `json:"sla_breached"`
+	SurveyResponses       int64     `json:"survey_responses"`
+	CSATAverage           *float64  `json:"csat_average,omitempty"`
+	CESAverage            *float64  `json:"ces_average,omitempty"`
+	NPS                   *float64  `json:"nps,omitempty"`
 	From                  time.Time `json:"from"`
 	To                    time.Time `json:"to"`
 	Timezone              string    `json:"timezone"`
@@ -92,6 +96,10 @@ var metricDefinitions = []MetricDefinition{
 	{Metric: "surfaces.widget.impressions", Label: "Widget impressions", Definition: "Widget mounts recorded by the visitor event channel in the selected period."},
 	{Metric: "surfaces.widget.opens", Label: "Widget opens", Definition: "Widget panels opened by visitors in the selected period."},
 	{Metric: "surfaces.widget.articles_viewed", Label: "Widget article views", Definition: "Knowledge-base articles opened inside the widget in the selected period."},
+	{Metric: "surveys.responses", Label: "Survey responses", Definition: "Completed survey responses recorded in the selected period."},
+	{Metric: "surveys.csat", Label: "CSAT", Definition: "Average score from completed CSAT survey responses in the selected period."},
+	{Metric: "surveys.ces", Label: "CES", Definition: "Average score from completed CES survey responses in the selected period."},
+	{Metric: "surveys.nps", Label: "NPS", Definition: "Promoters minus detractors for completed NPS responses in the selected period, on the standard -100 to 100 scale."},
 }
 
 func (s *Service) MetricDefinitions() []MetricDefinition {
@@ -157,6 +165,21 @@ func (s *Service) Summary(ctx context.Context, workspaceID string, from, to time
 		FROM sla_instances WHERE workspace_id=$1 AND COALESCE(satisfied_at, breached_at) >= $2 AND COALESCE(satisfied_at, breached_at) < $3
 	`, workspaceID, from, to).Scan(&result.SLAMet, &result.SLABreached); err != nil {
 		return nil, fmt.Errorf("analytics: sla: %w", err)
+	}
+	if err := s.pool.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (WHERE r.submitted_at IS NOT NULL),
+			avg(r.score) FILTER (WHERE r.submitted_at IS NOT NULL AND s.type='csat'),
+			avg(r.score) FILTER (WHERE r.submitted_at IS NOT NULL AND s.type='ces'),
+			(
+				count(*) FILTER (WHERE r.submitted_at IS NOT NULL AND s.type='nps' AND r.score >= 9) -
+				count(*) FILTER (WHERE r.submitted_at IS NOT NULL AND s.type='nps' AND r.score <= 6)
+			)::double precision * 100 / NULLIF(count(*) FILTER (WHERE r.submitted_at IS NOT NULL AND s.type='nps'), 0)
+		FROM survey_responses r
+		JOIN surveys s ON s.id=r.survey_id AND s.workspace_id=r.workspace_id
+		WHERE r.workspace_id=$1 AND r.submitted_at >= $2 AND r.submitted_at < $3
+	`, workspaceID, from, to).Scan(&result.SurveyResponses, &result.CSATAverage, &result.CESAverage, &result.NPS); err != nil {
+		return nil, fmt.Errorf("analytics: survey aggregates: %w", err)
 	}
 	result.SLAInstances = result.SLAMet + result.SLABreached
 	if result.SLAInstances > 0 {

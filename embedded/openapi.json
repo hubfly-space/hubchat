@@ -1001,6 +1001,120 @@
         ]
       }
     },
+    "/v1/feedback/items/{id}/links": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        }
+      ],
+      "get": {
+        "summary": "List resources",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "listFeedbackLinks",
+        "tags": [
+          "Feedback"
+        ]
+      },
+      "post": {
+        "summary": "Create a resource",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/Json"
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/Json"
+          },
+          "202": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "linkFeedbackSupportWork",
+        "tags": [
+          "Feedback"
+        ]
+      }
+    },
+    "/v1/feedback/items/{id}/links/{linkID}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        },
+        {
+          "$ref": "#/components/parameters/LinkID"
+        }
+      ],
+      "delete": {
+        "summary": "Delete a resource",
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "unlinkFeedbackSupportWork",
+        "tags": [
+          "Feedback"
+        ]
+      }
+    },
+    "/v1/feedback/items/{id}/merge": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        }
+      ],
+      "post": {
+        "summary": "Create a resource",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/Json"
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/Json"
+          },
+          "202": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "mergeFeedbackItem",
+        "tags": [
+          "Feedback"
+        ]
+      }
+    },
     "/v1/public/feedback/{workspaceID}/boards/{slug}/items": {
       "parameters": [
         {
@@ -1059,6 +1173,96 @@
           }
         },
         "operationId": "createPublicFeedbackItem",
+        "security": [],
+        "tags": [
+          "Feedback"
+        ]
+      }
+    },
+    "/v1/public/feedback/{workspaceID}/items/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/Id"
+        }
+      ],
+      "get": {
+        "summary": "Read a published resource",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "getPublicFeedbackItem",
+        "security": [],
+        "tags": [
+          "Feedback"
+        ]
+      }
+    },
+    "/v1/public/feedback/{workspaceID}/items/{id}/comments": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/Id"
+        }
+      ],
+      "get": {
+        "summary": "List published resources",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "listPublicFeedbackComments",
+        "security": [],
+        "tags": [
+          "Feedback"
+        ]
+      },
+      "post": {
+        "summary": "Create or submit a public resource",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/Json"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "201": {
+            "$ref": "#/components/responses/Json"
+          },
+          "202": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "createPublicFeedbackComment",
         "security": [],
         "tags": [
           "Feedback"
@@ -2912,6 +3116,14 @@
     "parameters": {
       "Id": {
         "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/Id"
+        }
+      },
+      "LinkID": {
+        "name": "linkID",
         "in": "path",
         "required": true,
         "schema": {

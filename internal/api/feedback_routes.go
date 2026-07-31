@@ -31,6 +31,9 @@ func registerFeedbackRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/public/feedback/{workspaceID}/boards", handlePublicFeedbackBoards(deps))
 	mux.HandleFunc("GET /v1/public/feedback/{workspaceID}/boards/{slug}/items", handlePublicFeedbackItems(deps))
 	mux.HandleFunc("POST /v1/public/feedback/{workspaceID}/boards/{slug}/items", Idempotency(deps)(handlePublicCreateFeedbackItem(deps)))
+	mux.HandleFunc("GET /v1/public/feedback/{workspaceID}/items/{id}", handlePublicGetFeedbackItem(deps))
+	mux.HandleFunc("GET /v1/public/feedback/{workspaceID}/items/{id}/comments", handlePublicListFeedbackComments(deps))
+	mux.HandleFunc("POST /v1/public/feedback/{workspaceID}/items/{id}/comments", Idempotency(deps)(handlePublicAddFeedbackComment(deps)))
 	mux.HandleFunc("POST /v1/public/feedback/{workspaceID}/items/{id}/votes", Idempotency(deps)(handlePublicVoteFeedbackItem(deps)))
 	mux.HandleFunc("POST /v1/public/feedback/{workspaceID}/items/{id}/subscription", Idempotency(deps)(handlePublicSubscribeFeedbackItem(deps)))
 	mux.HandleFunc("DELETE /v1/public/feedback/{workspaceID}/items/{id}/subscription", Idempotency(deps)(handlePublicUnsubscribeFeedbackItem(deps)))
@@ -325,6 +328,86 @@ func handlePublicCreateFeedbackItem(deps Deps) http.HandlerFunc {
 		}
 		httpserver.WriteJSON(w, http.StatusCreated, item)
 	}
+}
+
+func handlePublicGetFeedbackItem(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		workspaceID := r.PathValue("workspaceID")
+		item, err := publicFeedbackItem(r, deps, workspaceID)
+		if err != nil {
+			writeFeedbackError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, item)
+	}
+}
+
+func handlePublicListFeedbackComments(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		workspaceID := r.PathValue("workspaceID")
+		if _, err := publicFeedbackItem(r, deps, workspaceID); err != nil {
+			writeFeedbackError(w, r, err)
+			return
+		}
+		comments, err := deps.Feedback.ListComments(r.Context(), workspaceID, r.PathValue("id"), 100)
+		if err != nil {
+			writeFeedbackInternal(w, r)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": comments})
+	}
+}
+
+func handlePublicAddFeedbackComment(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		workspaceID := r.PathValue("workspaceID")
+		if _, err := publicFeedbackItem(r, deps, workspaceID); err != nil {
+			writeFeedbackError(w, r, err)
+			return
+		}
+		customerID := portalCustomerForRequest(r, deps, workspaceID)
+		if customerID == "" {
+			writeFeedbackError(w, r, feedback.ErrCustomerRequired)
+			return
+		}
+		customer, err := deps.Customer.Get(r.Context(), workspaceID, customerID)
+		if err != nil {
+			writeFeedbackError(w, r, feedback.ErrCustomerRequired)
+			return
+		}
+		var input struct {
+			Body string `json:"body"`
+		}
+		if err := httpserver.DecodeJSON(r, &input); err != nil {
+			writeFeedbackValidation(w, r, err)
+			return
+		}
+		authorName := ""
+		if customer.Name != nil {
+			authorName = *customer.Name
+		}
+		comment, err := deps.Feedback.AddComment(r.Context(), workspaceID, r.PathValue("id"), "customer", customerID, authorName, input.Body, false)
+		if err != nil {
+			writeFeedbackError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, comment)
+	}
+}
+
+func publicFeedbackItem(r *http.Request, deps Deps, workspaceID string) (*feedback.Item, error) {
+	customerID := portalCustomerForRequest(r, deps, workspaceID)
+	item, err := deps.Feedback.GetItem(r.Context(), workspaceID, r.PathValue("id"), customerID)
+	if err != nil {
+		return nil, err
+	}
+	if item.Visibility != "public" {
+		return nil, feedback.ErrNotFound
+	}
+	if _, err := deps.Feedback.GetBoard(r.Context(), workspaceID, item.BoardID, true); err != nil {
+		return nil, err
+	}
+	return item, nil
 }
 func handlePublicVoteFeedbackItem(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

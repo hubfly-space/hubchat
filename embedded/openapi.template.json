@@ -124,10 +124,32 @@
       "get": { "$ref": "#/components/operations/list", "operationId": "listFeedbackItems", "tags": ["Feedback"] },
       "post": { "$ref": "#/components/operations/create", "operationId": "createFeedbackItem", "tags": ["Feedback"] }
     },
+    "/v1/feedback/items/{id}/links": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/list", "operationId": "listFeedbackLinks", "tags": ["Feedback"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "linkFeedbackSupportWork", "tags": ["Feedback"] }
+    },
+    "/v1/feedback/items/{id}/links/{linkID}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }, { "$ref": "#/components/parameters/LinkID" }],
+      "delete": { "$ref": "#/components/operations/delete", "operationId": "unlinkFeedbackSupportWork", "tags": ["Feedback"] }
+    },
+    "/v1/feedback/items/{id}/merge": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "post": { "$ref": "#/components/operations/create", "operationId": "mergeFeedbackItem", "tags": ["Feedback"] }
+    },
     "/v1/public/feedback/{workspaceID}/boards/{slug}/items": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceID" }, { "$ref": "#/components/parameters/Slug" }],
       "get": { "$ref": "#/components/operations/publicList", "operationId": "listPublicFeedbackItems", "security": [], "tags": ["Feedback"] },
       "post": { "$ref": "#/components/operations/publicCreate", "operationId": "createPublicFeedbackItem", "security": [], "tags": ["Feedback"] }
+    },
+    "/v1/public/feedback/{workspaceID}/items/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceID" }, { "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/publicGet", "operationId": "getPublicFeedbackItem", "security": [], "tags": ["Feedback"] }
+    },
+    "/v1/public/feedback/{workspaceID}/items/{id}/comments": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceID" }, { "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/publicList", "operationId": "listPublicFeedbackComments", "security": [], "tags": ["Feedback"] },
+      "post": { "$ref": "#/components/operations/publicCreate", "operationId": "createPublicFeedbackComment", "security": [], "tags": ["Feedback"] }
     },
     "/v1/public/feedback/{workspaceID}/items/{id}/subscription": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceID" }, { "$ref": "#/components/parameters/Id" }],
@@ -336,6 +358,7 @@
     },
     "parameters": {
       "Id": { "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Id" } },
+      "LinkID": { "name": "linkID", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Id" } },
       "WorkspaceID": { "name": "workspaceID", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Id" } },
       "Slug": { "name": "slug", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$" } },
       "Cursor": { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Opaque cursor returned as next_cursor." },
