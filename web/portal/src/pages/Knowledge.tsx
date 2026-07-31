@@ -15,7 +15,7 @@ export default function Knowledge() {
   const workspaceID = portal?.portal.workspace_id ?? "";
   const articles = useQuery<SearchResponse>(
     ["portal-knowledge", workspaceID, collectionSlug ?? "", query],
-    (signal) => api.get(`/public/knowledge-bases/${encodeURIComponent(workspaceID)}/search?q=${encodeURIComponent(query)}&surface=portal`, { signal }),
+    (signal) => api.get(`/public/knowledge-bases/${encodeURIComponent(workspaceID)}/search?q=${encodeURIComponent(query)}&collection=${encodeURIComponent(collectionSlug ?? "")}&surface=portal`, { signal }),
     { enabled: Boolean(workspaceID) },
   );
   const visible = (articles.data?.data ?? []).map((result) => result.article);

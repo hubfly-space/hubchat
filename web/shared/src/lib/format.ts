@@ -10,6 +10,8 @@
 export type FormatOptions = {
   locale?: string;
   timeZone?: string;
+  minimumFractionDigits?: number;
+  maximumFractionDigits?: number;
 };
 
 const DEFAULT_LOCALE = "en";
@@ -111,7 +113,10 @@ export function formatDuration(seconds: number): string {
 
 /** Thousands separators with tabular figures assumed at the render site. */
 export function formatNumber(value: number, opts: FormatOptions = {}): string {
-  return new Intl.NumberFormat(opts.locale ?? DEFAULT_LOCALE).format(value);
+  return new Intl.NumberFormat(opts.locale ?? DEFAULT_LOCALE, {
+    minimumFractionDigits: opts.minimumFractionDigits,
+    maximumFractionDigits: opts.maximumFractionDigits,
+  }).format(value);
 }
 
 /** Compact counts for badges and metrics: 1_284 → "1.3k". */
