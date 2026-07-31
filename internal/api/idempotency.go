@@ -55,6 +55,17 @@ func Idempotency(deps Deps) func(http.HandlerFunc) http.HandlerFunc {
 			}
 
 			actor := authorization.FromContext(r.Context())
+			if actor == nil && deps.Portal != nil {
+				if token := httpserver.PortalSessionToken(r); token != "" {
+					if session, sessionErr := deps.Portal.Session(r.Context(), token, portalIdentifier(r)); sessionErr == nil {
+						// Idempotency is workspace-scoped bookkeeping. A portal
+						// customer is not an agent actor, so use a minimal synthetic
+						// actor only for the key's tenant lookup.
+						actor = &authorization.Actor{WorkspaceID: session.WorkspaceID, Role: "portal"}
+						r = r.WithContext(authorization.WithActor(r.Context(), actor))
+					}
+				}
+			}
 			if actor == nil {
 				next(w, r)
 				return

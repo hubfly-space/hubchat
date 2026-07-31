@@ -27,6 +27,7 @@ import (
 	"github.com/hubchat/hubchat/internal/httpserver"
 	"github.com/hubchat/hubchat/internal/inbox"
 	"github.com/hubchat/hubchat/internal/jobs"
+	"github.com/hubchat/hubchat/internal/portal"
 	"github.com/hubchat/hubchat/internal/realtime"
 	"github.com/hubchat/hubchat/internal/search"
 	"github.com/hubchat/hubchat/internal/ticket"
@@ -49,6 +50,7 @@ type Deps struct {
 	Ticket       *ticket.Service
 	Widget       *widget.Service
 	File         *file.Service
+	Portal       *portal.Service
 
 	// Hub answers "who is viewing this conversation right now" for the
 	// Conversation DTO's presence field. Read-only from here — writes to
@@ -108,6 +110,8 @@ func New(deps Deps) http.Handler {
 	registerTicketRoutes(mux, deps)
 	registerWidgetRoutes(mux, deps)
 	registerFileRoutes(mux, deps)
+	registerPortalRoutes(mux, deps)
+	registerPortalAdminRoutes(mux, deps)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound,

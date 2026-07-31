@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -15,7 +16,7 @@ import (
 
 func registerFileRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /v1/files",
-		requireCapability(deps, authorization.ConversationReply, handleUploadFile(deps)))
+		Idempotency(deps)(requireCapability(deps, authorization.ConversationReply, handleUploadFile(deps))))
 	mux.HandleFunc("GET /v1/files/{id}",
 		requireActor(deps, handleDownloadFile(deps)))
 }
@@ -72,6 +73,10 @@ func handleDownloadFile(deps Deps) http.HandlerFunc {
 			httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "File not found.")
 			return
 		}
+		if !fileReadableByActor(actor, record) {
+			httpserver.WriteError(w, r, http.StatusForbidden, httpserver.CodeForbidden, "You do not have permission to download this file.")
+			return
+		}
 		defer opened.Close()
 
 		w.Header().Set("Content-Type", record.MIMEType)
@@ -83,6 +88,26 @@ func handleDownloadFile(deps Deps) http.HandlerFunc {
 			// JSON response.
 			return
 		}
+	}
+}
+
+func fileReadableByActor(actor *authorization.Actor, record *file.Record) bool {
+	if actor == nil || record == nil {
+		return false
+	}
+	switch record.OwnerType {
+	case "message", "conversation":
+		return actor.Can(authorization.ConversationRead)
+	case "ticket":
+		return actor.Can(authorization.TicketManage)
+	case "article":
+		return actor.Can(authorization.KnowledgebaseManage)
+	case "form_submission":
+		return actor.Can(authorization.ConversationRead)
+	case "workspace", "":
+		return actor.Can(authorization.WorkspaceManage)
+	default:
+		return false
 	}
 }
 
@@ -108,10 +133,16 @@ func contentDisposition(name string) string {
 func writeFileError(w http.ResponseWriter, r *http.Request, err error) {
 	status := http.StatusBadRequest
 	switch {
-	case err == file.ErrTooLarge:
+	case errors.Is(err, file.ErrTooLarge):
 		status = http.StatusRequestEntityTooLarge
-	case err == file.ErrMimeNotAllowed:
+	case errors.Is(err, file.ErrMimeNotAllowed):
 		status = http.StatusUnsupportedMediaType
+	case errors.Is(err, file.ErrInvalidOwner):
+		status = http.StatusBadRequest
 	}
-	httpserver.WriteError(w, r, status, httpserver.CodeBadRequest, "The file could not be stored.")
+	code := httpserver.CodeBadRequest
+	if status >= 500 {
+		code = httpserver.CodeInternalError
+	}
+	httpserver.WriteError(w, r, status, code, "The file could not be stored.")
 }
