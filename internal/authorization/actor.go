@@ -51,6 +51,7 @@ const (
 	PortalManage        Capability = "portal.manage"
 	KnowledgebaseManage Capability = "knowledgebase.manage"
 	FeedbackModerate    Capability = "feedback.moderate"
+	SurveyManage        Capability = "survey.manage"
 	AutomationManage    Capability = "automation.manage"
 	SLAManage           Capability = "sla.manage"
 	IntegrationManage   Capability = "integration.manage"
@@ -71,7 +72,7 @@ var allCapabilities = []Capability{
 	ConversationRead, ConversationReply, ConversationAssign, ConversationDelete,
 	CustomerRead, CustomerReadSensitive, CustomerMerge, CompanyManage,
 	TicketManage, WidgetManage, PortalManage, KnowledgebaseManage,
-	FeedbackModerate, AutomationManage, SLAManage, IntegrationManage,
+	FeedbackModerate, SurveyManage, AutomationManage, SLAManage, IntegrationManage,
 	ReportRead, AuditRead, MemberManage, WorkspaceManage, WorkspaceManageSecurity,
 }
 
