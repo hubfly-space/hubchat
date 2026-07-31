@@ -16,6 +16,7 @@ var (
 	ErrSizeMismatch   = errors.New("file: upload size does not match its declaration")
 	ErrMimeNotAllowed = errors.New("file: MIME type is not allowed")
 	ErrUnsafePath     = errors.New("file: unsafe storage path")
+	ErrInvalidOwner   = errors.New("file: owner is not valid for this workspace")
 )
 
 // Upload is the validated metadata and body for one object. File names are

@@ -59,7 +59,7 @@ func CSRF(publicURL *url.URL, enabled, devMode bool) func(http.Handler) http.Han
 			}
 
 			// No session cookie means no ambient credential either.
-			if SessionToken(r) == "" {
+			if SessionToken(r) == "" && PortalSessionToken(r) == "" {
 				next.ServeHTTP(w, r)
 				return
 			}

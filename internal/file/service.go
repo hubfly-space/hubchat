@@ -56,6 +56,9 @@ func (s *Service) Create(ctx context.Context, workspaceID string, input UploadIn
 	if workspaceID == "" {
 		return nil, errors.New("file: workspace id is required")
 	}
+	if err := s.validateOwner(ctx, workspaceID, input.OwnerType, input.OwnerID); err != nil {
+		return nil, err
+	}
 	id := ids.New(ids.PrefixFile)
 	stored, err := s.store.Save(ctx, Upload{
 		WorkspaceID: workspaceID,
@@ -96,6 +99,40 @@ func (s *Service) Create(ctx context.Context, workspaceID string, input UploadIn
 		return nil, fmt.Errorf("file: create metadata: %w", err)
 	}
 	return &record, nil
+}
+
+func (s *Service) validateOwner(ctx context.Context, workspaceID, ownerType, ownerID string) error {
+	if ownerType == "" && ownerID == "" {
+		return nil
+	}
+	if ownerType == "" || ownerID == "" {
+		return ErrInvalidOwner
+	}
+	var query string
+	switch ownerType {
+	case "message":
+		query = `SELECT EXISTS (SELECT 1 FROM messages WHERE id = $1 AND workspace_id = $2)`
+	case "conversation":
+		query = `SELECT EXISTS (SELECT 1 FROM conversations WHERE id = $1 AND workspace_id = $2)`
+	case "ticket":
+		query = `SELECT EXISTS (SELECT 1 FROM tickets WHERE id = $1 AND workspace_id = $2)`
+	case "article":
+		query = `SELECT EXISTS (SELECT 1 FROM articles WHERE id = $1 AND workspace_id = $2)`
+	case "form_submission":
+		query = `SELECT EXISTS (SELECT 1 FROM form_submissions WHERE id = $1 AND workspace_id = $2)`
+	case "workspace":
+		query = `SELECT EXISTS (SELECT 1 FROM workspaces WHERE id = $1)`
+	default:
+		return ErrInvalidOwner
+	}
+	var exists bool
+	if err := s.pool.QueryRow(ctx, query, ownerID, workspaceID).Scan(&exists); err != nil {
+		return fmt.Errorf("file: validate owner: %w", err)
+	}
+	if !exists {
+		return ErrInvalidOwner
+	}
+	return nil
 }
 
 func (s *Service) Get(ctx context.Context, workspaceID, id string) (*Record, error) {
