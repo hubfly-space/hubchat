@@ -77,3 +77,17 @@ export function portalErrorMessage(error: unknown) {
   if (error instanceof ApiError) return `${error.message}${error.requestId ? ` (Request ${error.requestId})` : ""}`;
   return "The portal could not be loaded. Check your connection and try again.";
 }
+
+/** Keep authentication handoffs inside the mounted portal application. */
+export function safePortalNext(value: string | null | undefined, portalID?: string | null) {
+  if (!value || !value.startsWith("/") || value.startsWith("//") || value.includes("\\")) return "/";
+  try {
+    const parsed = new URL(value, window.location.origin);
+    if (parsed.origin !== window.location.origin) return "/";
+    const pathname = parsed.pathname.replace(/^\/portal(?=\/|$)/, "") || "/";
+    if (portalID) parsed.searchParams.set("portal", portalID);
+    return `${pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return "/";
+  }
+}
