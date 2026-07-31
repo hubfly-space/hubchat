@@ -7,6 +7,8 @@
 // # Boundary
 //
 // Portal permissions are applied in the query, not the template. A field the customer may not see must never reach their browser.
+// Portal identities and sessions are deliberately separate from agent auth;
+// a customer session is never accepted by the dashboard session middleware.
 //
 // # Rules that apply to every module
 //

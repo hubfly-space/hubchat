@@ -100,6 +100,24 @@ type CreateRequest struct {
 // with that number missing; it simply leaves a gap, which reporting can
 // tolerate but a *duplicate* number could not.
 func (s *Service) Create(ctx context.Context, workspaceID, actorMemberID string, req CreateRequest) (*Ticket, error) {
+	return s.create(ctx, workspaceID, audit.ActorUser, events.ActorUser, "member", actorMemberID, "", req)
+}
+
+// CreateAsCustomer opens a ticket from a customer-facing surface. Keeping the
+// actor type explicit prevents a portal request from appearing in the audit
+// log as if an agent had created it.
+func (s *Service) CreateAsCustomer(ctx context.Context, workspaceID, customerID, customerName string, req CreateRequest) (*Ticket, error) {
+	if req.CustomerID == nil || *req.CustomerID != customerID {
+		return nil, ErrInvalidCustomer
+	}
+	return s.create(ctx, workspaceID, audit.ActorCustomer, events.ActorCustomer, "customer", customerID, customerName, req)
+}
+
+func (s *Service) create(
+	ctx context.Context, workspaceID string,
+	auditActor audit.ActorType, eventActor events.ActorType, statusActor, actorID, actorName string,
+	req CreateRequest,
+) (*Ticket, error) {
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
 		return nil, ErrEmptyTitle
@@ -197,7 +215,7 @@ func (s *Service) Create(ctx context.Context, workspaceID, actorMemberID string,
 				return err
 			}
 		}
-		if err := s.repo.insertStatusHistory(ctx, tx, ids.New(ids.PrefixStatusHistory), id, "", "new", "member", actorMemberID); err != nil {
+		if err := s.repo.insertStatusHistory(ctx, tx, ids.New(ids.PrefixStatusHistory), id, "", "new", statusActor, actorID); err != nil {
 			return err
 		}
 
@@ -208,7 +226,7 @@ func (s *Service) Create(ctx context.Context, workspaceID, actorMemberID string,
 		}
 
 		if err := s.recordAudit(ctx, tx, audit.Entry{
-			WorkspaceID: workspaceID, ActorType: audit.ActorUser, ActorID: actorMemberID,
+			WorkspaceID: workspaceID, ActorType: auditActor, ActorID: actorID, ActorName: actorName,
 			Action: "ticket.created", EntityType: entityTicket, EntityID: id,
 			Metadata: map[string]any{"title": title, "number": number, "prefix": prefix},
 		}); err != nil {
@@ -217,7 +235,7 @@ func (s *Service) Create(ctx context.Context, workspaceID, actorMemberID string,
 		return s.appendEvent(ctx, tx, events.Event{
 			WorkspaceID: workspaceID, Type: events.TicketCreated,
 			EntityType: entityTicket, EntityID: id,
-			ActorType: events.ActorUser, ActorID: actorMemberID,
+			ActorType: eventActor, ActorID: actorID,
 			Data: map[string]any{"id": id, "number": number, "prefix": prefix, "title": title},
 		})
 	})
