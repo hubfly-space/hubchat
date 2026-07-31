@@ -12,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hubchat/hubchat/internal/audit"
 	"github.com/hubchat/hubchat/internal/conversation"
+	"github.com/hubchat/hubchat/internal/customer"
 	"github.com/hubchat/hubchat/internal/file"
 	"github.com/hubchat/hubchat/internal/httpserver"
 	"github.com/hubchat/hubchat/internal/mailer"
@@ -27,6 +29,8 @@ func registerPortalRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /v1/portal/auth/logout", handlePortalLogout(deps))
 	mux.HandleFunc("GET /v1/portal/me", handlePortalMe(deps))
 	mux.HandleFunc("PATCH /v1/portal/me", handlePortalProfileUpdate(deps))
+	mux.HandleFunc("GET /v1/portal/me/export", handlePortalCustomerExport(deps))
+	mux.HandleFunc("POST /v1/portal/me/delete", handlePortalCustomerDelete(deps))
 	mux.HandleFunc("GET /v1/portal/tickets", handlePortalTickets(deps))
 	mux.HandleFunc("POST /v1/portal/tickets", Idempotency(deps)(handlePortalCreateTicket(deps)))
 	mux.HandleFunc("GET /v1/portal/tickets/{id}", handlePortalTicket(deps))
@@ -175,6 +179,67 @@ func handlePortalProfileUpdate(deps Deps) http.HandlerFunc {
 			return
 		}
 		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"viewer": viewer, "preferences": preferences})
+	}
+}
+
+func handlePortalCustomerExport(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, ok := requirePortalSession(deps, w, r)
+		if !ok {
+			return
+		}
+		bundle, err := deps.Customer.Export(r.Context(), session.WorkspaceID, session.CustomerID)
+		if err != nil {
+			if errors.Is(err, customer.ErrNotFound) {
+				httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Your customer profile is no longer available.")
+				return
+			}
+			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not prepare your data export.")
+			return
+		}
+		if deps.Audit != nil {
+			if err := deps.Audit.Record(r.Context(), audit.Entry{
+				WorkspaceID: session.WorkspaceID, ActorType: audit.ActorCustomer, ActorID: session.CustomerID,
+				Action: audit.DataExported, EntityType: "customer", EntityID: session.CustomerID,
+			}); err != nil {
+				httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not record the data export.")
+				return
+			}
+		}
+		w.Header().Set("Content-Disposition", `attachment; filename="hubchat-customer-export.json"`)
+		httpserver.WriteJSON(w, http.StatusOK, bundle)
+	}
+}
+
+func handlePortalCustomerDelete(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, ok := requirePortalSession(deps, w, r)
+		if !ok {
+			return
+		}
+		var input struct {
+			Confirmation string `json:"confirmation"`
+		}
+		if err := httpserver.DecodeJSON(r, &input); err != nil || strings.TrimSpace(input.Confirmation) != "DELETE" {
+			httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, "Type DELETE to confirm account anonymisation.")
+			return
+		}
+		// Revoke first. If this fails, the anonymisation does not begin and the
+		// user can retry without leaving an active session behind.
+		if err := deps.Portal.RevokeCustomerSessions(r.Context(), session.WorkspaceID, session.CustomerID); err != nil {
+			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not revoke your portal sessions.")
+			return
+		}
+		if err := deps.Customer.DeleteAsCustomer(r.Context(), session.WorkspaceID, session.CustomerID); err != nil {
+			if errors.Is(err, customer.ErrNotFound) {
+				httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Your customer profile is no longer available.")
+				return
+			}
+			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not anonymise your account.")
+			return
+		}
+		httpserver.ClearPortalSessionCookie(w, deps.CookieDomain, deps.CookieSecure)
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 

@@ -102,6 +102,18 @@ func (s *Service) Export(ctx context.Context, workspaceID, customerID string) (*
 // customer_id (ON DELETE SET NULL) and quietly sever the link this exists to
 // preserve.
 func (s *Service) Delete(ctx context.Context, workspaceID, actorMemberID, customerID string) error {
+	return s.delete(ctx, workspaceID, audit.ActorUser, events.ActorUser, actorMemberID, customerID)
+}
+
+// DeleteAsCustomer applies the same anonymisation policy when the request
+// comes from an authenticated customer portal session. Support history stays
+// available to the workspace, while personal identifiers and customer-owned
+// context are erased.
+func (s *Service) DeleteAsCustomer(ctx context.Context, workspaceID, customerID string) error {
+	return s.delete(ctx, workspaceID, audit.ActorCustomer, events.ActorCustomer, customerID, customerID)
+}
+
+func (s *Service) delete(ctx context.Context, workspaceID string, auditActor audit.ActorType, eventActor events.ActorType, actorID, customerID string) error {
 	if _, err := s.repo.byID(ctx, workspaceID, customerID); err != nil {
 		return err
 	}
@@ -114,14 +126,14 @@ func (s *Service) Delete(ctx context.Context, workspaceID, actorMemberID, custom
 			return err
 		}
 		if err := s.recordAudit(ctx, tx, audit.Entry{
-			WorkspaceID: workspaceID, ActorType: audit.ActorUser, ActorID: actorMemberID,
+			WorkspaceID: workspaceID, ActorType: auditActor, ActorID: actorID,
 			Action: "customer.deleted", EntityType: "customer", EntityID: customerID,
 		}); err != nil {
 			return err
 		}
 		return s.appendEvent(ctx, tx, events.Event{
 			WorkspaceID: workspaceID, Type: events.CustomerUpdated,
-			EntityType: "customer", EntityID: customerID, ActorType: events.ActorUser, ActorID: actorMemberID,
+			EntityType: "customer", EntityID: customerID, ActorType: eventActor, ActorID: actorID,
 			Data: map[string]any{"id": customerID, "anonymised": true},
 		})
 	})
@@ -138,6 +150,77 @@ func (r *repository) anonymize(ctx context.Context, tx pgx.Tx, workspaceID, cust
 }
 
 func (r *repository) eraseHistory(ctx context.Context, tx pgx.Tx, workspaceID, customerID string) error {
+	// Credentials, alternate identities, and portal delivery preferences are
+	// personal data even after the primary customer row is anonymised.
+	for _, statement := range []string{
+		`DELETE FROM portal_sessions WHERE workspace_id = $1 AND customer_id = $2`,
+		`DELETE FROM portal_access_tokens WHERE workspace_id = $1 AND customer_id = $2`,
+		`DELETE FROM portal_identities WHERE workspace_id = $1 AND customer_id = $2`,
+		`DELETE FROM customer_emails WHERE workspace_id = $1 AND customer_id = $2`,
+		`DELETE FROM customer_phones WHERE workspace_id = $1 AND customer_id = $2`,
+		`DELETE FROM visitor_customer_links WHERE customer_id = $2 AND visitor_id IN (SELECT id FROM visitors WHERE workspace_id = $1)`,
+		`DELETE FROM customer_notification_preferences WHERE workspace_id = $1 AND customer_id = $2`,
+		`DELETE FROM feedback_votes WHERE workspace_id = $1 AND customer_id = $2`,
+		`DELETE FROM feedback_subscriptions WHERE customer_id = $2 AND item_id IN (SELECT id FROM feedback_items WHERE workspace_id = $1)`,
+	} {
+		if _, err := tx.Exec(ctx, statement, workspaceID, customerID); err != nil {
+			return err
+		}
+	}
+
+	// Keep the support record's shape for agents, but remove customer-authored
+	// prose and denormalised identity fields. Revisions are an independent copy
+	// of message bodies and must be removed before the redaction is complete.
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM message_revisions
+		WHERE message_id IN (
+			SELECT id FROM messages
+			WHERE workspace_id = $1 AND author_type = 'customer' AND author_id = $2
+		)
+	`, workspaceID, customerID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE messages
+		SET author_id = NULL,
+		    author_name = 'Deleted customer',
+		    body = '[Message removed by customer request]',
+		    redacted_at = coalesce(redacted_at, now()),
+		    edited_at = now()
+		WHERE workspace_id = $1 AND author_type = 'customer' AND author_id = $2
+	`, workspaceID, customerID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE feedback_comments
+		SET author_id = NULL, author_name = 'Deleted customer',
+		    body = '[Comment removed by customer request]', updated_at = now()
+		WHERE workspace_id = $1 AND author_type = 'customer' AND author_id = $2
+	`, workspaceID, customerID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE article_feedback
+		SET customer_id = NULL, comment = NULL
+		WHERE workspace_id = $1 AND customer_id = $2
+	`, workspaceID, customerID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE survey_responses
+		SET customer_id = NULL, comment = NULL
+		WHERE workspace_id = $1 AND customer_id = $2
+	`, workspaceID, customerID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE form_submissions
+		SET customer_id = NULL
+		WHERE workspace_id = $1 AND customer_id = $2
+	`, workspaceID, customerID); err != nil {
+		return err
+	}
+
 	if _, err := tx.Exec(ctx, `DELETE FROM customer_events WHERE workspace_id = $1 AND customer_id = $2`, workspaceID, customerID); err != nil {
 		return err
 	}

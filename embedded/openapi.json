@@ -1829,6 +1829,51 @@
           "Portal"
         ]
       }
+    },
+    "/v1/portal/me/export": {
+      "get": {
+        "operationId": "exportPortalCustomerData",
+        "security": [
+          {
+            "portalCookie": []
+          }
+        ],
+        "tags": [
+          "Portal"
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/portal/me/delete": {
+      "post": {
+        "operationId": "deletePortalCustomerData",
+        "security": [
+          {
+            "portalCookie": []
+          }
+        ],
+        "tags": [
+          "Portal"
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/Json"
+        },
+        "responses": {
+          "204": {
+            "description": "Account anonymised and portal sessions revoked"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     }
   },
   "components": {
