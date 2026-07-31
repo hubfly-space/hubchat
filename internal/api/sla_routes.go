@@ -14,6 +14,7 @@ func registerSLARoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/sla/calendars", requireCapability(deps, authorization.SLAManage, handleListCalendars(deps)))
 	mux.HandleFunc("POST /v1/sla/calendars", requireCapability(deps, authorization.SLAManage, Idempotency(deps)(handleCreateCalendar(deps))))
 	mux.HandleFunc("GET /v1/sla/calendars/{id}", requireCapability(deps, authorization.SLAManage, handleGetCalendar(deps)))
+	mux.HandleFunc("PATCH /v1/sla/calendars/{id}", requireCapability(deps, authorization.SLAManage, Idempotency(deps)(handleUpdateCalendar(deps))))
 	mux.HandleFunc("GET /v1/sla/policies", requireCapability(deps, authorization.SLAManage, handleListSLAPolicies(deps)))
 	mux.HandleFunc("POST /v1/sla/policies", requireCapability(deps, authorization.SLAManage, Idempotency(deps)(handleCreateSLAPolicy(deps))))
 	mux.HandleFunc("GET /v1/sla/policies/{id}", requireCapability(deps, authorization.SLAManage, handleGetSLAPolicy(deps)))
@@ -81,6 +82,21 @@ func handleCreateCalendar(deps Deps) http.HandlerFunc {
 func handleGetCalendar(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		item, err := deps.SLA.GetCalendar(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"))
+		if err != nil {
+			writeSLAError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, item)
+	}
+}
+func handleUpdateCalendar(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input sla.CalendarInput
+		if err := httpserver.DecodeJSON(r, &input); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, err.Error())
+			return
+		}
+		item, err := deps.SLA.UpdateCalendar(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"), input)
 		if err != nil {
 			writeSLAError(w, r, err)
 			return

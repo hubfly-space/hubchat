@@ -136,6 +136,32 @@ func (r *repository) listCompanies(ctx context.Context, workspaceID, query strin
 	return out, rows.Err()
 }
 
+func (r *repository) listCompaniesPage(ctx context.Context, workspaceID, query, beforeName, beforeID string, limit int) ([]Company, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+companyColumns+`
+		FROM companies c
+		WHERE c.workspace_id = $1
+		  AND ($2 = '' OR c.name ILIKE '%' || $2 || '%' OR c.domain::text ILIKE '%' || $2 || '%')
+		  AND ($4 = '' OR (c.name, c.id) > ($3, $4))
+		ORDER BY c.name, c.id
+		LIMIT $5
+	`, workspaceID, query, beforeName, beforeID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("customer: list companies page: %w", err)
+	}
+	defer rows.Close()
+
+	out := []Company{}
+	for rows.Next() {
+		co, err := scanCompany(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *co)
+	}
+	return out, rows.Err()
+}
+
 func (r *repository) updateCompany(ctx context.Context, workspaceID, id, name string, domain, externalID, tier, ownerID *string) error {
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE companies
@@ -299,6 +325,16 @@ func (s *Service) ListCompanies(ctx context.Context, workspaceID, query string, 
 		limit = 50
 	}
 	return s.repo.listCompanies(ctx, workspaceID, strings.TrimSpace(query), limit)
+}
+
+// ListCompaniesPage returns one cursor-ordered page for the dashboard
+// directory. Company names sort ascending, with the id as a deterministic
+// tiebreaker so concurrent inserts cannot repeat a page.
+func (s *Service) ListCompaniesPage(ctx context.Context, workspaceID, query, beforeName, beforeID string, limit int) ([]Company, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 50
+	}
+	return s.repo.listCompaniesPage(ctx, workspaceID, strings.TrimSpace(query), beforeName, beforeID, limit)
 }
 
 func (s *Service) UpdateCompany(

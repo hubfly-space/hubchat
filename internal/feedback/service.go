@@ -149,7 +149,25 @@ func (s *Service) CreateBoard(ctx context.Context, workspaceID string, input Boa
 }
 
 func (s *Service) ListBoards(ctx context.Context, workspaceID string) ([]Board, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id,workspace_id,name,slug,coalesce(description,''),visibility,allow_comments,allow_voting,votes_per_customer,CASE WHEN moderation THEN 'pre' ELSE 'none' END,item_count,position,created_at,updated_at FROM feedback_boards WHERE workspace_id=$1 ORDER BY position,id`, workspaceID)
+	return s.ListBoardsPage(ctx, workspaceID, nil, "", 0)
+}
+
+// ListBoardsPage orders boards by their explicit dashboard position and uses
+// the id as a deterministic tie-breaker. A position cursor is kept in the
+// opaque API cursor's Value field because position is not a timestamp.
+func (s *Service) ListBoardsPage(ctx context.Context, workspaceID string, beforePosition *int, beforeID string, limit int) ([]Board, error) {
+	query := `SELECT id,workspace_id,name,slug,coalesce(description,''),visibility,allow_comments,allow_voting,votes_per_customer,CASE WHEN moderation THEN 'pre' ELSE 'none' END,item_count,position,created_at,updated_at FROM feedback_boards WHERE workspace_id=$1`
+	args := []any{workspaceID}
+	if beforePosition != nil {
+		query += " AND (position,id) > ($2,$3)"
+		args = append(args, *beforePosition, beforeID)
+	}
+	query += " ORDER BY position,id"
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		args = append(args, limit)
+	}
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -236,6 +254,35 @@ func (s *Service) ListItems(ctx context.Context, workspaceID, boardID, status, s
 		order = `created_at DESC`
 	}
 	rows, err := s.pool.Query(ctx, `SELECT i.id,i.workspace_id,i.board_id,i.title,i.description,i.type,i.status,i.visibility,i.submitter_id,i.company_id,i.product_area,i.priority,i.vote_count,i.comment_count,i.subscriber_count,i.merged_into_id,EXISTS(SELECT 1 FROM feedback_votes v WHERE v.item_id=i.id AND v.customer_id=$5),EXISTS(SELECT 1 FROM feedback_subscriptions fs WHERE fs.item_id=i.id AND fs.customer_id=$5),i.created_at,i.updated_at FROM feedback_items i WHERE i.workspace_id=$1 AND i.board_id=$2 AND i.merged_into_id IS NULL AND ($3='' OR i.status=$3) AND ($4='' OR i.title ILIKE '%'||$4||'%' OR i.description ILIKE '%'||$4||'%') ORDER BY `+order+` LIMIT $6`, workspaceID, boardID, status, strings.TrimSpace(query), customerID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanItems(rows)
+}
+
+// ListItemsPage supports both board sort modes without losing deterministic
+// ordering. Vote sorting uses the cursor's vote count, creation timestamp,
+// and id; recent sorting uses the timestamp and id pair.
+func (s *Service) ListItemsPage(ctx context.Context, workspaceID, boardID, status, sort, query, customerID string, before time.Time, beforeID string, beforeVote *int64, limit int) ([]Item, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := []string{"i.workspace_id=$1", "i.board_id=$2", "i.merged_into_id IS NULL", "($3='' OR i.status=$3)", "($4='' OR i.title ILIKE '%'||$4||'%' OR i.description ILIKE '%'||$4||'%')"}
+	args := []any{workspaceID, boardID, status, strings.TrimSpace(query), customerID}
+	order := "i.vote_count DESC,i.created_at DESC,i.id DESC"
+	if sort == "recent" {
+		order = "i.created_at DESC,i.id DESC"
+		if !before.IsZero() {
+			where = append(where, fmt.Sprintf("(i.created_at,i.id) < ($%d,$%d)", len(args)+1, len(args)+2))
+			args = append(args, before, beforeID)
+		}
+	} else if beforeVote != nil && !before.IsZero() {
+		where = append(where, fmt.Sprintf("(i.vote_count < $%d OR (i.vote_count = $%d AND (i.created_at,i.id) < ($%d,$%d)))", len(args)+1, len(args)+1, len(args)+2, len(args)+3))
+		args = append(args, *beforeVote, before, beforeID)
+	}
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, `SELECT i.id,i.workspace_id,i.board_id,i.title,i.description,i.type,i.status,i.visibility,i.submitter_id,i.company_id,i.product_area,i.priority,i.vote_count,i.comment_count,i.subscriber_count,i.merged_into_id,EXISTS(SELECT 1 FROM feedback_votes v WHERE v.item_id=i.id AND v.customer_id=$5),EXISTS(SELECT 1 FROM feedback_subscriptions fs WHERE fs.item_id=i.id AND fs.customer_id=$5),i.created_at,i.updated_at FROM feedback_items i WHERE `+strings.Join(where, " AND ")+` ORDER BY `+order+` LIMIT $`+fmt.Sprint(len(args)), args...)
 	if err != nil {
 		return nil, err
 	}
