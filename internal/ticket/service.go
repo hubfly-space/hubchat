@@ -16,20 +16,22 @@ import (
 )
 
 var (
-	ErrEmptyTitle      = errors.New("ticket: title must not be empty")
-	ErrInvalidStatus   = errors.New("ticket: not a recognised status")
-	ErrInvalidPriority = errors.New("ticket: not a recognised priority")
-	ErrInvalidAssignee = errors.New("ticket: assignee is not a member of this workspace")
-	ErrInvalidTeam     = errors.New("ticket: not a team in this workspace")
-	ErrInvalidInbox    = errors.New("ticket: not an inbox in this workspace")
-	ErrInvalidCustomer = errors.New("ticket: not a customer in this workspace")
-	ErrInvalidCompany  = errors.New("ticket: not a company in this workspace")
-	ErrTagNotFound     = errors.New("ticket: not a tag in this workspace")
-	ErrInvalidRelation = errors.New("ticket: not a recognised link relation")
-	ErrLinkToSelf      = errors.New("ticket: a ticket cannot link to itself")
-	ErrInvalidParent   = errors.New("ticket: not a ticket in this workspace")
-	ErrParentCycle     = errors.New("ticket: that would make a ticket its own ancestor")
-	ErrParentIsSelf    = errors.New("ticket: a ticket cannot be its own parent")
+	ErrEmptyTitle                = errors.New("ticket: title must not be empty")
+	ErrInvalidStatus             = errors.New("ticket: not a recognised status")
+	ErrInvalidPriority           = errors.New("ticket: not a recognised priority")
+	ErrInvalidAssignee           = errors.New("ticket: assignee is not a member of this workspace")
+	ErrInvalidTeam               = errors.New("ticket: not a team in this workspace")
+	ErrInvalidInbox              = errors.New("ticket: not an inbox in this workspace")
+	ErrInvalidCustomer           = errors.New("ticket: not a customer in this workspace")
+	ErrInvalidCompany            = errors.New("ticket: not a company in this workspace")
+	ErrInvalidConversation       = errors.New("ticket: conversation is not in this workspace")
+	ErrConversationAlreadyTicket = errors.New("ticket: conversation already has a ticket")
+	ErrTagNotFound               = errors.New("ticket: not a tag in this workspace")
+	ErrInvalidRelation           = errors.New("ticket: not a recognised link relation")
+	ErrLinkToSelf                = errors.New("ticket: a ticket cannot link to itself")
+	ErrInvalidParent             = errors.New("ticket: not a ticket in this workspace")
+	ErrParentCycle               = errors.New("ticket: that would make a ticket its own ancestor")
+	ErrParentIsSelf              = errors.New("ticket: a ticket cannot be its own parent")
 )
 
 const entityTicket = "ticket"
@@ -192,6 +194,26 @@ func (s *Service) create(
 	var ticket *Ticket
 
 	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		if req.ConversationID != nil {
+			if *req.ConversationID == "" {
+				return ErrInvalidConversation
+			}
+			var existingTicketID *string
+			if err := tx.QueryRow(ctx, `
+				SELECT ticket_id FROM conversations
+				WHERE workspace_id=$1 AND id=$2
+				FOR UPDATE
+			`, workspaceID, *req.ConversationID).Scan(&existingTicketID); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return ErrInvalidConversation
+				}
+				return err
+			}
+			if existingTicketID != nil && *existingTicketID != "" {
+				return ErrConversationAlreadyTicket
+			}
+		}
+
 		prefix, number, err := s.workspace.AllocateTicketNumber(ctx, tx, workspaceID)
 		if err != nil {
 			return err
@@ -203,6 +225,11 @@ func (s *Service) create(
 			req.ConversationID, req.ParentID, req.DueAt,
 		); err != nil {
 			return err
+		}
+		if req.ConversationID != nil {
+			if _, err := tx.Exec(ctx, `UPDATE conversations SET ticket_id=$1 WHERE workspace_id=$2 AND id=$3`, id, workspaceID, *req.ConversationID); err != nil {
+				return err
+			}
 		}
 
 		if req.AssigneeID != nil {
@@ -232,12 +259,30 @@ func (s *Service) create(
 		}); err != nil {
 			return err
 		}
-		return s.appendEvent(ctx, tx, events.Event{
+		if err := s.appendEvent(ctx, tx, events.Event{
 			WorkspaceID: workspaceID, Type: events.TicketCreated,
 			EntityType: entityTicket, EntityID: id,
 			ActorType: eventActor, ActorID: actorID,
 			Data: map[string]any{"id": id, "number": number, "prefix": prefix, "title": title},
-		})
+		}); err != nil {
+			return err
+		}
+		if req.ConversationID != nil {
+			if err := s.recordAudit(ctx, tx, audit.Entry{
+				WorkspaceID: workspaceID, ActorType: auditActor, ActorID: actorID, ActorName: actorName,
+				Action: "conversation.ticket_linked", EntityType: "conversation", EntityID: *req.ConversationID,
+				Metadata: map[string]any{"ticket_id": id},
+			}); err != nil {
+				return err
+			}
+			return s.appendEvent(ctx, tx, events.Event{
+				WorkspaceID: workspaceID, Type: events.ConversationUpdated,
+				EntityType: "conversation", EntityID: *req.ConversationID,
+				ActorType: eventActor, ActorID: actorID,
+				Data: map[string]any{"conversation_id": *req.ConversationID, "ticket_id": id},
+			})
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err

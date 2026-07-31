@@ -43,9 +43,11 @@ import {
   MoreHorizontal,
   PanelRightClose,
   Tag,
+  TicketPlus,
   UserPlus,
 } from "lucide-react";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useWorkspace } from "../../app/workspace-context";
 import { Composer } from "./Composer";
 import { MessageTimeline } from "./MessageTimeline";
@@ -56,9 +58,9 @@ import { MessageTimeline } from "./MessageTimeline";
  * Header carries state, not chrome. Every control in it maps to a real
  * backend action; the four an agent uses hourly (assign, priority, snooze,
  * resolve) are surfaced as buttons, the rest live behind the overflow menu.
- * A few actions from the original design — converting to a ticket, splitting
- * into one, linking a related conversation — have no backend yet (tickets
- * are a later stage) and are left out entirely rather than wired to nothing.
+ * Conversion to a ticket is a durable, permissioned action backed by the
+ * ticket service. Splitting and related-conversation links remain absent until
+ * their own storage and transition rules exist.
  */
 export function ConversationPanel({
   conversation,
@@ -67,7 +69,8 @@ export function ConversationPanel({
   conversation: Conversation;
   onToggleContext: () => void;
 }) {
-  const { memberById, tagById, viewer } = useWorkspace();
+  const navigate = useNavigate();
+  const { memberById, tagById, viewer, can } = useWorkspace();
   const [managingTags, setManagingTags] = useState(false);
   const [merging, setMerging] = useState(false);
   const [blocking, setBlocking] = useState(false);
@@ -113,6 +116,13 @@ export function ConversationPanel({
         ? api.delete(`/conversations/${conversation.id}/followers/me`)
         : api.put(`/conversations/${conversation.id}/followers/me`),
     { invalidates: [["conversations"], ["conversation", conversation.id]] },
+  );
+  const convertToTicket = useMutation<void, { id: string }>(
+    () => api.post(`/conversations/${conversation.id}/ticket`, {}, { idempotencyKey: idempotencyKey() }),
+    {
+      invalidates: [["conversations"], ["conversation", conversation.id]],
+      onSuccess: (ticket) => navigate(`/tickets/${ticket.id}`),
+    },
   );
 
   const sendMessage = async (body: string, kind: "reply" | "note", fileIDs: string[]) => {
@@ -274,6 +284,15 @@ export function ConversationPanel({
                 currentInboxId={conversation.inbox_id}
                 onPick={(id) => void setInbox.mutate(id).catch(() => {})}
               />
+              {conversation.ticket_id ? (
+                <MenuItem icon={<TicketPlus />} onSelect={() => navigate(`/tickets/${conversation.ticket_id}`)}>
+                  Open linked ticket
+                </MenuItem>
+              ) : can("ticket.manage") ? (
+                <MenuItem icon={<TicketPlus />} disabled={convertToTicket.isPending} onSelect={() => void convertToTicket.mutate().catch(() => {})}>
+                  Convert to ticket
+                </MenuItem>
+              ) : null}
 
               <MenuSeparator />
               <MenuItem

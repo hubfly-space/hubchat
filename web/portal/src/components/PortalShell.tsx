@@ -15,7 +15,7 @@ import {
   type ThemeMode,
 } from "@hubchat/shared";
 import { LogOut, Monitor, Moon, Sun, TicketCheck, UserRound } from "lucide-react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { portalAccent, usePortal } from "../portal-context";
 import { portalErrorMessage } from "../portal-context";
 
@@ -138,8 +138,8 @@ export function PortalShell() {
                 </MenuContent>
               </Menu>
             ) : (
-              <Button variant="secondary" size="sm">
-                Sign in
+              <Button variant="secondary" size="sm" asChild>
+                <Link to={`/sign-in?portal=${encodeURIComponent(portal.id)}&next=${encodeURIComponent(pathname)}`}>Sign in</Link>
               </Button>
             )}
           </div>

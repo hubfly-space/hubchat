@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/hubchat/hubchat/internal/audit"
+	"github.com/hubchat/hubchat/internal/conversation"
 	"github.com/hubchat/hubchat/internal/database"
 	"github.com/hubchat/hubchat/internal/database/dbtest"
 	"github.com/hubchat/hubchat/internal/events"
@@ -158,6 +159,44 @@ func TestCreateDerivesCompanyFromCustomer(t *testing.T) {
 	}
 	if tkt.CompanyID == nil || *tkt.CompanyID != companyID {
 		t.Fatalf("expected the customer's company to be derived automatically, got %v", tkt.CompanyID)
+	}
+}
+
+func TestCreateFromConversationLinksBothSidesAndRejectsDuplicate(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+
+	svc, _ := newTestService(t, pool)
+	conversationService := conversation.New(pool, events.New(pool), audit.New(pool))
+	ws := seedWorkspace(t, ctx, pool)
+	conv, _, err := conversationService.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "Please track this")
+	if err != nil {
+		t.Fatalf("start conversation: %v", err)
+	}
+
+	tkt, err := svc.Create(ctx, ws.WorkspaceID, ws.MemberID, ticket.CreateRequest{
+		Title: "Tracked request", InboxID: ws.InboxID, ConversationID: &conv.ID,
+	})
+	if err != nil {
+		t.Fatalf("create from conversation: %v", err)
+	}
+	if tkt.ConversationID == nil || *tkt.ConversationID != conv.ID {
+		t.Fatalf("ticket conversation link = %v, want %s", tkt.ConversationID, conv.ID)
+	}
+
+	var linkedTicketID *string
+	if err := pool.QueryRow(ctx, `SELECT ticket_id FROM conversations WHERE workspace_id=$1 AND id=$2`, ws.WorkspaceID, conv.ID).Scan(&linkedTicketID); err != nil {
+		t.Fatalf("read reverse conversation link: %v", err)
+	}
+	if linkedTicketID == nil || *linkedTicketID != tkt.ID {
+		t.Fatalf("conversation ticket link = %v, want %s", linkedTicketID, tkt.ID)
+	}
+
+	if _, err := svc.Create(ctx, ws.WorkspaceID, ws.MemberID, ticket.CreateRequest{
+		Title: "Duplicate", InboxID: ws.InboxID, ConversationID: &conv.ID,
+	}); !errors.Is(err, ticket.ErrConversationAlreadyTicket) {
+		t.Fatalf("duplicate conversion error = %v, want ErrConversationAlreadyTicket", err)
 	}
 }
 
