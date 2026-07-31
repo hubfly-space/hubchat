@@ -1,4 +1,4 @@
-import { Badge, Card, CardBody, SearchInput, formatRelativeShort } from "@hubchat/shared";
+import { Card, CardBody, SearchInput } from "@hubchat/shared";
 import {
   ArrowRight,
   Book,
@@ -8,11 +8,11 @@ import {
   MessageSquarePlus,
   Receipt,
   Rocket,
-  TicketCheck,
 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { NOW, articles, collections, portal, tickets, viewer } from "../data";
+import { articles, collections, portal } from "../data";
+import { portalAccent, usePortal } from "../portal-context";
 
 const ICONS: Record<string, typeof Book> = {
   rocket: Rocket,
@@ -30,14 +30,14 @@ const ICONS: Record<string, typeof Book> = {
  */
 export default function Home() {
   const [query, setQuery] = useState("");
+  const { data: portalData } = usePortal();
+  const accent = portalAccent(portalData?.portal);
 
   const results = query
     ? articles.filter((article) =>
         `${article.title} ${article.excerpt}`.toLowerCase().includes(query.toLowerCase()),
       )
     : [];
-
-  const openTickets = tickets.filter((ticket) => ticket.status !== "resolved");
 
   return (
     <>
@@ -47,7 +47,7 @@ export default function Home() {
           aria-hidden="true"
           className="absolute inset-0"
           style={{
-            background: `radial-gradient(80% 120% at 50% -20%, color-mix(in oklab, ${portal.accent} 16%, transparent), transparent 70%)`,
+            background: `radial-gradient(80% 120% at 50% -20%, color-mix(in oklab, ${accent} 16%, transparent), transparent 70%)`,
           }}
         />
         <div aria-hidden="true" className="hc-grid-bg absolute inset-0 opacity-40" />
@@ -109,36 +109,6 @@ export default function Home() {
 
       <div className="mx-auto w-full max-w-5xl px-4 py-10 sm:px-6">
         {/* Your requests ------------------------------------------------- */}
-        {viewer.signedIn && openTickets.length > 0 && (
-          <section className="mb-10">
-            <div className="mb-3 flex items-baseline justify-between gap-4">
-              <h2 className="text-md font-semibold tracking-tight text-fg">Your open requests</h2>
-              <Link to="/tickets" className="text-xs text-accent-text hover:underline">
-                View all
-              </Link>
-            </div>
-
-            <div className="space-y-2">
-              {openTickets.map((ticket) => (
-                <Card key={ticket.number} interactive className="p-0">
-                  <Link to={`/tickets/${ticket.number}`} className="flex items-center gap-3 p-4">
-                    <TicketCheck aria-hidden="true" className="size-4 shrink-0 text-fg-muted" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm text-fg">{ticket.title}</span>
-                      <span className="block text-xs text-fg-muted">
-                        {ticket.number} · updated {formatRelativeShort(ticket.updated, NOW)} ago
-                      </span>
-                    </span>
-                    <Badge tone={ticket.status === "open" ? "accent" : "neutral"}>
-                      {ticket.status === "on_hold" ? "On hold" : "Open"}
-                    </Badge>
-                  </Link>
-                </Card>
-              ))}
-            </div>
-          </section>
-        )}
-
         {/* Collections ---------------------------------------------------- */}
         <section className="mb-10">
           <h2 className="mb-3 text-md font-semibold tracking-tight text-fg">Browse guides</h2>
