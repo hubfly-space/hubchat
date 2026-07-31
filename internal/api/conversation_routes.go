@@ -310,7 +310,7 @@ func handlePostMessage(deps Deps) http.HandlerFunc {
 			return
 		}
 		if deps.File != nil && len(req.FileIDs) > 0 {
-			if err := deps.File.AttachToMessage(r.Context(), actor.WorkspaceID, conversationID, req.FileIDs); err != nil {
+			if err := deps.File.AttachToMessage(r.Context(), actor.WorkspaceID, msg.ID, req.FileIDs); err != nil {
 				writeMessageAttachmentError(w, r, err)
 				return
 			}
