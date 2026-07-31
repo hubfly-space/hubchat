@@ -1724,6 +1724,23 @@
         ]
       }
     },
+    "/v1/email/status": {
+      "get": {
+        "summary": "Get a resource",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "getEmailStatus",
+        "tags": [
+          "Integrations"
+        ]
+      }
+    },
     "/v1/email/mailboxes": {
       "get": {
         "summary": "List resources",

@@ -189,6 +189,9 @@
       "get": { "$ref": "#/components/operations/list", "operationId": "listWebhooks", "tags": ["Integrations"] },
       "post": { "$ref": "#/components/operations/create", "operationId": "createWebhook", "tags": ["Integrations"] }
     },
+    "/v1/email/status": {
+      "get": { "$ref": "#/components/operations/get", "operationId": "getEmailStatus", "tags": ["Integrations"] }
+    },
     "/v1/email/mailboxes": {
       "get": { "$ref": "#/components/operations/list", "operationId": "listEmailMailboxes", "tags": ["Integrations"] },
       "post": { "$ref": "#/components/operations/create", "operationId": "createEmailMailbox", "tags": ["Integrations"] }

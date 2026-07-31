@@ -11,6 +11,7 @@ import (
 )
 
 func registerEmailChannelRoutes(mux *http.ServeMux, deps Deps) {
+	mux.HandleFunc("GET /v1/email/status", requireCapability(deps, authorization.IntegrationManage, handleEmailStatus(deps)))
 	mux.HandleFunc("GET /v1/email/mailboxes", requireCapability(deps, authorization.IntegrationManage, handleListMailboxes(deps)))
 	mux.HandleFunc("POST /v1/email/mailboxes", requireCapability(deps, authorization.IntegrationManage, Idempotency(deps)(handleCreateMailbox(deps))))
 	mux.HandleFunc("PATCH /v1/email/mailboxes/{id}", requireCapability(deps, authorization.IntegrationManage, handleUpdateMailbox(deps)))
@@ -26,6 +27,20 @@ func registerEmailChannelRoutes(mux *http.ServeMux, deps Deps) {
 	// Delivery providers use a mailbox-specific callback URL so status and
 	// suppression updates cannot be routed to another workspace.
 	mux.HandleFunc("POST /v1/email/delivery/{provider}/{mailboxID}", handleEmailDelivery(deps))
+}
+
+func handleEmailStatus(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		email := deps.Config.Email
+		configured := email.Enabled && email.SMTPHost != "" && email.FromAddress != ""
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{
+			"configured":   configured,
+			"host":         email.SMTPHost,
+			"port":         email.SMTPPort,
+			"from_address": email.FromAddress,
+			"encryption":   email.Encryption,
+		})
+	}
 }
 
 func handleListMailboxes(deps Deps) http.HandlerFunc {

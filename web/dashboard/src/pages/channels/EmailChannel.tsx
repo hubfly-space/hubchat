@@ -41,11 +41,13 @@ type Mailbox = {
   imap_configured: boolean;
   inbound_secret_configured: boolean;
   enabled: boolean;
+  last_polled_at?: string | null;
   last_error?: string | null;
 };
 type CreatedMailbox = { mailbox: Mailbox; inbound_secret: string };
 type DeliveryEvent = { id: string; provider: string; type: string; recipient?: string | null; bounce_type?: string | null; reason?: string | null; hard: boolean; occurred_at: string };
 type Suppression = { address: string; reason: string; source: string; updated_at: string };
+type EmailStatus = { configured: boolean; host: string; port: number; from_address: string; encryption: string };
 
 /** Email channel (§6.15). */
 export default function EmailChannel() {
@@ -55,6 +57,7 @@ export default function EmailChannel() {
   const [newAddress, setNewAddress] = useState("");
   const [newInboxID, setNewInboxID] = useState("");
   const [newSecret, setNewSecret] = useState("");
+  const emailStatus = useQuery<EmailStatus>(["email-status"], (signal) => api.get("/email/status", { signal }));
   const mailboxes = useQuery<{ data: Mailbox[] }>(["email-mailboxes"], (signal) => api.get("/email/mailboxes", { signal }));
   const [activeID, setActiveID] = useState("");
   const active = mailboxes.data?.data.find((item) => item.id === activeID) ?? mailboxes.data?.data[0];
@@ -99,10 +102,7 @@ export default function EmailChannel() {
         {active && <div className="mb-5 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2"><span className="text-xs text-fg-muted">Mailbox</span>{mailboxes.data?.data.map((item) => <Button key={item.id} variant={item.id === active.id ? "secondary" : "ghost"} size="xs" onClick={() => setActiveID(item.id)}>{item.address}</Button>)}<Badge tone={active.inbound_secret_configured ? "success" : "warning"}>{active.inbound_secret_configured ? "Webhook secret configured" : "Webhook secret missing"}</Badge></div>}
         <Tabs value={tab} onValueChange={setTab}>
           <TabsContent value="outbound">
-            <Callout tone="warning" className="mb-5" icon={<AlertTriangle />}>
-              No SMTP server is configured. Outbound mail is being queued, not sent — customers are
-              not receiving ticket notifications, magic links, or password resets.
-            </Callout>
+            {emailStatus.isLoading ? <Callout tone="info" className="mb-5">Checking outbound email readiness…</Callout> : emailStatus.error ? <Callout tone="danger" className="mb-5">Could not load outbound email readiness.</Callout> : !emailStatus.data?.configured ? <Callout tone="warning" className="mb-5" icon={<AlertTriangle />}>No SMTP server is configured. Outbound mail is being queued, not sent — customers are not receiving ticket notifications, magic links, or password resets.</Callout> : <Callout tone="success" className="mb-5" icon={<CheckCircle2 />}>Outbound mail is configured for <span className="font-mono">{emailStatus.data.from_address}</span> via <span className="font-mono">{emailStatus.data.host}:{emailStatus.data.port}</span>.</Callout>}
 
             <Section title="SMTP">
               <Card>
@@ -236,6 +236,10 @@ export default function EmailChannel() {
                     </SettingsRow>
                   </CardBody>
                 </Card>
+                {active?.last_error && <Callout tone="danger" className="mt-3" title="Last IMAP poll failed">{active.last_error}</Callout>}
+                <p className="mt-2 text-2xs text-fg-muted">
+                  {active?.last_polled_at ? `Last checked ${new Date(active.last_polled_at).toLocaleString()}.` : "IMAP has not been checked yet."}
+                </p>
               </Section>
             )}
 
