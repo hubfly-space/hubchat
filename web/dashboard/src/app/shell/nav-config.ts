@@ -18,6 +18,7 @@ import {
   KeyRound,
   LayoutDashboard,
   Lightbulb,
+  Megaphone,
   ListChecks,
   type LucideIcon,
   MessageSquareReply,
@@ -156,6 +157,7 @@ export const NAV_SECTIONS: NavSection[] = [
           { label: "Articles", to: "/kb", icon: FileText },
           { label: "Collections", to: "/kb/collections", icon: Boxes },
           { label: "Search analytics", to: "/kb/search-analytics", icon: Activity },
+          { label: "Changelog", to: "/kb/changelog", icon: Megaphone },
         ],
       },
       {

@@ -41,6 +41,7 @@ const router = createBrowserRouter(
         { path: "tickets/:number", element: page(() => import("./pages/TicketDetail")) },
         { path: "feedback", element: page(() => import("./pages/Feedback")) },
         { path: "changelog", element: page(() => import("./pages/Changelog")) },
+        { path: "survey/:workspaceID/:surveyID", element: page(() => import("./pages/Survey")) },
         { path: "account", element: page(() => import("./pages/Account")) },
         { path: "*", element: <Navigate to="/" replace /> },
       ],
