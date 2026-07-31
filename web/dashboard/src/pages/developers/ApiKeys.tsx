@@ -29,7 +29,7 @@ import {
   type ApiKey,
   type Column,
 } from "@hubchat/shared";
-import { KeyRound, Plus, ShieldAlert, Trash2 } from "lucide-react";
+import { KeyRound, Plus, RefreshCw, ShieldAlert, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useWorkspace } from "../../app/workspace-context";
 
@@ -48,11 +48,13 @@ export default function ApiKeys() {
   const { memberById } = useWorkspace();
   const deploymentOrigin = window.location.origin;
   const [revoking, setRevoking] = useState<ApiKey | null>(null);
+  const [rotating, setRotating] = useState<ApiKey | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
   const [scopes, setScopes] = useState<string[]>(["conversation.read"]);
   const [createdToken, setCreatedToken] = useState<string | null>(null);
+  const [tokenAction, setTokenAction] = useState<"created" | "rotated">("created");
   const query = useQuery<{ data: ApiKey[] }>(["api-keys"], (signal) => api.get("/api-keys", { signal }));
   const create = useMutation<{ name: string; scopes: string[]; expires_at: string }, { token: string }>(
     (input) => api.post<{ token: string }>("/api-keys", input, { idempotencyKey: idempotencyKey() }),
@@ -61,6 +63,10 @@ export default function ApiKeys() {
   const revoke = useMutation<string, void>(
     (id) => api.delete(`/api-keys/${id}`),
     { invalidates: [["api-keys"]], onSuccess: () => setRevoking(null) },
+  );
+  const rotate = useMutation<ApiKey, { token: string }>(
+    (key) => api.post<{ token: string }>(`/api-keys/${encodeURIComponent(key.id)}/rotate`, { name: key.name, scopes: key.scopes, expires_at: "" }, { idempotencyKey: idempotencyKey() }),
+    { invalidates: [["api-keys"]], onSuccess: (result) => { setRotating(null); setTokenAction("rotated"); setCreatedToken(result.token); setCreateOpen(true); } },
   );
   const keys = query.data?.data ?? [];
 
@@ -139,16 +145,16 @@ export default function ApiKeys() {
         title="API keys"
         description="Workspace-scoped credentials for server-to-server calls. Keys are hashed at rest and shown once."
         actions={
-          <Dialog open={createOpen} onOpenChange={(open) => { setCreateOpen(open); if (!open) { setCreatedToken(null); create.reset(); } }}>
+            <Dialog open={createOpen} onOpenChange={(open) => { setCreateOpen(open); if (!open) { setCreatedToken(null); setTokenAction("created"); create.reset(); } }}>
             <DialogTrigger asChild><Button variant="primary" size="sm" leading={<Plus />}>New key</Button></DialogTrigger>
             <DialogContent
-              title={createdToken ? "API key created" : "Create an API key"}
+              title={createdToken ? `API key ${tokenAction}` : "Create an API key"}
               description="Grant only the scopes this integration actually needs. You can rotate or revoke it at any time."
               size="lg"
               footer={
                 <>
                   <Button variant="ghost" size="sm" onClick={() => setCreateOpen(false)}>{createdToken ? "Done" : "Cancel"}</Button>
-                  {!createdToken && <Button variant="primary" size="sm" loading={create.isPending} disabled={!name.trim() || scopes.length === 0} onClick={() => void create.mutate({ name: name.trim(), scopes, expires_at: expiresAt }).catch(() => {})}>Create key</Button>}
+                  {!createdToken && <Button variant="primary" size="sm" loading={create.isPending} disabled={!name.trim() || scopes.length === 0} onClick={() => void create.mutate({ name: name.trim(), scopes, expires_at: expiresAt }).then(() => setTokenAction("created")).catch(() => {})}>Create key</Button>}
                 </>
               }
             >
@@ -200,14 +206,24 @@ export default function ApiKeys() {
                 rowKey={(key) => key.id}
                 rowActions={(key) =>
                   key.revoked_at ? null : (
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      iconOnly
-                      aria-label={`Revoke ${key.name}`}
-                      leading={<Trash2 />}
-                      onClick={() => setRevoking(key)}
-                    />
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        iconOnly
+                        aria-label={`Rotate ${key.name}`}
+                        leading={<RefreshCw />}
+                        onClick={() => setRotating(key)}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        iconOnly
+                        aria-label={`Revoke ${key.name}`}
+                        leading={<Trash2 />}
+                        onClick={() => setRevoking(key)}
+                      />
+                    </div>
                   )
                 }
                 empty={
@@ -239,6 +255,20 @@ export default function ApiKeys() {
         </Section>
       </PageBody>
 
+      <ConfirmDialog
+        open={rotating !== null}
+        onOpenChange={(open) => !open && setRotating(null)}
+        title="Rotate this key?"
+        description={
+          <>
+            A new token will be created with the same name and scopes. The current token remains
+            usable until the new one is created, then it is revoked. Copy the replacement token
+            immediately because it will not be shown again.
+          </>
+        }
+        confirmLabel="Rotate key"
+        onConfirm={() => rotating && void rotate.mutate(rotating).catch(() => {})}
+      />
       <ConfirmDialog
         open={revoking !== null}
         onOpenChange={(open) => !open && setRevoking(null)}

@@ -33,7 +33,7 @@ import { useState } from "react";
 const EVENTS = [
   "conversation.created", "conversation.assigned", "conversation.resolved", "message.created",
   "ticket.created", "ticket.updated", "ticket.sla_breached", "customer.created", "customer.updated",
-  "feedback.created", "feedback.status_changed", "survey.response_created",
+  "feedback.created", "feedback.status_changed", "article.published", "changelog.published", "survey.response_created",
 ];
 
 export default function WebhookList() {

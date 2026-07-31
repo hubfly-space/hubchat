@@ -209,6 +209,11 @@ function useWorkspaceInvalidation() {
       case "saved_view":
         invalidate(["saved-views", "conversation"]);
         break;
+      case "article":
+        invalidate(["articles"]);
+        if (event.entity_id) invalidate(["article", event.entity_id]);
+        invalidate(["knowledge-bases"]);
+        break;
     }
   });
 }
