@@ -2,31 +2,64 @@ package notification
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hubchat/hubchat/internal/database"
+	"github.com/hubchat/hubchat/internal/events"
 	"github.com/hubchat/hubchat/internal/ids"
+	"github.com/hubchat/hubchat/internal/jobs"
+	"github.com/jackc/pgx/v5"
 )
 
 var ErrNotFound = errors.New("notification: not found")
+var ErrInvalidPreference = errors.New("notification: invalid preference")
 
-type Service struct{ pool *database.Pool }
+type Service struct {
+	pool   *database.Pool
+	jobs   *jobs.Client
+	seenMu sync.Mutex
+	seen   map[string]int64
+}
 
 type Notification struct {
-	ID          string     `json:"id"`
-	WorkspaceID string     `json:"workspace_id"`
-	MemberID    string     `json:"member_id"`
-	Type        string     `json:"type"`
-	Title       string     `json:"title"`
-	Body        string     `json:"body"`
-	EntityType  *string    `json:"entity_type"`
-	EntityID    *string    `json:"entity_id"`
-	URL         *string    `json:"url"`
-	ReadAt      *time.Time `json:"read_at"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID            string     `json:"id"`
+	WorkspaceID   string     `json:"workspace_id"`
+	MemberID      string     `json:"member_id"`
+	Type          string     `json:"type"`
+	Title         string     `json:"title"`
+	Body          string     `json:"body"`
+	EntityType    *string    `json:"entity_type"`
+	EntityID      *string    `json:"entity_id"`
+	URL           *string    `json:"url"`
+	SourceEventID *string    `json:"-"`
+	ReadAt        *time.Time `json:"read_at"`
+	CreatedAt     time.Time  `json:"created_at"`
+}
+
+type Preference struct {
+	Type    string `json:"type"`
+	InApp   bool   `json:"in_app"`
+	Email   bool   `json:"email"`
+	Browser bool   `json:"browser"`
+	Sound   bool   `json:"sound"`
+}
+
+type PreferenceInput struct {
+	Type    string `json:"type"`
+	InApp   bool   `json:"in_app"`
+	Email   bool   `json:"email"`
+	Browser bool   `json:"browser"`
+	Sound   bool   `json:"sound"`
+}
+
+var preferenceTypes = map[string]bool{
+	"assignment": true, "mention": true, "reply": true, "sla_warning": true,
+	"sla_breach": true, "team_unassigned": true, "feedback": true,
 }
 
 type ListFilter struct {
@@ -36,7 +69,71 @@ type ListFilter struct {
 	Unread   bool
 }
 
-func New(pool *database.Pool) *Service { return &Service{pool: pool} }
+func New(pool *database.Pool, queue ...*jobs.Client) *Service {
+	var jobClient *jobs.Client
+	if len(queue) > 0 {
+		jobClient = queue[0]
+	}
+	return &Service{pool: pool, jobs: jobClient, seen: make(map[string]int64)}
+}
+
+func (s *Service) Preferences(ctx context.Context, workspaceID, memberID string) ([]Preference, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT type,in_app,email,browser,sound
+		FROM notification_preferences
+		WHERE workspace_id=$1 AND member_id=$2
+		ORDER BY type
+	`, workspaceID, memberID)
+	if err != nil {
+		return nil, fmt.Errorf("notification: list preferences: %w", err)
+	}
+	defer rows.Close()
+	result := make([]Preference, 0)
+	for rows.Next() {
+		var item Preference
+		if err := rows.Scan(&item.Type, &item.InApp, &item.Email, &item.Browser, &item.Sound); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+func (s *Service) SavePreferences(ctx context.Context, workspaceID, memberID string, inputs []PreferenceInput) ([]Preference, error) {
+	inputs, err := normalizePreferences(inputs)
+	if err != nil {
+		return nil, err
+	}
+	for _, input := range inputs {
+		if _, err := s.pool.Exec(ctx, `
+			INSERT INTO notification_preferences(workspace_id,member_id,type,in_app,email,browser,sound)
+			VALUES($1,$2,$3,$4,$5,$6,$7)
+			ON CONFLICT (member_id,type) DO UPDATE SET
+				workspace_id=EXCLUDED.workspace_id,in_app=EXCLUDED.in_app,email=EXCLUDED.email,
+				browser=EXCLUDED.browser,sound=EXCLUDED.sound
+		`, workspaceID, memberID, input.Type, input.InApp, input.Email, input.Browser, input.Sound); err != nil {
+			return nil, fmt.Errorf("notification: save preference: %w", err)
+		}
+	}
+	return s.Preferences(ctx, workspaceID, memberID)
+}
+
+func normalizePreferences(inputs []PreferenceInput) ([]PreferenceInput, error) {
+	if len(inputs) > len(preferenceTypes) {
+		return nil, ErrInvalidPreference
+	}
+	result := make([]PreferenceInput, len(inputs))
+	seen := make(map[string]bool, len(inputs))
+	for index, input := range inputs {
+		input.Type = strings.TrimSpace(strings.ToLower(input.Type))
+		if !preferenceTypes[input.Type] || seen[input.Type] {
+			return nil, ErrInvalidPreference
+		}
+		seen[input.Type] = true
+		result[index] = input
+	}
+	return result, nil
+}
 
 func (s *Service) List(ctx context.Context, workspaceID, memberID string, filter ListFilter) ([]Notification, error) {
 	if filter.Limit <= 0 || filter.Limit > 200 {
@@ -50,7 +147,7 @@ func (s *Service) List(ctx context.Context, workspaceID, memberID string, filter
 		where += ` AND read_at IS NULL`
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, workspace_id, member_id, type, title, body, entity_type, entity_id, url, read_at, created_at
+		SELECT id, workspace_id, member_id, type, title, body, entity_type, entity_id, url, source_event_id, read_at, created_at
 		FROM notifications
 		WHERE `+where+`
 		ORDER BY created_at DESC, id DESC
@@ -64,12 +161,271 @@ func (s *Service) List(ctx context.Context, workspaceID, memberID string, filter
 	for rows.Next() {
 		var item Notification
 		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.MemberID, &item.Type, &item.Title, &item.Body,
-			&item.EntityType, &item.EntityID, &item.URL, &item.ReadAt, &item.CreatedAt); err != nil {
+			&item.EntityType, &item.EntityID, &item.URL, &item.SourceEventID, &item.ReadAt, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+// NotifyAssignment creates one in-app assignment alert for the newly assigned
+// member. sourceEventID makes event-consumer retries safe while preserving
+// separate notifications for later assignments of the same entity.
+func (s *Service) NotifyAssignment(ctx context.Context, workspaceID, memberID, actorID, entityType, entityID, sourceEventID string) error {
+	if memberID == "" || (entityType != "conversation" && entityType != "ticket") {
+		return nil
+	}
+	label := "conversation"
+	url := "/inbox?conversation=" + entityID
+	if entityType == "ticket" {
+		label = "ticket"
+		url = "/tickets/" + entityID
+	}
+	return s.insertForMember(ctx, workspaceID, memberID, actorID, "assignment", "Assigned "+label, "A "+label+" was assigned to you.", url, entityType, entityID, sourceEventID)
+}
+
+// NotifySLA fans an approaching or breached timer out to the subject's
+// assignee, team members, and followers. Recipient resolution is repeated at
+// event-consumption time so an assignment change cannot expose an old queue
+// membership and all predicates remain workspace-scoped.
+func (s *Service) NotifySLA(ctx context.Context, workspaceID, entityType, entityID, kind, sourceEventID string) error {
+	preferenceType, notificationType, title, body := slaNotification(kind)
+	if preferenceType == "" || (entityType != "conversation" && entityType != "ticket") {
+		return nil
+	}
+
+	var recipients string
+	if entityType == "conversation" {
+		recipients = `
+			SELECT c.assignee_id AS member_id FROM conversations c
+			WHERE c.workspace_id=$1 AND c.id=$2 AND c.assignee_id IS NOT NULL
+			UNION ALL
+			SELECT tm.member_id FROM conversations c
+			JOIN team_members tm ON tm.team_id=c.team_id
+			JOIN workspace_members m ON m.id=tm.member_id AND m.workspace_id=c.workspace_id
+			WHERE c.workspace_id=$1 AND c.id=$2 AND c.team_id IS NOT NULL
+			UNION ALL
+			SELECT f.member_id FROM conversation_followers f
+			JOIN conversations c ON c.id=f.conversation_id AND c.workspace_id=$1
+			WHERE f.conversation_id=$2`
+	} else {
+		recipients = `
+			SELECT t.assignee_id AS member_id FROM tickets t
+			WHERE t.workspace_id=$1 AND t.id=$2 AND t.assignee_id IS NOT NULL
+			UNION ALL
+			SELECT tm.member_id FROM tickets t
+			JOIN team_members tm ON tm.team_id=t.team_id
+			JOIN workspace_members m ON m.id=tm.member_id AND m.workspace_id=t.workspace_id
+			WHERE t.workspace_id=$1 AND t.id=$2 AND t.team_id IS NOT NULL
+			UNION ALL
+			SELECT f.member_id FROM ticket_followers f
+			JOIN tickets t ON t.id=f.ticket_id AND t.workspace_id=$1
+			WHERE f.ticket_id=$2`
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT recipients.member_id
+		FROM (`+recipients+`) recipients
+		JOIN workspace_members members ON members.id=recipients.member_id AND members.workspace_id=$1
+		LEFT JOIN notification_preferences preferences
+			ON preferences.workspace_id=$1 AND preferences.member_id=recipients.member_id AND preferences.type=$3
+		WHERE preferences.member_id IS NULL OR coalesce(preferences.in_app,false)
+		   OR coalesce(preferences.email,false) OR coalesce(preferences.browser,false)
+		   OR coalesce(preferences.sound,false)
+	`, workspaceID, entityID, preferenceType)
+	if err != nil {
+		return fmt.Errorf("notification: resolve SLA recipients: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var memberID string
+		if err := rows.Scan(&memberID); err != nil {
+			return err
+		}
+		url := "/inbox?conversation=" + entityID
+		if entityType == "ticket" {
+			url = "/tickets/" + entityID
+		}
+		if err := s.insertForMember(ctx, workspaceID, memberID, "", notificationType, title, body, url, entityType, entityID, sourceEventID); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func (s *Service) insertForMember(ctx context.Context, workspaceID, memberID, actorID, typ, title, body, url, entityType, entityID, sourceEventID string) error {
+	preferenceType := preferenceTypeFor(typ)
+	var notificationID string
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO notifications
+			(id,workspace_id,member_id,type,title,body,entity_type,entity_id,url,source_event_id)
+		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,'')
+		FROM workspace_members members
+		LEFT JOIN notification_preferences preferences
+			ON preferences.workspace_id=$2 AND preferences.member_id=$3 AND preferences.type=$12
+		WHERE members.workspace_id=$2 AND members.id=$3
+		  AND ($11='' OR members.id<>$11)
+		  AND (preferences.member_id IS NULL OR coalesce(preferences.in_app,false)
+		       OR coalesce(preferences.email,false) OR coalesce(preferences.browser,false)
+		       OR coalesce(preferences.sound,false))
+		  AND NOT EXISTS (
+			SELECT 1 FROM notifications existing
+			WHERE existing.workspace_id=$2 AND existing.member_id=$3
+			  AND NULLIF($10,'') IS NOT NULL AND existing.source_event_id=$10
+		  )
+		ON CONFLICT DO NOTHING
+		RETURNING id
+	`, ids.New(ids.PrefixNotification), workspaceID, memberID, typ, title, body, entityType, entityID, url, sourceEventID, actorID, preferenceType).Scan(&notificationID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("notification: insert event alert: %w", err)
+	}
+	return s.queueEmail(ctx, workspaceID, memberID, notificationID, preferenceType, title, body, url)
+}
+
+func preferenceTypeFor(notificationType string) string {
+	if notificationType == "customer_reply" {
+		return "reply"
+	}
+	return notificationType
+}
+
+type emailPayload struct {
+	To      string `json:"to"`
+	Subject string `json:"subject"`
+	Body    string `json:"body"`
+}
+
+func (s *Service) queueEmail(ctx context.Context, workspaceID, memberID, notificationID, preferenceType, title, body, url string) error {
+	if s.jobs == nil {
+		return nil
+	}
+	var address, name string
+	var enabled bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT u.email::text,u.name,coalesce(preferences.email,false)
+		FROM workspace_members members
+		JOIN users u ON u.id=members.user_id
+		LEFT JOIN notification_preferences preferences
+			ON preferences.workspace_id=members.workspace_id
+			AND preferences.member_id=members.id AND preferences.type=$3
+		WHERE members.workspace_id=$1 AND members.id=$2
+	`, workspaceID, memberID, preferenceType).Scan(&address, &name, &enabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("notification: resolve email recipient: %w", err)
+	}
+	if !enabled || strings.TrimSpace(address) == "" {
+		return nil
+	}
+	message := "Hi " + strings.TrimSpace(name) + ",\n\n" + title + "\n\n" + body
+	if strings.TrimSpace(url) != "" {
+		message += "\n\nOpen in Hubchat: " + url
+	}
+	_, err = s.jobs.Enqueue(ctx, jobs.Spec{
+		WorkspaceID: workspaceID,
+		Queue:       "email",
+		Type:        "email.send",
+		Payload:     emailPayload{To: address, Subject: title, Body: message},
+		DedupeKey:   "notification-email:" + notificationID,
+	})
+	if errors.Is(err, jobs.ErrDuplicate) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("notification: queue email: %w", err)
+	}
+	return nil
+}
+
+func slaNotification(kind string) (preferenceType, notificationType, title, body string) {
+	switch kind {
+	case "approaching":
+		return "sla_warning", "sla_warning", "SLA approaching breach", "A support timer is approaching its target."
+	case "breached":
+		return "sla_breach", "sla_breach", "SLA breached", "A support timer has breached its target."
+	default:
+		return "", "", "", ""
+	}
+}
+
+// RunEventConsumer turns committed assignment and SLA events into durable
+// alerts and optional queued email delivery. It follows the same gap-draining
+// protocol as realtime and automation consumers, while source_event_id makes
+// processing idempotent.
+func (s *Service) RunEventConsumer(ctx context.Context, signals <-chan events.Signal, source interface {
+	Since(context.Context, string, int64, int) ([]events.Record, error)
+}) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case signal, ok := <-signals:
+			if !ok {
+				return
+			}
+			s.seenMu.Lock()
+			after, exists := s.seen[signal.WorkspaceID]
+			if !exists {
+				after = signal.Sequence - 1
+			}
+			s.seenMu.Unlock()
+			for {
+				records, err := source.Since(ctx, signal.WorkspaceID, after, 200)
+				if err != nil || len(records) == 0 {
+					break
+				}
+				failed := false
+				for _, record := range records {
+					if err := s.processEvent(ctx, record); err != nil {
+						failed = true
+						break
+					}
+					after = record.Sequence
+				}
+				if failed {
+					break
+				}
+				s.seenMu.Lock()
+				s.seen[signal.WorkspaceID] = after
+				s.seenMu.Unlock()
+				if len(records) < 200 {
+					break
+				}
+			}
+		}
+	}
+}
+
+func (s *Service) processEvent(ctx context.Context, record events.Record) error {
+	switch record.Type {
+	case events.ConversationAssigned, events.TicketUpdated:
+		var data struct {
+			AssigneeID *string `json:"assignee_id"`
+		}
+		if err := json.Unmarshal(record.Data, &data); err != nil {
+			return fmt.Errorf("notification: decode assignment event: %w", err)
+		}
+		if data.AssigneeID == nil {
+			return nil
+		}
+		return s.NotifyAssignment(ctx, record.WorkspaceID, *data.AssigneeID, record.ActorID, record.EntityType, record.EntityID, record.ID)
+	case events.SLAApproaching, events.SLABreached:
+		kind := "breached"
+		if record.Type == events.SLAApproaching {
+			kind = "approaching"
+		}
+		return s.NotifySLA(ctx, record.WorkspaceID, record.EntityType, record.EntityID, kind, record.ID)
+	case events.FeedbackStatusChanged:
+		return s.NotifyFeedbackSubscribers(ctx, record.WorkspaceID, record.EntityID, record.ID)
+	default:
+		return nil
+	}
 }
 
 func (s *Service) UnreadCount(ctx context.Context, workspaceID, memberID string) (int, error) {
@@ -112,7 +468,7 @@ func (s *Service) NotifyConversationMessage(ctx context.Context, workspaceID, co
 		return nil
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT DISTINCT member_id FROM (
+		SELECT DISTINCT recipients.member_id FROM (
 			SELECT c.assignee_id AS member_id
 			FROM conversations c
 			WHERE c.workspace_id = $1 AND c.id = $2 AND c.assignee_id IS NOT NULL
@@ -128,7 +484,12 @@ func (s *Service) NotifyConversationMessage(ctx context.Context, workspaceID, co
 			JOIN conversations c ON c.id = tf.conversation_id AND c.workspace_id = $1
 			WHERE tf.conversation_id = $2
 		) recipients
-		WHERE member_id IS NOT NULL AND ($3 = '' OR member_id <> $3)
+		LEFT JOIN notification_preferences preferences
+			ON preferences.workspace_id=$1 AND preferences.member_id=recipients.member_id AND preferences.type='reply'
+		WHERE recipients.member_id IS NOT NULL AND ($3 = '' OR recipients.member_id <> $3)
+		  AND (preferences.member_id IS NULL OR coalesce(preferences.in_app,false)
+		       OR coalesce(preferences.email,false) OR coalesce(preferences.browser,false)
+		       OR coalesce(preferences.sound,false))
 	`, workspaceID, conversationID, authorMemberID)
 	if err != nil {
 		return fmt.Errorf("notification: resolve recipients: %w", err)
@@ -145,17 +506,53 @@ func (s *Service) NotifyConversationMessage(ctx context.Context, workspaceID, co
 		if err := rows.Scan(&memberID); err != nil {
 			return err
 		}
-		if _, err := s.pool.Exec(ctx, `
-			INSERT INTO notifications
-				(id, workspace_id, member_id, type, title, body, entity_type, entity_id, url)
-			SELECT $1, $2, $3, 'customer_reply', 'New customer reply', $4, 'message', $5, $6
-			WHERE NOT EXISTS (
-				SELECT 1 FROM notifications
-				WHERE workspace_id = $2 AND member_id = $3
-				  AND type = 'customer_reply' AND entity_type = 'message' AND entity_id = $7
-			)
-		`, ids.New(ids.PrefixNotification), workspaceID, memberID, preview, messageID, url, messageID); err != nil {
-			return fmt.Errorf("notification: insert: %w", err)
+		if err := s.insertForMember(ctx, workspaceID, memberID, authorMemberID, "customer_reply", "New customer reply", preview, url, "message", messageID, "message:"+messageID); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// NotifyFeedbackSubscribers queues one status-change email per subscribed
+// customer. The event ID is part of each dedupe key, so event-consumer retries
+// cannot send duplicates while later status changes still notify normally.
+func (s *Service) NotifyFeedbackSubscribers(ctx context.Context, workspaceID, itemID, sourceEventID string) error {
+	if s.jobs == nil {
+		return nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT c.id, coalesce(c.email::text,''), coalesce(c.name,''), i.title, i.status
+		FROM feedback_subscriptions subscriptions
+		JOIN feedback_items i ON i.id=subscriptions.item_id AND i.workspace_id=$1
+		JOIN customers c ON c.id=subscriptions.customer_id AND c.workspace_id=$1
+		LEFT JOIN customer_notification_preferences preferences
+		  ON preferences.customer_id=c.id AND preferences.workspace_id=c.workspace_id
+		WHERE subscriptions.item_id=$2 AND NULLIF(c.email::text,'') IS NOT NULL
+		  AND coalesce(preferences.feedback_updates,true)
+	`, workspaceID, itemID)
+	if err != nil {
+		return fmt.Errorf("notification: resolve feedback subscribers: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var customerID, address, name, title, status string
+		if err := rows.Scan(&customerID, &address, &name, &title, &status); err != nil {
+			return err
+		}
+		subject := "Feedback update: " + title
+		body := "Hi " + strings.TrimSpace(name) + ",\n\nThe feedback item “" + title + "” is now " + strings.ReplaceAll(status, "_", " ") + ".\n\nYou are receiving this because you followed this feedback item."
+		_, err := s.jobs.Enqueue(ctx, jobs.Spec{
+			WorkspaceID: workspaceID,
+			Queue:       "email",
+			Type:        "email.send",
+			Payload:     emailPayload{To: address, Subject: subject, Body: body},
+			DedupeKey:   "feedback-status-email:" + sourceEventID + ":" + customerID,
+		})
+		if errors.Is(err, jobs.ErrDuplicate) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("notification: queue feedback email: %w", err)
 		}
 	}
 	return rows.Err()

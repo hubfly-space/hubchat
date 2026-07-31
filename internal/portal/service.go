@@ -23,6 +23,7 @@ var (
 	ErrTokenExpired     = errors.New("portal: link expired")
 	ErrSessionInvalid   = errors.New("portal: session expired")
 	ErrCustomerNotFound = errors.New("portal: customer not found")
+	ErrInvalidProfile   = errors.New("portal: invalid profile")
 	ErrForbidden        = errors.New("portal: action is not enabled")
 )
 
@@ -65,6 +66,30 @@ type Customer struct {
 	Company  string `json:"company,omitempty"`
 	Language string `json:"language,omitempty"`
 	Timezone string `json:"timezone,omitempty"`
+}
+
+// NotificationPreferences are the customer-controlled, non-transactional
+// portal notifications. Replies remain mandatory because they are part of a
+// support conversation rather than a marketing preference.
+type NotificationPreferences struct {
+	TicketStatus    bool `json:"ticket_status"`
+	FeedbackUpdates bool `json:"feedback_updates"`
+	Changelog       bool `json:"changelog"`
+	Surveys         bool `json:"surveys"`
+}
+
+type NotificationPreferencesInput struct {
+	TicketStatus    *bool `json:"ticket_status"`
+	FeedbackUpdates *bool `json:"feedback_updates"`
+	Changelog       *bool `json:"changelog"`
+	Surveys         *bool `json:"surveys"`
+}
+
+type ProfileInput struct {
+	Name        *string                       `json:"name"`
+	Language    *string                       `json:"language"`
+	Timezone    *string                       `json:"timezone"`
+	Preferences *NotificationPreferencesInput `json:"preferences"`
 }
 
 type Session struct {
@@ -474,6 +499,119 @@ func (s *Service) Session(ctx context.Context, raw, portalID string) (*Session, 
 func (s *Service) Logout(ctx context.Context, raw string) error {
 	_, err := s.pool.Exec(ctx, `UPDATE portal_sessions SET revoked_at = now() WHERE token_hash = $1`, auth.HashToken(raw))
 	return err
+}
+
+// Preferences returns defaults even when a customer has never changed a
+// setting. The left join keeps onboarding friction at zero while making every
+// read workspace- and customer-scoped.
+func (s *Service) Preferences(ctx context.Context, workspaceID, customerID string) (*NotificationPreferences, error) {
+	var result NotificationPreferences
+	err := s.pool.QueryRow(ctx, `
+		SELECT coalesce(p.ticket_status,true), coalesce(p.feedback_updates,true),
+		       coalesce(p.changelog,false), coalesce(p.surveys,true)
+		FROM customers c
+		LEFT JOIN customer_notification_preferences p
+		  ON p.customer_id=c.id AND p.workspace_id=c.workspace_id
+		WHERE c.workspace_id=$1 AND c.id=$2
+	`, workspaceID, customerID).Scan(&result.TicketStatus, &result.FeedbackUpdates, &result.Changelog, &result.Surveys)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrCustomerNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("portal: load preferences: %w", err)
+	}
+	return &result, nil
+}
+
+// UpdateProfile persists the customer-editable profile fields and any
+// supplied preference fields atomically. Email is intentionally excluded: it
+// is the verified sign-in identity and requires a separate re-verification
+// flow before it may change.
+func (s *Service) UpdateProfile(ctx context.Context, session *Session, input ProfileInput) (*Customer, error) {
+	if session == nil || session.Portal == nil {
+		return nil, ErrSessionInvalid
+	}
+	name, language, timezone := input.Name, input.Language, input.Timezone
+	if name != nil {
+		value := strings.TrimSpace(*name)
+		if value == "" || len(value) > 200 {
+			return nil, ErrInvalidProfile
+		}
+		name = &value
+	}
+	if language != nil {
+		value := strings.TrimSpace(*language)
+		if len(value) > 32 {
+			return nil, ErrInvalidProfile
+		}
+		language = &value
+	}
+	if timezone != nil {
+		value := strings.TrimSpace(*timezone)
+		if len(value) > 64 {
+			return nil, ErrInvalidProfile
+		}
+		timezone = &value
+	}
+	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			UPDATE customers SET
+				name=CASE WHEN $3 THEN $4 ELSE name END,
+				language=CASE WHEN $5 THEN NULLIF($6,'') ELSE language END,
+				timezone=CASE WHEN $7 THEN NULLIF($8,'') ELSE timezone END
+			WHERE workspace_id=$1 AND id=$2
+		`, session.WorkspaceID, session.CustomerID, name != nil, valueOrEmpty(name), language != nil, valueOrEmpty(language), timezone != nil, valueOrEmpty(timezone)); err != nil {
+			return fmt.Errorf("portal: update profile: %w", err)
+		}
+		if input.Preferences == nil {
+			return nil
+		}
+		preferences := input.Preferences
+		_, err := tx.Exec(ctx, `
+			INSERT INTO customer_notification_preferences
+				(customer_id,workspace_id,ticket_status,feedback_updates,changelog,surveys)
+			VALUES ($1,$2,coalesce($3::boolean,true),coalesce($4::boolean,true),coalesce($5::boolean,false),coalesce($6::boolean,true))
+			ON CONFLICT (customer_id) DO UPDATE SET
+				workspace_id=EXCLUDED.workspace_id,
+				ticket_status=CASE WHEN $3::boolean IS NULL THEN customer_notification_preferences.ticket_status ELSE EXCLUDED.ticket_status END,
+				feedback_updates=CASE WHEN $4::boolean IS NULL THEN customer_notification_preferences.feedback_updates ELSE EXCLUDED.feedback_updates END,
+				changelog=CASE WHEN $5::boolean IS NULL THEN customer_notification_preferences.changelog ELSE EXCLUDED.changelog END,
+				surveys=CASE WHEN $6::boolean IS NULL THEN customer_notification_preferences.surveys ELSE EXCLUDED.surveys END,
+				updated_at=now()
+		`, session.CustomerID, session.WorkspaceID, preferences.TicketStatus, preferences.FeedbackUpdates, preferences.Changelog, preferences.Surveys)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.customerByID(ctx, session.WorkspaceID, session.CustomerID)
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func (s *Service) customerByID(ctx context.Context, workspaceID, customerID string) (*Customer, error) {
+	var customer Customer
+	err := s.pool.QueryRow(ctx, `
+		SELECT c.id, coalesce(c.name,''), coalesce(c.email::text,''),
+		       coalesce(c.language,''), coalesce(c.timezone,''), coalesce(co.name,'')
+		FROM customers c
+		LEFT JOIN company_customers cc ON cc.customer_id=c.id
+		LEFT JOIN companies co ON co.id=cc.company_id AND co.workspace_id=c.workspace_id
+		WHERE c.workspace_id=$1 AND c.id=$2
+		ORDER BY co.name NULLS LAST LIMIT 1
+	`, workspaceID, customerID).Scan(&customer.ID, &customer.Name, &customer.Email, &customer.Language, &customer.Timezone, &customer.Company)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrCustomerNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("portal: load customer: %w", err)
+	}
+	return &customer, nil
 }
 
 func (s *Service) customerByEmail(ctx context.Context, workspaceID, email string) (*Customer, error) {
