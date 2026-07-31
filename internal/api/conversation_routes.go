@@ -9,6 +9,7 @@ import (
 
 	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/conversation"
+	"github.com/hubchat/hubchat/internal/file"
 	"github.com/hubchat/hubchat/internal/httpserver"
 )
 
@@ -175,12 +176,13 @@ func handleListConversations(deps Deps) http.HandlerFunc {
 }
 
 type startConversationRequest struct {
-	InboxID    string  `json:"inbox_id"`
-	Channel    string  `json:"channel"`
-	Subject    *string `json:"subject"`
-	CustomerID *string `json:"customer_id"`
-	AuthorName string  `json:"author_name"`
-	Body       string  `json:"body"`
+	InboxID    string   `json:"inbox_id"`
+	Channel    string   `json:"channel"`
+	Subject    *string  `json:"subject"`
+	CustomerID *string  `json:"customer_id"`
+	AuthorName string   `json:"author_name"`
+	Body       string   `json:"body"`
+	FileIDs    []string `json:"file_ids"`
 }
 
 func handleStartConversation(deps Deps) http.HandlerFunc {
@@ -206,10 +208,16 @@ func handleStartConversation(deps Deps) http.HandlerFunc {
 			writeConversationError(w, r, err)
 			return
 		}
+		if deps.File != nil && len(req.FileIDs) > 0 {
+			if err := deps.File.AttachToMessage(r.Context(), actor.WorkspaceID, msg.ID, req.FileIDs); err != nil {
+				writeMessageAttachmentError(w, r, err)
+				return
+			}
+		}
 
 		httpserver.WriteJSON(w, http.StatusCreated, map[string]any{
 			"conversation": singleConversationJSON(r, deps, actor.WorkspaceID, actor.MemberID, *conv),
-			"message":      messageJSON(*msg),
+			"message":      messageJSONWithAttachments(r, deps, actor.WorkspaceID, *msg),
 		})
 	}
 }
@@ -248,16 +256,17 @@ func handleListMessages(deps Deps) http.HandlerFunc {
 
 		out := make([]any, len(messages))
 		for i, m := range messages {
-			out[i] = messageJSON(m)
+			out[i] = messageJSONWithAttachments(r, deps, actor.WorkspaceID, m)
 		}
 		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
 	}
 }
 
 type postMessageRequest struct {
-	Kind       string `json:"kind"` // "reply" or "note"
-	AuthorName string `json:"author_name"`
-	Body       string `json:"body"`
+	Kind       string   `json:"kind"` // "reply" or "note"
+	AuthorName string   `json:"author_name"`
+	Body       string   `json:"body"`
+	FileIDs    []string `json:"file_ids"`
 }
 
 func handlePostMessage(deps Deps) http.HandlerFunc {
@@ -300,8 +309,20 @@ func handlePostMessage(deps Deps) http.HandlerFunc {
 			writeConversationError(w, r, err)
 			return
 		}
+		if deps.File != nil && len(req.FileIDs) > 0 {
+			if err := deps.File.AttachToMessage(r.Context(), actor.WorkspaceID, conversationID, req.FileIDs); err != nil {
+				writeMessageAttachmentError(w, r, err)
+				return
+			}
+		}
+		if deps.Notification != nil {
+			if notifyErr := deps.Notification.NotifyConversationMessage(r.Context(), actor.WorkspaceID, conversationID,
+				msg.ID, msg.AuthorType, actor.MemberID, msg.Body); notifyErr != nil && deps.Logger != nil {
+				deps.Logger.Warn("could not create conversation notification", "conversation_id", conversationID, "error", notifyErr)
+			}
+		}
 
-		httpserver.WriteJSON(w, http.StatusCreated, messageJSON(*msg))
+		httpserver.WriteJSON(w, http.StatusCreated, messageJSONWithAttachments(r, deps, actor.WorkspaceID, *msg))
 	}
 }
 
@@ -619,8 +640,6 @@ func messageJSON(m conversation.Message) map[string]any {
 		"body":              m.Body,
 		"event_type":        nil,
 		"event_data":        nil,
-		// Attachments wait on internal/file (Stage 9) — always empty until
-		// there is anywhere to upload one from.
 		"attachments":       []string{},
 		"quoted_message_id": m.QuotedMessageID,
 		"delivery":          m.Delivery,
@@ -629,6 +648,36 @@ func messageJSON(m conversation.Message) map[string]any {
 		"sequence":          m.Sequence,
 		"created_at":        m.CreatedAt,
 	}
+}
+
+func messageJSONWithAttachments(r *http.Request, deps Deps, workspaceID string, m conversation.Message) map[string]any {
+	result := messageJSON(m)
+	if deps.File == nil {
+		return result
+	}
+	attachments, err := deps.File.MessageAttachments(r.Context(), workspaceID, m.ID)
+	if err != nil {
+		if deps.Logger != nil {
+			deps.Logger.Warn("could not load message attachments", "message_id", m.ID, "error", err)
+		}
+		return result
+	}
+	out := make([]any, 0, len(attachments))
+	for _, attachment := range attachments {
+		out = append(out, fileJSON(attachment))
+	}
+	result["attachments"] = out
+	return result
+}
+
+func writeMessageAttachmentError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, file.ErrInvalidAttachment) {
+		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError,
+			"One or more attachments are not available in this workspace.")
+		return
+	}
+	httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError,
+		"The message was sent, but its attachments could not be linked.")
 }
 
 type editMessageRequest struct {

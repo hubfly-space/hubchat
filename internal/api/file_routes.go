@@ -16,7 +16,7 @@ import (
 
 func registerFileRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /v1/files",
-		Idempotency(deps)(requireCapability(deps, authorization.ConversationReply, handleUploadFile(deps))))
+		requireCapability(deps, authorization.ConversationReply, Idempotency(deps)(handleUploadFile(deps))))
 	mux.HandleFunc("GET /v1/files/{id}",
 		requireActor(deps, handleDownloadFile(deps)))
 }
