@@ -5,6 +5,7 @@ import {
   CardBody,
   CardHeader,
   Checkbox,
+  ConfirmDialog,
   EmptyState,
   Field,
   Input,
@@ -23,6 +24,7 @@ import {
   ApiError,
   api,
   cn,
+  idempotencyKey,
   useMutation,
   useQuery,
 } from "@hubchat/shared";
@@ -91,6 +93,7 @@ export default function FormBuilder() {
   const [routing, setRouting] = useState<LiveForm["routing"]>({ inbox_id: null, team_id: null, tag_ids: [] });
   const [access, setAccess] = useState<LiveForm["access"]>("public");
   const [spamProtection, setSpamProtection] = useState<Record<string, unknown>>({});
+  const [discardOpen, setDiscardOpen] = useState(false);
 
   useEffect(() => {
     if (!form) return;
@@ -102,7 +105,7 @@ export default function FormBuilder() {
   }, [form]);
 
   const save = useMutation<void, LiveForm>(
-    () => api.patch<LiveForm>(`/forms/${formId}`, { ...form, fields, routing, access, spam_protection: spamProtection }),
+    () => api.patch<LiveForm>(`/forms/${formId}`, { fields, routing, access, spam_protection: spamProtection }, { idempotencyKey: idempotencyKey() }),
     { invalidates: [["form", formId], ["forms"]] },
   );
 
@@ -110,6 +113,16 @@ export default function FormBuilder() {
   if (query.isError || !form) return <Page><div className="p-8 text-sm text-danger">{query.error instanceof ApiError ? query.error.message : "Could not load this form."}</div></Page>;
 
   const active = fields.find((field) => field.id === activeId);
+  const dirty = JSON.stringify({ fields, routing, access, spamProtection }) !== JSON.stringify({ fields: form.fields, routing: form.routing, access: form.access, spamProtection: form.spam_protection ?? {} });
+
+  const discardChanges = () => {
+    setFields(form.fields);
+    setActiveId(form.fields[0]?.id ?? null);
+    setRouting({ inbox_id: form.routing?.inbox_id ?? null, team_id: form.routing?.team_id ?? null, tag_ids: form.routing?.tag_ids ?? [] });
+    setAccess(form.access);
+    setSpamProtection(form.spam_protection ?? {});
+    setDiscardOpen(false);
+  };
 
   const updateActiveField = (patch: Partial<FormField>) => {
     if (!activeId) return;
@@ -148,11 +161,9 @@ export default function FormBuilder() {
         }
         trailing={
           <>
-            <Button variant="ghost" size="sm">
-              Preview
-            </Button>
-            <Button variant="secondary" size="sm">
-              Discard
+            <span className="hidden text-xs text-fg-muted xl:inline">Live preview on the right</span>
+            <Button variant="secondary" size="sm" disabled={!dirty} onClick={() => setDiscardOpen(true)}>
+              Discard changes
             </Button>
             <Button variant="primary" size="sm" loading={save.isPending} onClick={() => void save.mutate().catch(() => {})}>
               Save
@@ -415,6 +426,16 @@ export default function FormBuilder() {
           </Card>
         </aside>
       </div>
+
+      <ConfirmDialog
+        open={discardOpen}
+        onOpenChange={setDiscardOpen}
+        title="Discard unsaved form changes?"
+        description="The builder will return to the last version saved on the server. This only discards local edits; it does not delete the form."
+        confirmLabel="Discard changes"
+        destructive
+        onConfirm={discardChanges}
+      />
     </Page>
   );
 }

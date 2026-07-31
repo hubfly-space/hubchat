@@ -93,6 +93,33 @@ func TestEnqueueDeduplicatesLiveWork(t *testing.T) {
 	}
 }
 
+func TestCancelPendingJobIsWorkspaceScoped(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+
+	client := jobs.NewClient(pool)
+	workspaceID := seedWorkspace(t, ctx, pool, "cancel")
+	jobID, err := client.Enqueue(ctx, jobs.Spec{WorkspaceID: workspaceID, Type: "test.cancel"})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	if err := client.Cancel(ctx, workspaceID, jobID); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	var state string
+	if err := pool.QueryRow(ctx, `SELECT state FROM jobs WHERE id = $1`, jobID).Scan(&state); err != nil {
+		t.Fatalf("read cancelled job: %v", err)
+	}
+	if state != string(jobs.StateCancelled) {
+		t.Fatalf("cancelled job state = %q, want %q", state, jobs.StateCancelled)
+	}
+	if err := client.Cancel(ctx, workspaceID, jobID); !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("second cancel error = %v, want ErrNotFound", err)
+	}
+}
+
 // Concurrent enqueues of the same dedupe key: exactly one must win. This is
 // the case a check-then-insert gets wrong.
 func TestEnqueueDeduplicatesUnderConcurrency(t *testing.T) {

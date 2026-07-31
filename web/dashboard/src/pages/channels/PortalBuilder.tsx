@@ -8,6 +8,7 @@ import {
   Checkbox,
   CodeBlock,
   ColorPicker,
+  ConfirmDialog,
   EmptyState,
   Field,
   Input,
@@ -40,12 +41,19 @@ export default function PortalBuilder() {
   const { portalId } = useParams();
   const query = useQuery<Record<string, unknown>>(["portal", portalId], (signal) => api.get(`/portals/${encodeURIComponent(portalId ?? "")}`, { signal }), { enabled: Boolean(portalId) });
   const [draft, setDraft] = useState<Portal | undefined>();
+  const [savedDraft, setSavedDraft] = useState<Portal | undefined>();
   const [tab, setTab] = useState("branding");
   const [previewTheme, setPreviewTheme] = useState<"light" | "dark">("light");
-  const save = useMutation<Partial<Portal>, Portal>((input) => api.patch(`/portals/${encodeURIComponent(portalId ?? "")}`, input, { idempotencyKey: idempotencyKey() }), { onSuccess: (value) => setDraft(normalizePortal(value)) });
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const [disableOpen, setDisableOpen] = useState(false);
+  const save = useMutation<Partial<Portal>, Portal>((input) => api.patch(`/portals/${encodeURIComponent(portalId ?? "")}`, input, { idempotencyKey: idempotencyKey() }), { onSuccess: (value) => { const next = normalizePortal(value); setDraft(next); setSavedDraft(next); } });
 
   useEffect(() => {
-    if (query.data) setDraft(normalizePortal(query.data));
+    if (query.data) {
+      const next = normalizePortal(query.data);
+      setDraft(next);
+      setSavedDraft(next);
+    }
   }, [query.data]);
 
   if (query.isLoading) return <Page><PageHeader title="Portal builder" description="Loading portal configuration…" /><PageBody><p className="text-sm text-fg-muted">Loading live configuration…</p></PageBody></Page>;
@@ -63,6 +71,14 @@ export default function PortalBuilder() {
     setDraft((current) =>
       current ? { ...current, theme: { ...current.theme, [key]: value } } : current,
     );
+  const dirty = Boolean(savedDraft && JSON.stringify(draft) !== JSON.stringify(savedDraft));
+  const discardChanges = () => {
+    if (savedDraft) setDraft(savedDraft);
+    setDiscardOpen(false);
+  };
+  const setPermission = (key: keyof Portal["permissions"], value: boolean) => setDraft((current) => current ? { ...current, permissions: { ...current.permissions, [key]: value } } : current);
+  const setAuthMethod = (method: Portal["auth_methods"][number], enabled: boolean) => setDraft((current) => current ? { ...current, auth_methods: enabled ? [...new Set([...current.auth_methods, method])] : current.auth_methods.filter((item) => item !== method) } : current);
+  const updateNavigation = (id: string, patch: Partial<Portal["navigation"][number]>) => setDraft((current) => current ? { ...current, navigation: current.navigation.map((item) => item.id === id ? { ...item, ...patch } : item) } : current);
 
   return (
     <Page>
@@ -78,10 +94,10 @@ export default function PortalBuilder() {
         }
         trailing={
           <>
-            <Button variant="secondary" size="sm">
-              Discard
+            <Button variant="secondary" size="sm" disabled={!dirty} onClick={() => setDiscardOpen(true)}>
+              Discard changes
             </Button>
-            <Button variant="primary" size="sm" loading={save.isPending} onClick={() => void save.mutate({ theme: draft.theme, features: draft.features, auth_methods: draft.auth_methods, permissions: draft.permissions })}>
+            <Button variant="primary" size="sm" loading={save.isPending} onClick={() => void save.mutate({ subdomain: draft.subdomain, theme: draft.theme, features: draft.features, auth_methods: draft.auth_methods, permissions: draft.permissions, navigation: draft.navigation })}>
               Publish
             </Button>
           </>

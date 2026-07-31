@@ -141,6 +141,7 @@ type UpdateRequest struct {
 	Features        map[string]any
 	AuthMethods     []string
 	Permissions     map[string]any
+	Navigation      *[]NavigationItem
 	DefaultInboxID  *string
 	DefaultLanguage *string
 	Enabled         *bool
@@ -243,7 +244,12 @@ func (s *Service) Update(ctx context.Context, workspaceID, id string, req Update
 		value := strings.Trim(strings.ToLower(strings.TrimSpace(*req.Subdomain)), ".")
 		req.Subdomain = &value
 	}
-	_, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("portal: update begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `
 		UPDATE portals SET
 			name = COALESCE($3, name), subdomain = COALESCE($4, subdomain),
 			theme = COALESCE($5, theme), features = COALESCE($6, features),
@@ -256,6 +262,30 @@ func (s *Service) Update(ctx context.Context, workspaceID, id string, req Update
 		nilIfEmpty(req.AuthMethods), optionalJSON(req.Permissions), req.DefaultInboxID, req.DefaultLanguage, req.Enabled)
 	if err != nil {
 		return nil, fmt.Errorf("portal: update: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrNotFound
+	}
+	if req.Navigation != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM portal_navigation_items WHERE portal_id = $1`, id); err != nil {
+			return nil, fmt.Errorf("portal: replace navigation: %w", err)
+		}
+		for position, item := range *req.Navigation {
+			label := strings.TrimSpace(item.Label)
+			href := strings.TrimSpace(item.Href)
+			if label == "" || href == "" {
+				return nil, errors.New("portal: navigation label and target are required")
+			}
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO portal_navigation_items (id, portal_id, label, href, external, position)
+				VALUES ($1, $2, $3, $4, $5, $6)
+			`, ids.New(ids.PrefixPortalNavItem), id, label, href, item.External, position); err != nil {
+				return nil, fmt.Errorf("portal: insert navigation: %w", err)
+			}
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("portal: update commit: %w", err)
 	}
 	return s.Get(ctx, workspaceID, id)
 }
