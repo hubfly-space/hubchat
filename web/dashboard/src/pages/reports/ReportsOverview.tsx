@@ -4,23 +4,21 @@ import {
   Callout,
   Card,
   CardBody,
-  CardHeader,
   DonutChart,
-  HeatMap,
+  EmptyState,
   Metric,
   Page,
   PageBody,
   PageHeader,
   Section,
   SegmentedControl,
+  api,
   formatCompact,
-  formatDuration,
-  formatPercent,
+  useQuery,
 } from "@hubchat/shared";
-import { CalendarClock, Download, Info } from "lucide-react";
+import { CalendarClock, Download, Inbox, Info } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { analytics } from "../../data/fixtures";
 
 export const RANGES = [
   { value: "7d", label: "7 days" },
@@ -28,14 +26,29 @@ export const RANGES = [
   { value: "90d", label: "90 days" },
 ] as const;
 
-const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const HOURS = ["00", "02", "04", "06", "08", "10", "12", "14", "16", "18", "20", "22"];
+type Rollup = {
+  bucket: string;
+  value: number;
+  count: number;
+  dimensions: Record<string, unknown>;
+};
 
-/** Reporting overview (§6.18). */
+/** Reporting overview backed by the durable event rollups. */
 export default function ReportsOverview() {
   const [range, setRange] = useState<string>("30d");
-  const days = range === "7d" ? 7 : range === "30d" ? 30 : 30;
-  const slice = <T,>(points: T[]) => points.slice(-days);
+  const days = range === "7d" ? 7 : range === "90d" ? 90 : 30;
+  const query = (metric: string) => {
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    return `/analytics/rollups?metric=${encodeURIComponent(metric)}&grain=day&from=${encodeURIComponent(from)}`;
+  };
+  const conversations = useQuery<{ data: Rollup[] }>(["reports", "conversations", range], (signal) => api.get(query("conversations.created"), { signal }));
+  const tickets = useQuery<{ data: Rollup[] }>(["reports", "tickets", range], (signal) => api.get(query("tickets.created"), { signal }));
+
+  const conversationPoints = toPoints(conversations.data?.data ?? []);
+  const ticketPoints = toPoints(tickets.data?.data ?? []);
+  const channelSplit = splitChannels(conversations.data?.data ?? []);
+  const loading = conversations.isLoading || tickets.isLoading;
+  const failed = conversations.isError || tickets.isError;
 
   return (
     <Page>
@@ -44,128 +57,65 @@ export default function ReportsOverview() {
         description="Deterministic aggregates over stored events. Every metric shows its definition."
         actions={
           <>
-            <SegmentedControl
-              aria-label="Date range"
-              value={range}
-              onValueChange={setRange}
-              options={RANGES.map((item) => ({ value: item.value, label: item.label }))}
-            />
-            <Button variant="secondary" size="sm" leading={<CalendarClock />}>
-              Schedule
-            </Button>
-            <Button variant="secondary" size="sm" leading={<Download />}>
-              Export CSV
-            </Button>
+            <SegmentedControl aria-label="Date range" value={range} onValueChange={setRange} options={RANGES.map((item) => ({ value: item.value, label: item.label }))} />
+            <Button variant="secondary" size="sm" leading={<CalendarClock />}>Schedule</Button>
+            <Button variant="secondary" size="sm" leading={<Download />}>Export CSV</Button>
           </>
         }
       />
 
       <PageBody>
         <Callout tone="info" icon={<Info />} className="mb-5">
-          All figures are computed in the workspace timezone (Europe/Lisbon) and, where the metric
-          is duration-based, counted against business hours rather than wall-clock time.
+          Figures are folded from the append-only event log in UTC day buckets. A rollup is empty until the worker has processed the workspace events.
         </Callout>
 
-        <Section title="Headline">
-          <Card>
-            <CardBody className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
-              <Metric
-                label="Conversations"
-                value={formatCompact(slice(analytics.conversations).reduce((s, p) => s + p.v, 0))}
-                delta={0.082}
-                sparkline={slice(analytics.conversations)}
-                definition="Conversations created in the period, across every channel."
-              />
-              <Metric
-                label="Median first response"
-                value={formatDuration(analytics.firstResponse.at(-1)?.v ?? 0)}
-                delta={-0.114}
-                higherIsBetter={false}
-                definition="Time from the first customer message to the first public agent reply, in business hours."
-              />
-              <Metric
-                label="SLA compliance"
-                value={formatPercent(0.912, 1)}
-                delta={0.024}
-                definition="Share of conversations that met every SLA target that applied to them."
-              />
-              <Metric
-                label="Satisfaction"
-                value={formatPercent((analytics.csat.at(-1)?.v ?? 0) / 100)}
-                delta={0.015}
-                sparkline={slice(analytics.csat)}
-                definition="Share of CSAT responses rating 4 or 5 out of 5."
-              />
-            </CardBody>
-          </Card>
-        </Section>
-
-        <Section title="Volume and backlog">
-          <Card>
-            <CardBody>
-              <AreaChart
-                height={220}
-                series={[
-                  { key: "conversations", label: "Conversations", points: slice(analytics.conversations), tone: 1 },
-                  { key: "tickets", label: "Tickets", points: slice(analytics.tickets), tone: 2 },
-                  { key: "backlog", label: "Backlog", points: slice(analytics.backlog), tone: 3, reference: true },
-                ]}
-                formatLabel={(label) => label.slice(5)}
-              />
-            </CardBody>
-          </Card>
-        </Section>
-
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Section title="When contacts arrive">
-            <Card>
-              <CardHeader
-                title="Volume by weekday and hour"
-                description="Workspace timezone. Use this to place shift boundaries."
-              />
-              <CardBody>
-                <HeatMap
-                  data={analytics.heatmap}
-                  rowLabels={WEEKDAYS}
-                  columnLabels={HOURS}
-                />
-              </CardBody>
-            </Card>
-          </Section>
-
-          <Section title="Channel mix">
-            <Card>
-              <CardHeader title="Where contacts arrive" />
-              <CardBody>
-                <DonutChart
-                  segments={analytics.channelSplit}
-                  centerValue={formatCompact(
-                    analytics.channelSplit.reduce((sum, segment) => sum + segment.value, 0),
-                  )}
-                  centerLabel="contacts"
-                />
-              </CardBody>
-            </Card>
-          </Section>
-        </div>
-
-        <Section title="Go deeper">
-          <div className="grid gap-3 sm:grid-cols-3">
-            {[
-              { to: "/reports/support", title: "Support operations", detail: "Response and resolution times, backlog, SLA compliance, agent workload." },
-              { to: "/reports/experience", title: "Customer experience", detail: "Satisfaction, effort, recommendation, repeat contacts, article helpfulness." },
-              { to: "/reports/surfaces", title: "Widget & portal", detail: "Impressions, opens, conversation starts, form submissions, deflection." },
-            ].map((report) => (
-              <Card key={report.to} interactive className="p-0">
-                <Link to={report.to} className="block p-4">
-                  <p className="text-sm font-medium text-fg">{report.title}</p>
-                  <p className="mt-1 text-xs leading-normal text-fg-muted">{report.detail}</p>
-                </Link>
+        {loading ? <p className="text-sm text-fg-muted">Loading live report rollups…</p> : failed ? <EmptyState icon={Inbox} title="Reports unavailable" description="The analytics rollup API could not be loaded." action={<Button variant="secondary" size="sm" onClick={() => { conversations.refetch(); tickets.refetch(); }}>Try again</Button>} /> : (
+          <>
+            <Section title="Headline">
+              <Card>
+                <CardBody className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
+                  <Metric label="Conversations" value={formatCompact(sum(conversationPoints))} sparkline={conversationPoints} definition="Conversations created in the selected period, across every channel." />
+                  <Metric label="Tickets" value={formatCompact(sum(ticketPoints))} sparkline={ticketPoints} definition="Tickets created in the selected period." />
+                  <Metric label="First response" value="—" definition="This duration metric will appear when response-time rollups are available." />
+                  <Metric label="SLA compliance" value="—" definition="This ratio will appear after SLA instance outcomes are folded." />
+                </CardBody>
               </Card>
-            ))}
-          </div>
-        </Section>
+            </Section>
+
+            <Section title="Volume">
+              <Card><CardBody><AreaChart height={220} series={[{ key: "conversations", label: "Conversations", points: conversationPoints, tone: 1 }, { key: "tickets", label: "Tickets", points: ticketPoints, tone: 2 }]} formatLabel={(label) => label.slice(5)} /></CardBody></Card>
+            </Section>
+
+            <Section title="Channel mix">
+              {channelSplit.length === 0 ? <Card><CardBody><EmptyState icon={Inbox} title="No channel events yet" description="Channel mix appears after the first conversation events are folded." /></CardBody></Card> : <Card><CardBody><DonutChart segments={channelSplit} centerValue={formatCompact(channelSplit.reduce((total, item) => total + item.value, 0))} centerLabel="conversations" /></CardBody></Card>}
+            </Section>
+
+            <Section title="Go deeper">
+              <div className="grid gap-3 sm:grid-cols-3">
+                {[{ to: "/reports/support", title: "Support operations", detail: "Response and resolution times, backlog, SLA compliance, agent workload." }, { to: "/reports/experience", title: "Customer experience", detail: "Satisfaction, effort, recommendation, repeat contacts, article helpfulness." }, { to: "/reports/surfaces", title: "Widget & portal", detail: "Impressions, opens, conversation starts, form submissions, deflection." }].map((report) => <Card key={report.to} interactive className="p-0"><Link to={report.to} className="block p-4"><p className="text-sm font-medium text-fg">{report.title}</p><p className="mt-1 text-xs leading-normal text-fg-muted">{report.detail}</p></Link></Card>)}
+              </div>
+            </Section>
+          </>
+        )}
       </PageBody>
     </Page>
   );
+}
+
+function toPoints(items: Rollup[]) {
+  return items.map((item) => ({ t: item.bucket, v: item.value }));
+}
+
+function sum(points: { v: number }[]) {
+  return points.reduce((total, point) => total + point.v, 0);
+}
+
+function splitChannels(items: Rollup[]) {
+  const totals = new Map<string, number>();
+  for (const item of items) {
+    const channel = typeof item.dimensions.channel === "string" ? item.dimensions.channel : "other";
+    totals.set(channel, (totals.get(channel) ?? 0) + item.value);
+  }
+  const tones = [1, 2, 3, 4, 5] as const;
+  return [...totals.entries()].map(([key, value], index) => ({ key, label: key, value, tone: tones[index % tones.length] ?? 1 }));
 }
