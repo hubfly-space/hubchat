@@ -128,6 +128,23 @@
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceID" }],
       "get": { "$ref": "#/components/operations/publicList", "operationId": "searchPublicArticles", "security": [], "tags": ["Knowledge base"] }
     },
+    "/v1/changelog": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listChangelogEntries", "tags": ["Knowledge base"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createChangelogEntry", "tags": ["Knowledge base"] }
+    },
+    "/v1/changelog/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/get", "operationId": "getChangelogEntry", "tags": ["Knowledge base"] },
+      "patch": { "$ref": "#/components/operations/update", "operationId": "updateChangelogEntry", "tags": ["Knowledge base"] }
+    },
+    "/v1/changelog/{id}/publish": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "post": { "$ref": "#/components/operations/publicCreate", "operationId": "publishChangelogEntry", "tags": ["Knowledge base"] }
+    },
+    "/v1/public/changelog/{workspaceID}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceID" }],
+      "get": { "$ref": "#/components/operations/publicList", "operationId": "listPublicChangelogEntries", "security": [], "tags": ["Knowledge base"] }
+    },
     "/v1/surveys": {
       "get": { "$ref": "#/components/operations/list", "operationId": "listSurveys", "tags": ["Surveys"] },
       "post": { "$ref": "#/components/operations/create", "operationId": "createSurvey", "tags": ["Surveys"] }

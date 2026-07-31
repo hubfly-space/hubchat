@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/httpserver"
@@ -22,6 +21,11 @@ func registerKnowledgeBaseRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/articles/{id}", requireCapability(deps, authorization.KnowledgebaseManage, handleGetArticle(deps)))
 	mux.HandleFunc("PATCH /v1/articles/{id}", requireCapability(deps, authorization.KnowledgebaseManage, handleUpdateArticle(deps)))
 	mux.HandleFunc("POST /v1/articles/{id}/publish", requireCapability(deps, authorization.KnowledgebaseManage, Idempotency(deps)(handlePublishArticle(deps))))
+	mux.HandleFunc("GET /v1/changelog", requireCapability(deps, authorization.KnowledgebaseManage, handleListChangelog(deps)))
+	mux.HandleFunc("POST /v1/changelog", requireCapability(deps, authorization.KnowledgebaseManage, Idempotency(deps)(handleCreateChangelog(deps))))
+	mux.HandleFunc("GET /v1/changelog/{id}", requireCapability(deps, authorization.KnowledgebaseManage, handleGetChangelog(deps)))
+	mux.HandleFunc("PATCH /v1/changelog/{id}", requireCapability(deps, authorization.KnowledgebaseManage, handleUpdateChangelog(deps)))
+	mux.HandleFunc("POST /v1/changelog/{id}/publish", requireCapability(deps, authorization.KnowledgebaseManage, Idempotency(deps)(handlePublishChangelog(deps))))
 
 	// Public search only exposes published articles and records no-result
 	// searches for content-gap reporting.
@@ -33,32 +37,83 @@ func registerKnowledgeBaseRoutes(mux *http.ServeMux, deps Deps) {
 
 func handlePublicChangelog(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		rows, err := deps.Pool.Query(r.Context(), `
-			SELECT id, title, body, kind, published_at
-			FROM changelog_entries
-			WHERE workspace_id=$1 AND published_at IS NOT NULL AND published_at <= now()
-			ORDER BY published_at DESC, id DESC LIMIT 100
-		`, r.PathValue("workspaceID"))
+		entries, err := deps.Knowledgebase.ListPublishedChangelog(r.Context(), r.PathValue("workspaceID"), 100)
 		if err != nil {
 			writeKnowledgebaseInternal(w, r)
 			return
 		}
-		defer rows.Close()
-		items := make([]map[string]any, 0)
-		for rows.Next() {
-			var id, title, body, kind string
-			var publishedAt time.Time
-			if err := rows.Scan(&id, &title, &body, &kind, &publishedAt); err != nil {
-				writeKnowledgebaseInternal(w, r)
-				return
-			}
-			items = append(items, map[string]any{"id": id, "title": title, "body": body, "kind": kind, "published_at": publishedAt})
+		items := make([]map[string]any, 0, len(entries))
+		for _, item := range entries {
+			items = append(items, map[string]any{"id": item.ID, "title": item.Title, "body": item.Body, "kind": item.Kind, "published_at": item.PublishedAt})
 		}
-		if err := rows.Err(); err != nil {
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+	}
+}
+
+func handleListChangelog(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		items, err := deps.Knowledgebase.ListChangelog(r.Context(), actorFromRequest(r).WorkspaceID, 200)
+		if err != nil {
 			writeKnowledgebaseInternal(w, r)
 			return
 		}
 		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+	}
+}
+
+func handleCreateChangelog(deps Deps) http.HandlerFunc {
+	return saveChangelog(deps, "")
+}
+
+func handleUpdateChangelog(deps Deps) http.HandlerFunc {
+	return saveChangelog(deps, "update")
+}
+
+func saveChangelog(deps Deps, mode string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input knowledgebase.ChangelogInput
+		if err := httpserver.DecodeJSON(r, &input); err != nil {
+			writeKnowledgebaseValidation(w, r, err)
+			return
+		}
+		actor := actorFromRequest(r)
+		id := ""
+		if mode == "update" {
+			id = r.PathValue("id")
+		}
+		item, err := deps.Knowledgebase.SaveChangelog(r.Context(), actor.WorkspaceID, actor.MemberID, id, input)
+		if err != nil {
+			writeKnowledgebaseError(w, r, err)
+			return
+		}
+		status := http.StatusOK
+		if id == "" {
+			status = http.StatusCreated
+		}
+		httpserver.WriteJSON(w, status, item)
+	}
+}
+
+func handleGetChangelog(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		item, err := deps.Knowledgebase.GetChangelog(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"))
+		if err != nil {
+			writeKnowledgebaseError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, item)
+	}
+}
+
+func handlePublishChangelog(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		item, err := deps.Knowledgebase.PublishChangelog(r.Context(), actor.WorkspaceID, actor.MemberID, r.PathValue("id"))
+		if err != nil {
+			writeKnowledgebaseError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, item)
 	}
 }
 
@@ -238,7 +293,7 @@ func writeKnowledgebaseError(w http.ResponseWriter, r *http.Request, err error) 
 	switch {
 	case errors.Is(err, knowledgebase.ErrNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Knowledge-base resource not found.")
-	case errors.Is(err, knowledgebase.ErrInvalidName), errors.Is(err, knowledgebase.ErrInvalidSlug), errors.Is(err, knowledgebase.ErrInvalidState), errors.Is(err, knowledgebase.ErrInvalidLanguage), errors.Is(err, knowledgebase.ErrInvalidArticle):
+	case errors.Is(err, knowledgebase.ErrInvalidName), errors.Is(err, knowledgebase.ErrInvalidSlug), errors.Is(err, knowledgebase.ErrInvalidState), errors.Is(err, knowledgebase.ErrInvalidLanguage), errors.Is(err, knowledgebase.ErrInvalidArticle), errors.Is(err, knowledgebase.ErrInvalidChangelog):
 		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, err.Error())
 	default:
 		writeKnowledgebaseInternal(w, r)
