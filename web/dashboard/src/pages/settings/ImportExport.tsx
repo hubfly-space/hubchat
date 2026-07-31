@@ -86,6 +86,7 @@ function errorMessage(error: unknown, fallback: string): string {
 /** Import, export, and portability (§6.20). */
 export default function ImportExport() {
   const [tab, setTab] = useState("export");
+  const [importKind, setImportKind] = useState<"workspace" | "customers_csv" | "companies_csv" | "tickets_csv" | "knowledgebase_markdown">("workspace");
   const [downloadError, setDownloadError] = useState("");
   const [previewRows, setPreviewRows] = useState<PreviewSummary[] | null>(null);
   const [previewID, setPreviewID] = useState<string | null>(null);
@@ -121,8 +122,8 @@ export default function ImportExport() {
     () => api.post("/portability/exports", { kind: "workspace" }, { workspaceId, idempotencyKey: idempotencyKey() }),
     { invalidates: [["portability-exports", workspaceId]] },
   );
-  const createImport = useMutation<{ file_id: string }, ImportRequest>(
-    (input) => api.post("/portability/imports", { ...input, kind: "workspace", auto_start: false }, { workspaceId, idempotencyKey: idempotencyKey() }),
+  const createImport = useMutation<{ file_id: string; kind: string }, ImportRequest>(
+    (input) => api.post("/portability/imports", { ...input, auto_start: false }, { workspaceId, idempotencyKey: idempotencyKey() }),
     { invalidates: [["portability-imports", workspaceId]] },
   );
   const confirmImport = useMutation<{ backup_verified: boolean }, ImportRequest>(
@@ -132,10 +133,8 @@ export default function ImportExport() {
   const uploadAndImport = async (selected: File) => {
     const form = new FormData();
     form.append("file", selected);
-    form.append("owner_type", "workspace");
-    form.append("owner_id", workspaceId);
-    const uploaded = await api.post<{ id: string }>("/files", form, { workspaceId, idempotencyKey: idempotencyKey() });
-    await createImport.mutate({ file_id: uploaded.id });
+    const uploaded = await api.post<{ id: string }>("/portability/import-files", form, { workspaceId, idempotencyKey: idempotencyKey() });
+    await createImport.mutate({ file_id: uploaded.id, kind: importKind });
   };
   const downloadExport = async (fileID: string) => {
     setDownloadError("");
@@ -217,10 +216,10 @@ export default function ImportExport() {
           </TabsContent>
 
           <TabsContent value="import">
-            <Callout tone="warning" className="mb-4">Upload a Hubchat workspace archive to preview its row counts before importing. The preview reads the archive without writing tenant records.</Callout>
-            <input ref={fileInput} type="file" accept=".gz,.json,application/gzip,application/json" className="sr-only" onChange={(event) => { const selected = event.target.files?.[0]; event.target.value = ""; if (selected) void uploadAndImport(selected).catch(() => {}); }} />
-            <Section title="Workspace archive">
-              <Card><CardBody className="flex items-center gap-4"><Upload className="size-5 shrink-0 text-fg-muted" /><div className="min-w-0 flex-1"><p className="text-sm text-fg">Import a .json.gz archive</p><p className="mt-0.5 text-xs text-fg-muted">The archive is uploaded as a workspace-owned file and processed by the job queue.</p></div><Button variant="secondary" size="sm" leading={<Upload />} loading={createImport.isPending} onClick={() => fileInput.current?.click()}>Choose file</Button></CardBody></Card>
+            <Callout tone="warning" className="mb-4">Upload a workspace archive or CSV roster to preview conflicts before importing. Preview reads the file without writing tenant records.</Callout>
+            <input ref={fileInput} type="file" accept={importKind === "workspace" ? ".gz,.json,application/gzip,application/json" : importKind === "knowledgebase_markdown" ? ".md,.markdown,text/markdown,text/plain" : ".csv,text/csv"} className="sr-only" onChange={(event) => { const selected = event.target.files?.[0]; event.target.value = ""; if (selected) void uploadAndImport(selected).catch(() => {}); }} />
+            <Section title="Import file">
+              <Card><CardBody className="flex flex-wrap items-center gap-4"><Upload className="size-5 shrink-0 text-fg-muted" /><div className="min-w-0 flex-1"><p className="text-sm text-fg">Choose an import type and file</p><p className="mt-0.5 text-xs text-fg-muted">Workspace archives, customer CSVs, company CSVs, ticket CSVs, and Markdown articles are processed as resumable jobs.</p></div><select aria-label="Import type" value={importKind} onChange={(event) => setImportKind(event.target.value as typeof importKind)} className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg"><option value="workspace">Workspace archive</option><option value="customers_csv">Customers CSV</option><option value="companies_csv">Companies CSV</option><option value="tickets_csv">Tickets CSV</option><option value="knowledgebase_markdown">Knowledge-base Markdown</option></select><Button variant="secondary" size="sm" leading={<Upload />} loading={createImport.isPending} onClick={() => fileInput.current?.click()}>Choose file</Button></CardBody></Card>
               {Boolean(uploadError) && <p className="mt-2 text-sm text-danger">{errorMessage(uploadError, "The import could not be started.")}</p>}
             </Section>
             <Section title="Import history">

@@ -113,10 +113,30 @@ export function submitForm(
   token: string | null,
   slug: string,
   values: Record<string, unknown>,
+  fileIDs: Record<string, string> = {},
 ): Promise<{ id: string; status: string; token?: string }> {
   return post(host, `/forms/${encodeURIComponent(slug)}/submissions`, {
-    public_key: publicKey, url: location.href, token: token ?? "", values,
+    public_key: publicKey, url: location.href, token: token ?? "", values, file_ids: fileIDs,
   });
+}
+
+export async function uploadFormFile(
+  host: string,
+  publicKey: string,
+  token: string,
+  slug: string,
+  file: File,
+): Promise<{ id: string; name: string; mime_type?: string; size_bytes?: number; token?: string }> {
+  const body = new FormData();
+  body.append("file", file);
+  body.append("public_key", publicKey);
+  body.append("url", location.href);
+  body.append("token", token);
+  const params = new URLSearchParams({ key: publicKey, url: location.href, token });
+  const response = await fetch(`${endpoint(host, `/forms/${encodeURIComponent(slug)}/files`)}?${params.toString()}`, {
+    method: "POST", credentials: "omit", body,
+  });
+  return parse(response);
 }
 
 export async function listFeedbackBoards(host: string, publicKey: string): Promise<WidgetFeedbackBoard[]> {

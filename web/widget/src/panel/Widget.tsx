@@ -31,6 +31,7 @@ import {
   subscribeFeedbackItem,
   unsubscribeFeedbackItem,
   submitForm,
+  uploadFormFile,
   track as apiTrack,
   uploadFile,
   voteFeedbackItem,
@@ -1041,6 +1042,8 @@ function FormScreen({ host, publicKey, token, initialSlug, onToken, onDone }: {
   const [forms, setForms] = useState<WidgetForm[]>([]);
   const [form, setForm] = useState<WidgetForm | null>(null);
   const [values, setValues] = useState<Record<string, unknown>>({});
+  const [fileIDs, setFileIDs] = useState<Record<string, string>>({});
+  const [uploadingField, setUploadingField] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
@@ -1073,7 +1076,7 @@ function FormScreen({ host, publicKey, token, initialSlug, onToken, onDone }: {
     if (!form) return;
     setSending(true); setError("");
     try {
-      const result = await submitForm(host, publicKey, token, form.slug, values);
+      const result = await submitForm(host, publicKey, token, form.slug, values, fileIDs);
       if (result.token) onToken(result.token);
       setSent(true);
     } catch (reason) {
@@ -1085,7 +1088,19 @@ function FormScreen({ host, publicKey, token, initialSlug, onToken, onDone }: {
   if (sent) return <div className="p-6 text-center"><p className="text-sm font-medium text-fg">Request received</p><p className="mt-1.5 text-xs leading-normal text-fg-muted">Your submission was sent to the support team.</p><button type="button" onClick={onDone} className="mt-4 rounded-md border border-line px-3 py-1.5 text-xs text-fg-secondary transition-colors hover:bg-fill">Back</button></div>;
   if (!form) return <div className="p-6 text-center"><p className="text-sm font-medium text-fg">No request forms are available</p><p className="mt-1.5 text-xs text-fg-muted">Start a conversation instead and a person will help you there.</p>{error && <p className="mt-2 text-xs text-danger">{error}</p>}<button type="button" onClick={onDone} className="mt-4 rounded-md border border-line px-3 py-1.5 text-xs text-fg-secondary">Back</button></div>;
 
-  return <div className="p-3"><div className="mb-3 flex items-center gap-2">{forms.length > 1 && <select value={form.slug} onChange={(event) => { setForm(forms.find((item) => item.slug === event.target.value) ?? form); setValues({}); }} className="min-w-0 flex-1 rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg"><option value={form.slug}>{form.name}</option>{forms.filter((item) => item.slug !== form.slug).map((item) => <option key={item.slug} value={item.slug}>{item.name}</option>)}</select>}{forms.length === 1 && <p className="text-sm font-medium text-fg">{form.name}</p>}</div>{form.description && <p className="mb-3 text-xs leading-normal text-fg-muted">{form.description}</p>}<form className="flex flex-col gap-3" onSubmit={(event) => void submit(event)}>{form.fields.filter(visible).map((field) => <label key={field.key} className="flex flex-col gap-1"><span className="text-xs font-medium text-fg-secondary">{field.label}{field.required && <span className="text-danger"> *</span>}</span>{field.description && <span className="text-[11px] text-fg-muted">{field.description}</span>}{field.type === "text" ? <textarea required={field.required} rows={4} value={String(values[field.key] ?? "")} placeholder={field.placeholder ?? ""} onChange={(event) => setValue(field.key, event.target.value)} className="resize-none rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" /> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(values[field.key])} onChange={(event) => setValue(field.key, event.target.checked)} className="size-4 accent-accent" /> : field.type === "enum" ? <select required={field.required} value={String(values[field.key] ?? "")} onChange={(event) => setValue(field.key, event.target.value)} className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent"><option value="">Choose…</option>{(field.options ?? []).map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input required={field.required} type={field.type === "email" ? "email" : field.type === "integer" || field.type === "decimal" ? "number" : "text"} value={String(values[field.key] ?? "")} placeholder={field.placeholder ?? ""} onChange={(event) => setValue(field.key, field.type === "integer" || field.type === "decimal" ? Number(event.target.value) : event.target.value)} className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" />}</label>)}{error && <p className="text-xs text-danger">{error}</p>}<button type="submit" disabled={sending} className="rounded-md bg-accent px-3 py-2 text-sm font-medium text-accent-fg disabled:opacity-50">{sending ? "Sending…" : "Send request"}</button></form></div>;
+  const chooseFile = async (fieldKey: string, file: File | undefined) => {
+    if (!file || !token) return;
+    setUploadingField(fieldKey); setError("");
+    try {
+      const uploaded = await uploadFormFile(host, publicKey, token, form.slug, file);
+      setFileIDs((current) => ({ ...current, [fieldKey]: uploaded.id }));
+      if (uploaded.token) onToken(uploaded.token);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The file could not be uploaded.");
+    } finally { setUploadingField(null); }
+  };
+
+  return <div className="p-3"><div className="mb-3 flex items-center gap-2">{forms.length > 1 && <select value={form.slug} onChange={(event) => { setForm(forms.find((item) => item.slug === event.target.value) ?? form); setValues({}); setFileIDs({}); }} className="min-w-0 flex-1 rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg"><option value={form.slug}>{form.name}</option>{forms.filter((item) => item.slug !== form.slug).map((item) => <option key={item.slug} value={item.slug}>{item.name}</option>)}</select>}{forms.length === 1 && <p className="text-sm font-medium text-fg">{form.name}</p>}</div>{form.description && <p className="mb-3 text-xs leading-normal text-fg-muted">{form.description}</p>}<form className="flex flex-col gap-3" onSubmit={(event) => void submit(event)}>{form.fields.filter(visible).map((field) => <label key={field.key} className="flex flex-col gap-1"><span className="text-xs font-medium text-fg-secondary">{field.label}{field.required && <span className="text-danger"> *</span>}</span>{field.description && <span className="text-[11px] text-fg-muted">{field.description}</span>}{field.type === "file" ? <><input required={field.required} type="file" onChange={(event) => void chooseFile(field.key, event.target.files?.[0])} className="text-xs text-fg-muted" />{uploadingField === field.key ? <span className="text-[11px] text-fg-muted">Uploading…</span> : fileIDs[field.key] ? <span className="text-[11px] text-success-text">File ready</span> : null}</> : field.type === "text" ? <textarea required={field.required} rows={4} value={String(values[field.key] ?? "")} placeholder={field.placeholder ?? ""} onChange={(event) => setValue(field.key, event.target.value)} className="resize-none rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" /> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(values[field.key])} onChange={(event) => setValue(field.key, event.target.checked)} className="size-4 accent-accent" /> : field.type === "enum" ? <select required={field.required} value={String(values[field.key] ?? "")} onChange={(event) => setValue(field.key, event.target.value)} className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent"><option value="">Choose…</option>{(field.options ?? []).map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input required={field.required} type={field.type === "email" ? "email" : field.type === "integer" || field.type === "decimal" ? "number" : "text"} value={String(values[field.key] ?? "")} placeholder={field.placeholder ?? ""} onChange={(event) => setValue(field.key, field.type === "integer" || field.type === "decimal" ? Number(event.target.value) : event.target.value)} className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" />}</label>)}{error && <p className="text-xs text-danger">{error}</p>}<button type="submit" disabled={sending || uploadingField !== null} className="rounded-md bg-accent px-3 py-2 text-sm font-medium text-accent-fg disabled:opacity-50">{sending || uploadingField ? "Sending…" : "Send request"}</button></form></div>;
 }
 
 /** React 19 passes `ref` as an ordinary prop, so no forwardRef wrapper. */
