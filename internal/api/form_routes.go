@@ -2,11 +2,14 @@ package api
 
 import (
 	"errors"
+	"mime"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 
 	"github.com/hubchat/hubchat/internal/authorization"
+	"github.com/hubchat/hubchat/internal/file"
 	"github.com/hubchat/hubchat/internal/form"
 	"github.com/hubchat/hubchat/internal/httpserver"
 )
@@ -22,6 +25,7 @@ func registerFormRoutes(mux *http.ServeMux, deps Deps) {
 	// itself is still looked up with workspace + slug, and only enabled forms
 	// are returned, so this path cannot become a cross-tenant directory read.
 	mux.HandleFunc("GET /v1/public/forms/{workspaceID}/{slug}", handleGetPublicForm(deps))
+	mux.HandleFunc("POST /v1/public/forms/{workspaceID}/{slug}/files", Idempotency(deps)(handleUploadPublicFormFile(deps)))
 	mux.HandleFunc("POST /v1/public/forms/{workspaceID}/{slug}/submissions", Idempotency(deps)(handleSubmitPublicForm(deps)))
 }
 
@@ -159,6 +163,50 @@ func handleSubmitPublicForm(deps Deps) http.HandlerFunc {
 		}
 		httpserver.WriteJSON(w, http.StatusCreated, map[string]any{"id": id, "status": "accepted"})
 	}
+}
+
+func handleUploadPublicFormFile(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		workspaceID := r.PathValue("workspaceID")
+		if _, err := deps.Form.GetPublic(r.Context(), workspaceID, r.PathValue("slug")); err != nil {
+			writePublicFormNotFound(w, r)
+			return
+		}
+		if deps.File == nil {
+			writeFormInternalError(w, r)
+			return
+		}
+		uploaded, err := uploadFormFile(r, deps.File, workspaceID, "visitor", "")
+		if err != nil {
+			writeFileError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, fileJSON(*uploaded))
+	}
+}
+
+func uploadFormFile(r *http.Request, files *file.Service, workspaceID, uploadedByType, uploadedByID string) (*file.Record, error) {
+	if err := r.ParseMultipartForm(2 << 20); err != nil {
+		return nil, err
+	}
+	parts := r.MultipartForm.File["file"]
+	if len(parts) != 1 {
+		return nil, errors.New("upload exactly one file")
+	}
+	part := parts[0]
+	opened, err := part.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer opened.Close()
+	mimeType := part.Header.Get("Content-Type")
+	if mimeType == "" {
+		mimeType = mime.TypeByExtension(filepath.Ext(part.Filename))
+	}
+	return files.Create(r.Context(), workspaceID, file.UploadInput{
+		Name: filepath.Base(part.Filename), MIMEType: mimeType, SizeBytes: part.Size, Body: opened,
+		OwnerType: "workspace", OwnerID: workspaceID, UploadedByType: uploadedByType, UploadedByID: uploadedByID,
+	})
 }
 
 func formJSON(item form.Form, includeInternal bool) map[string]any {

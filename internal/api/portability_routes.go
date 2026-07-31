@@ -16,9 +16,26 @@ func registerPortabilityRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /v1/portability/exports", requireCapability(deps, authorization.WorkspaceManage, Idempotency(deps)(handleCreateExport(deps))))
 	mux.HandleFunc("GET /v1/portability/imports", requireCapability(deps, authorization.WorkspaceManage, handleListImports(deps)))
 	mux.HandleFunc("GET /v1/portability/imports/{id}", requireCapability(deps, authorization.WorkspaceManage, handleGetImport(deps)))
+	mux.HandleFunc("POST /v1/portability/import-files", requireCapability(deps, authorization.WorkspaceManage, Idempotency(deps)(handleUploadPortabilityFile(deps))))
 	mux.HandleFunc("POST /v1/portability/imports", requireCapability(deps, authorization.WorkspaceManage, Idempotency(deps)(handleCreateImport(deps))))
 	mux.HandleFunc("POST /v1/portability/imports/{id}/preview", requireCapability(deps, authorization.WorkspaceManage, handlePreviewImport(deps)))
 	mux.HandleFunc("POST /v1/portability/imports/{id}/confirm", requireCapability(deps, authorization.WorkspaceManage, Idempotency(deps)(handleConfirmImport(deps))))
+}
+
+func handleUploadPortabilityFile(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		if deps.File == nil {
+			httpserver.WriteError(w, r, http.StatusServiceUnavailable, httpserver.CodeUnavailable, "File storage is unavailable.")
+			return
+		}
+		created, err := uploadFormFile(r, deps.File, actor.WorkspaceID, "user", actor.MemberID)
+		if err != nil {
+			writeFileError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, fileJSON(*created))
+	}
 }
 
 func handleGetExport(deps Deps) http.HandlerFunc {

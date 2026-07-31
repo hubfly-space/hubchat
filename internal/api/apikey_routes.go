@@ -110,13 +110,9 @@ func handleRotateAPIKey(deps Deps) http.HandlerFunc {
 			httpserver.WriteError(w, r, http.StatusForbidden, httpserver.CodeForbidden, err.Error())
 			return
 		}
-		created, err := deps.APIKeys.Create(r.Context(), actor.WorkspaceID, actor.MemberID, req.Name, req.Scopes, expiresAt)
+		created, err := deps.APIKeys.Rotate(r.Context(), actor.WorkspaceID, actor.MemberID, old.ID, req.Name, req.Scopes, expiresAt)
 		if err != nil {
 			writeAPIKeyError(w, r, err)
-			return
-		}
-		if err := deps.APIKeys.Revoke(r.Context(), actor.WorkspaceID, old.ID); err != nil {
-			writeAPIKeyInternalError(w, r)
 			return
 		}
 		response := apiKeyJSON(created.Key)
@@ -170,6 +166,10 @@ func writeAPIKeyError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	if errors.Is(err, apikey.ErrInvalidName) {
 		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, err.Error())
+		return
+	}
+	if errors.Is(err, apikey.ErrRevoked) {
+		httpserver.WriteError(w, r, http.StatusConflict, httpserver.CodeConflict, err.Error())
 		return
 	}
 	writeAPIKeyInternalError(w, r)

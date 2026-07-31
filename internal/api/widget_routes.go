@@ -80,6 +80,8 @@ func registerWidgetRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("OPTIONS /v1/widget/forms", corsPreflight)
 	mux.HandleFunc("GET /v1/widget/forms/{slug}", withPublicCORS(handleWidgetGetForm(deps)))
 	mux.HandleFunc("OPTIONS /v1/widget/forms/{slug}", corsPreflight)
+	mux.HandleFunc("POST /v1/widget/forms/{slug}/files", withPublicCORS(widgetIdempotent(handleWidgetFormFileUpload(deps))))
+	mux.HandleFunc("OPTIONS /v1/widget/forms/{slug}/files", corsPreflight)
 	mux.HandleFunc("POST /v1/widget/forms/{slug}/submissions", withPublicCORS(widgetIdempotent(handleWidgetSubmitForm(deps))))
 	mux.HandleFunc("OPTIONS /v1/widget/forms/{slug}/submissions", corsPreflight)
 	mux.HandleFunc("GET /v1/widget/feedback/boards", withPublicCORS(handleWidgetFeedbackBoards(deps)))
@@ -680,7 +682,8 @@ func handleWidgetGetForm(deps Deps) http.HandlerFunc {
 
 type widgetFormSubmissionRequest struct {
 	widgetVisitorRequest
-	Values map[string]any `json:"values"`
+	Values  map[string]any    `json:"values"`
+	FileIDs map[string]string `json:"file_ids,omitempty"`
 }
 
 func handleWidgetSubmitForm(deps Deps) http.HandlerFunc {
@@ -707,7 +710,7 @@ func handleWidgetSubmitForm(deps Deps) http.HandlerFunc {
 			writeWidgetError(w, r, err)
 			return
 		}
-		input := formmodule.SubmissionInput{Values: req.Values, VisitorID: visitor.ID, SourceURL: req.URL, IP: clientIP(r), UserAgent: r.UserAgent()}
+		input := formmodule.SubmissionInput{Values: req.Values, FileIDs: req.FileIDs, VisitorID: visitor.ID, SourceURL: req.URL, IP: clientIP(r), UserAgent: r.UserAgent()}
 		if visitor.CustomerID != nil {
 			input.CustomerID = *visitor.CustomerID
 		}
@@ -717,6 +720,46 @@ func handleWidgetSubmitForm(deps Deps) http.HandlerFunc {
 			return
 		}
 		httpserver.WriteJSON(w, http.StatusCreated, map[string]any{"id": id, "status": "accepted", "token": issuedToken})
+	}
+}
+
+func handleWidgetFormFileUpload(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		req := widgetVisitorRequest{PublicKey: r.FormValue("public_key"), URL: r.FormValue("url"), Token: r.FormValue("token")}
+		widgetRecord, err := deps.Widget.WidgetForOrigin(r.Context(), req.PublicKey, req.URL, r.Header.Get("Origin"))
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		workspaceID := widgetRecord.WorkspaceID
+		var visitor *widget.Visitor
+		issuedToken := req.Token
+		if req.Token == "" {
+			issuedToken, visitor, err = deps.Widget.IssueVisitor(r.Context(), workspaceID)
+		} else {
+			visitor, err = deps.Widget.ResolveVisitor(r.Context(), workspaceID, req.Token)
+		}
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		if _, err := deps.Form.GetPublic(r.Context(), workspaceID, r.PathValue("slug")); err != nil {
+			writeWidgetError(w, r, formmodule.ErrNotFound)
+			return
+		}
+		if deps.File == nil {
+			writeWidgetError(w, r, errors.New("file service unavailable"))
+			return
+		}
+		created, err := uploadFormFile(r, deps.File, workspaceID, "visitor", visitor.ID)
+		if err != nil {
+			writeFileError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, map[string]any{
+			"id": created.ID, "name": created.Name, "mime_type": created.MIMEType,
+			"size_bytes": created.SizeBytes, "token": issuedToken,
+		})
 	}
 }
 
