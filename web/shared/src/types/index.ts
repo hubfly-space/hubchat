@@ -738,6 +738,7 @@ export type FeedbackItem = {
   subscriber_count: number;
   comment_count: number;
   viewer_has_voted: boolean;
+  viewer_subscribed: boolean;
   tag_ids: Id[];
   priority: Priority | null;
   linked_conversation_ids: Id[];

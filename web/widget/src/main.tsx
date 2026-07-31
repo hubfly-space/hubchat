@@ -100,11 +100,13 @@ const commands = new Set([
   "hide",
   "toggle",
   "identify",
+  "context",
   "update",
   "track",
   "startConversation",
   "openArticle",
   "openForm",
+  "openFeedback",
   "reset",
   "on",
 ]);

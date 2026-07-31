@@ -24,9 +24,17 @@ export type PortalViewer = {
   timezone?: string;
 };
 
+export type PortalNotificationPreferences = {
+  ticket_status: boolean;
+  feedback_updates: boolean;
+  changelog: boolean;
+  surveys: boolean;
+};
+
 export type PortalBootstrap = {
   portal: PortalConfig;
   viewer: PortalViewer | null;
+  preferences?: PortalNotificationPreferences;
   session?: { portal_id: string; expires_at: string; auth_method: string };
 };
 

@@ -38,6 +38,10 @@ export type WidgetForm = {
   confirmation?: Record<string, unknown>;
 };
 
+export type WidgetFeedbackBoard = { id: string; name: string; slug: string; description?: string; allow_voting: boolean };
+export type WidgetFeedbackItem = { id: string; title: string; description: string; status: string; vote_count: number; viewer_has_voted: boolean; viewer_subscribed: boolean };
+export type WidgetArticle = { slug: string; title: string; excerpt: string; body?: string; language?: string; helpful_count?: number; unhelpful_count?: number };
+
 export type StartConversationResponse = {
   conversation_id: string;
   token: string;
@@ -113,6 +117,56 @@ export function submitForm(
   return post(host, `/forms/${encodeURIComponent(slug)}/submissions`, {
     public_key: publicKey, url: location.href, token: token ?? "", values,
   });
+}
+
+export async function listFeedbackBoards(host: string, publicKey: string): Promise<WidgetFeedbackBoard[]> {
+  const params = new URLSearchParams({ key: publicKey, url: location.href });
+  const response = await fetch(`${endpoint(host, "/feedback/boards")}?${params.toString()}`, { credentials: "omit" });
+  return (await parse<{ data: WidgetFeedbackBoard[] }>(response)).data;
+}
+
+export async function listFeedbackItems(host: string, publicKey: string, token: string | null, slug: string): Promise<WidgetFeedbackItem[]> {
+  const params = new URLSearchParams({ key: publicKey, url: location.href, token: token ?? "" });
+  const response = await fetch(`${endpoint(host, `/feedback/boards/${encodeURIComponent(slug)}/items`)}?${params.toString()}`, { credentials: "omit" });
+  return (await parse<{ data: WidgetFeedbackItem[] }>(response)).data;
+}
+
+export function createFeedbackItem(host: string, publicKey: string, token: string | null, slug: string, title: string, description: string): Promise<{ item: WidgetFeedbackItem; token?: string }> {
+  return post(host, `/feedback/boards/${encodeURIComponent(slug)}/items`, { public_key: publicKey, url: location.href, token: token ?? "", title, description, type: "feature_request" });
+}
+
+export function voteFeedbackItem(host: string, publicKey: string, token: string, itemID: string): Promise<{ status: string }> {
+  return post(host, `/feedback/items/${encodeURIComponent(itemID)}/votes`, { public_key: publicKey, url: location.href, token });
+}
+
+export function subscribeFeedbackItem(host: string, publicKey: string, token: string, itemID: string): Promise<{ subscribed: boolean }> {
+  return post(host, `/feedback/items/${encodeURIComponent(itemID)}/subscription`, { public_key: publicKey, url: location.href, token });
+}
+
+export async function unsubscribeFeedbackItem(host: string, publicKey: string, token: string, itemID: string): Promise<{ subscribed: boolean }> {
+  const response = await fetch(endpoint(host, `/feedback/items/${encodeURIComponent(itemID)}/subscription`), {
+    method: "DELETE",
+    credentials: "omit",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ public_key: publicKey, url: location.href, token }),
+  });
+  return parse<{ subscribed: boolean }>(response);
+}
+
+export async function searchArticles(host: string, publicKey: string, query: string): Promise<WidgetArticle[]> {
+  const params = new URLSearchParams({ key: publicKey, url: location.href });
+  if (query.trim()) params.set("q", query.trim());
+  const response = await fetch(`${endpoint(host, "/articles")}?${params.toString()}`, { credentials: "omit" });
+  return (await parse<{ data: WidgetArticle[] }>(response)).data;
+}
+
+export function getArticle(host: string, publicKey: string, slug: string): Promise<WidgetArticle> {
+  const params = new URLSearchParams({ key: publicKey, url: location.href });
+  return fetch(`${endpoint(host, `/articles/${encodeURIComponent(slug)}`)}?${params.toString()}`, { credentials: "omit" }).then(parse<WidgetArticle>);
+}
+
+export function submitArticleFeedback(host: string, publicKey: string, slug: string, helpful: boolean, comment: string): Promise<{ status: string }> {
+  return post(host, `/articles/${encodeURIComponent(slug)}/feedback`, { public_key: publicKey, url: location.href, helpful, comment });
 }
 
 export async function uploadFile(
