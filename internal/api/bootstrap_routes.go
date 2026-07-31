@@ -91,11 +91,21 @@ type tagJSON struct {
 	Color int    `json:"color"`
 }
 
+// inboxJSON mirrors the shared `Inbox` type exactly — same fields, same
+// snake_case names — so the browser's contract stays "one shape, defined
+// once" whether inboxes arrive here (bootstrap) or from /v1/inboxes.
 type inboxJSON struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Slug      string `json:"slug"`
-	IsDefault bool   `json:"is_default"`
+	ID          string   `json:"id"`
+	WorkspaceID string   `json:"workspace_id"`
+	Name        string   `json:"name"`
+	Slug        string   `json:"slug"`
+	Description *string  `json:"description"`
+	Channels    []string `json:"channels"`
+	TeamIDs     []string `json:"team_ids"`
+	IsDefault   bool     `json:"is_default"`
+	SLAPolicyID *string  `json:"sla_policy_id"`
+	OpenCount   int      `json:"open_count"`
+	CreatedAt   string   `json:"created_at"`
 }
 
 func handleBootstrap(deps Deps) http.HandlerFunc {
@@ -190,10 +200,17 @@ func buildBootstrapResponse(data *workspace.Bootstrap) bootstrapResponse {
 
 	for _, inbox := range data.Inboxes {
 		response.Inboxes = append(response.Inboxes, inboxJSON{
-			ID:        inbox.ID,
-			Name:      inbox.Name,
-			Slug:      inbox.Slug,
-			IsDefault: inbox.IsDefault,
+			ID:          inbox.ID,
+			WorkspaceID: inbox.WorkspaceID,
+			Name:        inbox.Name,
+			Slug:        inbox.Slug,
+			Description: inbox.Description,
+			Channels:    orEmpty(inbox.Channels),
+			TeamIDs:     orEmpty(inbox.TeamIDs),
+			IsDefault:   inbox.IsDefault,
+			SLAPolicyID: inbox.SLAPolicyID,
+			OpenCount:   inbox.OpenCount,
+			CreatedAt:   inbox.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
 

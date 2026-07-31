@@ -294,6 +294,10 @@
       "get": { "$ref": "#/components/operations/list", "operationId": "listExports", "tags": ["Portability"] },
       "post": { "$ref": "#/components/operations/create", "operationId": "createExport", "tags": ["Portability"] }
     },
+    "/v1/portability/exports/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/get", "operationId": "getExport", "tags": ["Portability"] }
+    },
     "/v1/portability/exports/{id}/manifest": {
       "parameters": [{ "$ref": "#/components/parameters/Id" }],
       "get": { "$ref": "#/components/operations/get", "operationId": "getExportManifest", "tags": ["Portability"] }
@@ -301,6 +305,18 @@
     "/v1/portability/imports": {
       "get": { "$ref": "#/components/operations/list", "operationId": "listImports", "tags": ["Portability"] },
       "post": { "$ref": "#/components/operations/create", "operationId": "createImport", "tags": ["Portability"] }
+    },
+    "/v1/portability/imports/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/get", "operationId": "getImport", "tags": ["Portability"] }
+    },
+    "/v1/portability/imports/{id}/preview": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "post": { "$ref": "#/components/operations/create", "operationId": "previewImport", "tags": ["Portability"] }
+    },
+    "/v1/portability/imports/{id}/confirm": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "post": { "$ref": "#/components/operations/create", "operationId": "confirmImport", "tags": ["Portability"] }
     },
     "/v1/portal/me": {
       "get": { "operationId": "getPortalProfile", "security": [{ "portalCookie": [] }], "tags": ["Portal"], "responses": { "200": { "$ref": "#/components/responses/Json" }, "default": { "$ref": "#/components/responses/Error" } } },
