@@ -28,7 +28,7 @@ import {
   useMutation,
   useQuery,
 } from "@hubchat/shared";
-import { AlertTriangle, CheckCircle2, Send } from "lucide-react";
+import { AlertTriangle, CheckCircle2, RefreshCw, Send, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useWorkspace } from "../../app/workspace-context";
 
@@ -44,6 +44,8 @@ type Mailbox = {
   last_error?: string | null;
 };
 type CreatedMailbox = { mailbox: Mailbox; inbound_secret: string };
+type DeliveryEvent = { id: string; provider: string; type: string; recipient?: string | null; bounce_type?: string | null; reason?: string | null; hard: boolean; occurred_at: string };
+type Suppression = { address: string; reason: string; source: string; updated_at: string };
 
 /** Email channel (§6.15). */
 export default function EmailChannel() {
@@ -59,6 +61,9 @@ export default function EmailChannel() {
   const [inboundMode, setInboundMode] = useState<Mailbox["inbound_mode"]>("off");
   const update = useMutation<Partial<Mailbox>, Mailbox>((input) => api.patch(`/email/mailboxes/${encodeURIComponent(active?.id ?? "")}`, input, { idempotencyKey: idempotencyKey() }), { invalidates: [["email-mailboxes"]] });
   const create = useMutation<{ address: string; inbox_id: string; inbound_mode: "webhook"; enabled: boolean }, CreatedMailbox>((input) => api.post("/email/mailboxes", input, { idempotencyKey: idempotencyKey() }), { invalidates: [["email-mailboxes"]], onSuccess: (value) => { setCreateOpen(false); setNewAddress(""); setNewInboxID(""); setNewSecret(value.inbound_secret); } });
+  const deliveryEvents = useQuery<{ data: DeliveryEvent[] }>(active ? ["email-delivery-events", active.id] : null, (signal) => api.get(`/email/mailboxes/${encodeURIComponent(active?.id ?? "")}/delivery-events?limit=20`, { signal, fresh: true }));
+  const suppressions = useQuery<{ data: Suppression[] }>(["email-suppressions"], (signal) => api.get("/email/suppressions", { signal }));
+  const removeSuppression = useMutation<string, void>((address) => api.delete(`/email/mailboxes/${encodeURIComponent(active?.id ?? "")}/suppressions/${encodeURIComponent(address)}`), { invalidates: [["email-suppressions"]] });
 
   useEffect(() => {
     if (active) {
@@ -328,12 +333,13 @@ export default function EmailChannel() {
                   description="Recorded when the provider reports them. Addresses with a hard bounce are suppressed automatically."
                 />
                 <CardBody>
-                  <Field label="Suppression list">
-                    <p className="text-xs text-fg-muted">
-                      2 addresses suppressed. Removing an address here allows Hubchat to retry
-                      delivery to it.
-                    </p>
-                  </Field>
+                  {suppressions.isLoading ? <p className="text-xs text-fg-muted">Loading suppression list…</p> : suppressions.error ? <div className="flex items-center justify-between gap-3"><p className="text-xs text-danger">Could not load suppressed addresses.</p><Button variant="ghost" size="xs" leading={<RefreshCw />} onClick={suppressions.refetch}>Retry</Button></div> : suppressions.data?.data.length ? <div className="space-y-2">{suppressions.data.data.map((item) => <div key={item.address} className="flex items-center gap-3 rounded-md border border-line-subtle px-3 py-2"><div className="min-w-0 flex-1"><p className="truncate font-mono text-xs text-fg">{item.address}</p><p className="text-2xs text-fg-muted">{item.reason} · {item.source}</p></div><Button variant="ghost" size="xs" leading={<Trash2 />} loading={removeSuppression.isPending} onClick={() => void removeSuppression.mutate(item.address).catch(() => {})}>Remove</Button></div>)}</div> : <p className="text-xs text-fg-muted">No suppressed addresses.</p>}
+                </CardBody>
+              </Card>
+              <Card className="mt-3">
+                <CardHeader title="Delivery event history" description="Provider callbacks are retained for troubleshooting and replay-safe status updates." />
+                <CardBody className="p-0">
+                  {deliveryEvents.isLoading ? <p className="px-4 py-5 text-xs text-fg-muted">Loading delivery events…</p> : deliveryEvents.error ? <div className="flex items-center justify-between gap-3 px-4 py-5"><p className="text-xs text-danger">Could not load delivery events.</p><Button variant="ghost" size="xs" leading={<RefreshCw />} onClick={deliveryEvents.refetch}>Retry</Button></div> : deliveryEvents.data?.data.length ? <ul className="divide-y divide-line-subtle">{deliveryEvents.data.data.map((event) => <li key={event.id} className="flex items-start gap-3 px-4 py-2.5"><span className={`mt-1.5 size-2 shrink-0 rounded-full ${event.type === "bounced" ? "bg-danger" : event.type === "delivered" ? "bg-success-text" : "bg-warning-text"}`} /><div className="min-w-0 flex-1"><p className="text-xs text-fg">{event.type} {event.recipient ? `· ${event.recipient}` : ""}</p><p className="text-2xs text-fg-muted">{event.provider}{event.reason ? ` · ${event.reason}` : ""}</p></div><time className="shrink-0 text-2xs tabular text-fg-muted">{new Date(event.occurred_at).toLocaleString()}</time></li>)}</ul> : <p className="px-4 py-5 text-xs text-fg-muted">No delivery events recorded.</p>}
                 </CardBody>
               </Card>
             </Section>

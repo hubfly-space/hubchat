@@ -22,12 +22,14 @@ import { useState } from "react";
 const SDK_METHODS = [
   { name: "boot", signature: "Hubchat('boot', { key })", detail: "Loads the widget. Safe to call once per page." },
   { name: "identify", signature: "Hubchat('identify', { external_id, email, token })", detail: "Attaches a verified customer to the session." },
-  { name: "update", signature: "Hubchat('update', attributes)", detail: "Sets allowlisted customer attributes." },
+  { name: "context", signature: "Hubchat('context', { plan, locale, … })", detail: "Records explicit page or account context for support." },
+  { name: "update", signature: "Hubchat('update', attributes)", detail: "Alias for sending explicit context attributes." },
   { name: "track", signature: "Hubchat('track', type, payload)", detail: "Records a declared application event." },
   { name: "show / hide", signature: "Hubchat('show')", detail: "Opens or closes the panel." },
   { name: "startConversation", signature: "Hubchat('startConversation', { message })", detail: "Opens straight into a new thread." },
   { name: "openArticle", signature: "Hubchat('openArticle', slug)", detail: "Deep-links to a help article." },
   { name: "openForm", signature: "Hubchat('openForm', slug)", detail: "Opens a ticket or feedback form." },
+  { name: "openFeedback", signature: "Hubchat('openFeedback', { slug })", detail: "Opens a public feedback board." },
   { name: "reset", signature: "Hubchat('reset')", detail: "Clears the visitor session. Call on sign-out." },
   { name: "on", signature: "Hubchat('on', event, handler)", detail: "Subscribes to widget lifecycle events." },
 ];

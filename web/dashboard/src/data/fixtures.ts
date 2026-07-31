@@ -1331,6 +1331,7 @@ function fb(
     subscriber_count: subscribers,
     comment_count: comments,
     viewer_has_voted: false,
+    viewer_subscribed: false,
     tag_ids: [],
     priority: null,
     linked_conversation_ids: [],
