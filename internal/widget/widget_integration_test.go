@@ -318,6 +318,49 @@ func TestIdentifyUnsignedCreatesUnverifiedCustomer(t *testing.T) {
 	}
 }
 
+func TestIdentifyAppliesOnlySchemaAllowedSDKAttributes(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+
+	h := newHarness(pool)
+	ws := seedWorkspace(t, ctx, pool)
+	if _, err := h.Customer.CreateAttributeDefinition(ctx, ws.WorkspaceID, "customer", "plan", "string", customer.AttributeDefinitionInput{
+		Label: "Plan", AllowedSources: []string{"js_sdk"},
+	}); err != nil {
+		t.Fatalf("create SDK attribute definition: %v", err)
+	}
+
+	_, visitor, err := h.Widget.IssueVisitor(ctx, ws.WorkspaceID)
+	if err != nil {
+		t.Fatalf("issue visitor: %v", err)
+	}
+	cust, err := h.Widget.Identify(ctx, ws.WorkspaceID, visitor, widget.IdentifyInput{
+		Attributes: map[string]any{"plan": "pro"},
+	})
+	if err != nil {
+		t.Fatalf("identify with allowed SDK attribute: %v", err)
+	}
+	reloaded, err := h.Customer.Get(ctx, ws.WorkspaceID, cust.ID)
+	if err != nil {
+		t.Fatalf("reload customer: %v", err)
+	}
+	if reloaded.Attributes["plan"] != "pro" {
+		t.Fatalf("expected plan attribute to persist, got %v", reloaded.Attributes)
+	}
+
+	if _, err := h.Customer.CreateAttributeDefinition(ctx, ws.WorkspaceID, "customer", "internal_tier", "string", customer.AttributeDefinitionInput{
+		Label: "Internal tier", AllowedSources: []string{"rest_api"},
+	}); err != nil {
+		t.Fatalf("create restricted attribute definition: %v", err)
+	}
+	if _, err := h.Widget.Identify(ctx, ws.WorkspaceID, visitor, widget.IdentifyInput{
+		Attributes: map[string]any{"internal_tier": "gold"},
+	}); !errors.Is(err, customer.ErrAttrSourceNotAllowed) {
+		t.Fatalf("expected js_sdk source rejection, got %v", err)
+	}
+}
+
 func TestIdentifySignedTokenVerifiesAndMatchesByExternalID(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.Reset(t, pool)

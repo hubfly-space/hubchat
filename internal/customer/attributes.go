@@ -343,6 +343,14 @@ func (s *Service) SetCustomerAttributes(ctx context.Context, workspaceID, actorM
 	return s.repo.byID(ctx, workspaceID, customerID)
 }
 
+// ValidateCustomerAttributes checks a browser or API attribute payload against
+// the workspace schema without mutating a customer. Callers that create a
+// customer and then apply attributes can use this to avoid leaving an
+// unlinked record behind when the payload is invalid.
+func (s *Service) ValidateCustomerAttributes(ctx context.Context, workspaceID, source string, values map[string]any) error {
+	return s.validateAttributeWrite(ctx, workspaceID, "customer", source, values)
+}
+
 func (s *Service) SetCompanyAttributes(ctx context.Context, workspaceID, actorMemberID, companyID, source string, values map[string]any) (*Company, error) {
 	if err := s.validateAttributeWrite(ctx, workspaceID, "company", source, values); err != nil {
 		return nil, err

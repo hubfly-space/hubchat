@@ -59,6 +59,11 @@ type IdentifyInput struct {
 // Identify links a visitor to a customer record, creating one if this is the
 // first time this person has been seen from this visitor.
 func (s *Service) Identify(ctx context.Context, workspaceID string, visitor *Visitor, in IdentifyInput) (*customer.Customer, error) {
+	if len(in.Attributes) > 0 {
+		if err := s.customer.ValidateCustomerAttributes(ctx, workspaceID, "js_sdk", in.Attributes); err != nil {
+			return nil, err
+		}
+	}
 	name, email, externalID := in.Name, in.Email, in.ExternalID
 	verified := false
 	method := "manual"
