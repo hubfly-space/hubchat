@@ -218,14 +218,27 @@ func (s *Service) FoldWorkspace(ctx context.Context, workspaceID string, now tim
 		return 0, err
 	}
 	var last int64 = after
-	count := 0
+	records := make([]events.Record, 0)
 	for rows.Next() {
 		var record events.Record
 		if err := rows.Scan(&record.ID, &record.Sequence, &record.Type, &record.OccurredAt, &record.Data); err != nil {
 			rows.Close()
-			return count, err
+			return 0, err
 		}
 		last = record.Sequence
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+
+	// Drain the cursor before writing rollups. pgx keeps the transaction's
+	// connection busy while rows are open, so attempting an upsert inside the
+	// scan loop fails with "conn busy" on PostgreSQL.
+	count := 0
+	for _, record := range records {
 		metrics := metricsForEvent(record)
 		if len(metrics) == 0 {
 			continue
@@ -234,7 +247,6 @@ func (s *Service) FoldWorkspace(ctx context.Context, workspaceID string, now tim
 		for _, metric := range metrics {
 			encoded, err := json.Marshal(metric.dimensions)
 			if err != nil {
-				rows.Close()
 				return count, err
 			}
 			if _, err := tx.Exec(ctx, `
@@ -243,17 +255,11 @@ func (s *Service) FoldWorkspace(ctx context.Context, workspaceID string, now tim
 			ON CONFLICT (workspace_id,metric,grain,bucket,dimensions) DO UPDATE SET
 				value=report_rollups.value+1,count=report_rollups.count+1,computed_at=EXCLUDED.computed_at`,
 				ids.New(ids.PrefixRollup), workspaceID, metric.name, bucket, encoded, now); err != nil {
-				rows.Close()
 				return count, err
 			}
 			count++
 		}
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return count, err
-	}
-	rows.Close()
 	if last > after {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO report_rollup_state(workspace_id,metric,grain,last_sequence,last_bucket,updated_at)

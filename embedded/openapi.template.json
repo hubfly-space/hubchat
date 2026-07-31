@@ -36,6 +36,16 @@
       "get": { "$ref": "#/components/operations/list" , "operationId": "listConversations", "tags": ["Conversations"] },
       "post": { "$ref": "#/components/operations/create", "operationId": "createConversation", "tags": ["Conversations"] }
     },
+    "/v1/saved-views": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listSavedViews", "tags": ["Conversations"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createSavedView", "tags": ["Conversations"] }
+    },
+    "/v1/saved-views/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/get", "operationId": "getSavedView", "tags": ["Conversations"] },
+      "patch": { "$ref": "#/components/operations/update", "operationId": "updateSavedView", "tags": ["Conversations"] },
+      "delete": { "$ref": "#/components/operations/delete", "operationId": "deleteSavedView", "tags": ["Conversations"] }
+    },
     "/v1/conversations/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/Id" }],
       "get": { "$ref": "#/components/operations/get", "operationId": "getConversation", "tags": ["Conversations"] },

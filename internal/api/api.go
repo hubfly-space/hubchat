@@ -40,6 +40,7 @@ import (
 	"github.com/hubchat/hubchat/internal/portability"
 	"github.com/hubchat/hubchat/internal/portal"
 	"github.com/hubchat/hubchat/internal/realtime"
+	"github.com/hubchat/hubchat/internal/savedview"
 	"github.com/hubchat/hubchat/internal/search"
 	"github.com/hubchat/hubchat/internal/sla"
 	"github.com/hubchat/hubchat/internal/survey"
@@ -74,6 +75,7 @@ type Deps struct {
 	Survey        *survey.Service
 	SLA           *sla.Service
 	Automation    *automation.Service
+	SavedView     *savedview.Service
 	Analytics     *analytics.Service
 	EmailChannel  *emailchannel.Service
 	Portability   *portability.Service
@@ -134,6 +136,7 @@ func New(deps Deps) http.Handler {
 	registerTagRoutes(mux, deps)
 	registerAuditRoutes(mux, deps)
 	registerConversationRoutes(mux, deps)
+	registerSavedViewRoutes(mux, deps)
 	registerInboxRoutes(mux, deps)
 	registerCustomerRoutes(mux, deps)
 	registerCompanyRoutes(mux, deps)
