@@ -135,7 +135,25 @@ func (s *Service) Create(ctx context.Context, workspaceID, memberID string, inpu
 	return s.Get(ctx, workspaceID, id)
 }
 func (s *Service) List(ctx context.Context, workspaceID string) ([]Rule, error) {
-	rows, err := s.pool.Query(ctx, ruleQuery+` WHERE r.workspace_id=$1 ORDER BY r.position,r.created_at`, workspaceID)
+	return s.ListPage(ctx, workspaceID, nil, time.Time{}, "", 0)
+}
+
+// ListPage returns rules in execution order. Position, creation time, and id
+// form a total ordering so a cursor remains stable when rules share a
+// position.
+func (s *Service) ListPage(ctx context.Context, workspaceID string, beforePosition *int, before time.Time, beforeID string, limit int) ([]Rule, error) {
+	query := ruleQuery + ` WHERE r.workspace_id=$1`
+	args := []any{workspaceID}
+	if beforePosition != nil {
+		query += " AND (r.position,r.created_at,r.id) > ($2,$3,$4)"
+		args = append(args, *beforePosition, before, beforeID)
+	}
+	query += " ORDER BY r.position,r.created_at,r.id"
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		args = append(args, limit)
+	}
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

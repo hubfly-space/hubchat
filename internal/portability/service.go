@@ -43,6 +43,23 @@ type Request struct {
 	CreatedAt     time.Time      `json:"created_at"`
 }
 
+// Manifest describes the immutable result of a completed export. It gives an
+// operator enough information to verify a download before moving it between
+// installations without exposing storage keys or bypassing file auth.
+type Manifest struct {
+	ExportID        string         `json:"export_id"`
+	WorkspaceID     string         `json:"workspace_id"`
+	FileID          string         `json:"file_id"`
+	FileName        string         `json:"file_name"`
+	SizeBytes       int64          `json:"size_bytes"`
+	Checksum        string         `json:"checksum"`
+	ExpiresAt       *time.Time     `json:"expires_at,omitempty"`
+	RowCount        int64          `json:"row_count"`
+	AttachmentCount int            `json:"attachment_count"`
+	AttachmentBytes int64          `json:"attachment_bytes"`
+	Tables          []TableSummary `json:"tables"`
+}
+
 type exportPayload struct {
 	RequestID string `json:"request_id"`
 }
@@ -136,6 +153,12 @@ func (s *Service) CreateImport(ctx context.Context, workspaceID, memberID, fileI
 }
 
 func (s *Service) List(ctx context.Context, workspaceID, state string, limit int) ([]Request, error) {
+	return s.ListPage(ctx, workspaceID, state, time.Time{}, "", limit)
+}
+
+// ListPage returns export requests in newest-first order. The timestamp and
+// id cursor makes the history stable while new jobs are being created.
+func (s *Service) ListPage(ctx context.Context, workspaceID, state string, before time.Time, beforeID string, limit int) ([]Request, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
@@ -144,6 +167,10 @@ func (s *Service) List(ctx context.Context, workspaceID, state string, limit int
 	if state != "" {
 		query += ` AND state=$2`
 		args = append(args, state)
+	}
+	if !before.IsZero() {
+		query += fmt.Sprintf(` AND (created_at,id) < ($%d,$%d)`, len(args)+1, len(args)+2)
+		args = append(args, before, beforeID)
 	}
 	query += ` ORDER BY created_at DESC,id DESC LIMIT $` + fmt.Sprint(len(args)+1)
 	args = append(args, limit)
@@ -164,6 +191,11 @@ func (s *Service) List(ctx context.Context, workspaceID, state string, limit int
 }
 
 func (s *Service) ListImports(ctx context.Context, workspaceID, state string, limit int) ([]Request, error) {
+	return s.ListImportsPage(ctx, workspaceID, state, time.Time{}, "", limit)
+}
+
+// ListImportsPage is the cursor-paginated import counterpart to ListPage.
+func (s *Service) ListImportsPage(ctx context.Context, workspaceID, state string, before time.Time, beforeID string, limit int) ([]Request, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
@@ -172,6 +204,10 @@ func (s *Service) ListImports(ctx context.Context, workspaceID, state string, li
 	if state != "" {
 		query += ` AND state=$2`
 		args = append(args, state)
+	}
+	if !before.IsZero() {
+		query += fmt.Sprintf(` AND (created_at,id) < ($%d,$%d)`, len(args)+1, len(args)+2)
+		args = append(args, before, beforeID)
 	}
 	query += ` ORDER BY created_at DESC,id DESC LIMIT $` + fmt.Sprint(len(args)+1)
 	args = append(args, limit)
@@ -225,6 +261,58 @@ func (s *Service) PreviewImport(ctx context.Context, workspaceID, id string) ([]
 		return nil, err
 	}
 	return Import(ctx, s.pool, archive, workspaceID, true)
+}
+
+// ExportManifest reads only the completed, workspace-owned archive metadata
+// and its versioned table envelope. The returned checksum is the checksum of
+// the exact compressed file bytes stored by the configured file backend.
+func (s *Service) ExportManifest(ctx context.Context, workspaceID, id string) (*Manifest, error) {
+	request, err := s.Get(ctx, workspaceID, id)
+	if err != nil {
+		return nil, err
+	}
+	if request.State != "completed" || request.FileID == nil {
+		return nil, errors.New("portability: export is not ready for a manifest")
+	}
+	if s.files == nil {
+		return nil, errors.New("portability: file service is unavailable")
+	}
+	fileRecord, err := s.files.Get(ctx, workspaceID, *request.FileID)
+	if err != nil {
+		return nil, fmt.Errorf("portability: export file: %w", err)
+	}
+	archive, err := s.readArchive(ctx, workspaceID, request.FileID)
+	if err != nil {
+		return nil, err
+	}
+
+	summaries := make([]TableSummary, 0, len(tableSpecs))
+	var rowCount int64
+	for _, spec := range tableSpecs {
+		rows := len(archive.Tables[spec.name])
+		summaries = append(summaries, TableSummary{Name: spec.name, Rows: rows})
+		rowCount += int64(rows)
+	}
+	manifest := &Manifest{
+		ExportID: request.ID, WorkspaceID: request.WorkspaceID, FileID: fileRecord.ID,
+		FileName: fileRecord.Name, SizeBytes: fileRecord.SizeBytes,
+		Checksum: filemodule.ChecksumHex(fileRecord.Checksum), ExpiresAt: request.ExpiresAt,
+		RowCount: rowCount, Tables: summaries,
+	}
+	for _, raw := range archive.Tables["files"] {
+		var object struct {
+			SizeBytes int64  `json:"size_bytes"`
+			OwnerType string `json:"owner_type"`
+		}
+		if err := json.Unmarshal(raw, &object); err != nil {
+			return nil, fmt.Errorf("portability: manifest file row: %w", err)
+		}
+		if object.OwnerType != "workspace" {
+			manifest.AttachmentCount++
+			manifest.AttachmentBytes += object.SizeBytes
+		}
+	}
+	return manifest, nil
 }
 
 func (s *Service) RunExport(ctx context.Context, id string) error {

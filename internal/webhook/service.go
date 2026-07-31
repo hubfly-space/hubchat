@@ -147,13 +147,30 @@ func (s *Service) Create(ctx context.Context, workspaceID, memberID string, inpu
 }
 
 func (s *Service) List(ctx context.Context, workspaceID string) ([]Endpoint, error) {
-	rows, err := s.pool.Query(ctx, `
+	return s.ListPage(ctx, workspaceID, time.Time{}, "", 0)
+}
+
+// ListPage returns endpoints newest-first with a deterministic cursor. The
+// delivery counters remain computed in the same query, so each page reflects
+// the same workspace-scoped operational view as the legacy list.
+func (s *Service) ListPage(ctx context.Context, workspaceID string, before time.Time, beforeID string, limit int) ([]Endpoint, error) {
+	query := `
 		SELECT e.id,e.workspace_id,e.url,coalesce(e.description,''),e.events,e.secret_hint,e.enabled,
 		       e.auto_disabled_at,e.consecutive_failures,e.created_by,e.created_at,e.updated_at,
 		       (SELECT count(*) FROM webhook_deliveries d WHERE d.endpoint_id=e.id AND d.status='delivered' AND d.created_at >= now()-interval '24 hours'),
 		       (SELECT count(*) FROM webhook_deliveries d WHERE d.endpoint_id=e.id AND d.status IN ('failed','exhausted') AND d.created_at >= now()-interval '24 hours')
-		FROM webhook_endpoints e WHERE e.workspace_id=$1 ORDER BY e.created_at DESC,e.id DESC
-	`, workspaceID)
+		FROM webhook_endpoints e WHERE e.workspace_id=$1`
+	args := []any{workspaceID}
+	if !before.IsZero() {
+		query += " AND (e.created_at,e.id) < ($2,$3)"
+		args = append(args, before, beforeID)
+	}
+	query += " ORDER BY e.created_at DESC,e.id DESC"
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		args = append(args, limit)
+	}
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("webhook: list: %w", err)
 	}
