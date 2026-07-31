@@ -23,7 +23,7 @@ import {
   type Member,
   type Paginated,
 } from "@hubchat/shared";
-import { Calendar, ScrollText, ShieldCheck, User } from "lucide-react";
+import { ScrollText, ShieldCheck, User } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 

@@ -17,7 +17,7 @@ import {
   formatBytes,
   formatRelativeShort,
 } from "@hubchat/shared";
-import { Download, FileUp, Upload } from "lucide-react";
+import { Download, Upload } from "lucide-react";
 import { useState } from "react";
 import { NOW } from "../../data/fixtures";
 

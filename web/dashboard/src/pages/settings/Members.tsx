@@ -27,7 +27,6 @@ import {
   QueryBoundary,
   RadioGroup,
   SearchInput,
-  Section,
   Switch,
   Tabs,
   TabsContent,

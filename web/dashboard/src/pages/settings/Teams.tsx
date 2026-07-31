@@ -10,7 +10,6 @@ import {
   Dialog,
   DialogClose,
   DialogContent,
-  DialogTrigger,
   EmptyState,
   Field,
   Input,
