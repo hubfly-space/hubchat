@@ -21,6 +21,7 @@ import {
   QueryBoundary,
   TagChip,
   Tooltip,
+  idempotencyKey,
   invalidate,
   useMutation,
   useQuery,
@@ -114,8 +115,8 @@ export function ConversationPanel({
     { invalidates: [["conversations"], ["conversation", conversation.id]] },
   );
 
-  const sendMessage = async (body: string, kind: "reply" | "note") => {
-    await api.post(`/conversations/${conversation.id}/messages`, { body, kind, author_name: viewer.name });
+  const sendMessage = async (body: string, kind: "reply" | "note", fileIDs: string[]) => {
+    await api.post(`/conversations/${conversation.id}/messages`, { body, kind, author_name: viewer.name, file_ids: fileIDs }, { idempotencyKey: idempotencyKey() });
     invalidate(["conversation-messages", conversation.id]);
     invalidate(["conversations"]);
   };

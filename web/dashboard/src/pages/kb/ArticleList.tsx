@@ -1,17 +1,22 @@
 import {
+  ApiError,
   Badge,
   Button,
   DataTable,
   EmptyState,
   Page,
+  PageBody,
   PageHeader,
   Pagination,
   SearchInput,
   SegmentedControl,
   Toolbar,
   Tooltip,
+  QueryBoundary,
+  api,
   formatCompact,
   formatRelativeShort,
+  useQuery,
   type Article,
   type ArticleState,
   type BadgeTone,
@@ -21,7 +26,6 @@ import { FileText, Plus, ThumbsDown, ThumbsUp } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWorkspace } from "../../app/workspace-context";
-import { NOW, articles, collections } from "../../data/fixtures";
 
 const STATE: Record<ArticleState, { label: string; tone: BadgeTone }> = {
   draft: { label: "Draft", tone: "neutral" },
@@ -38,21 +42,22 @@ export default function ArticleList() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | ArticleState>("all");
 
-  const rows = articles
-    .filter((article) => filter === "all" || article.state === filter)
-    .filter((article) => article.title.toLowerCase().includes(query.toLowerCase()));
+  const articlesQuery = useQuery<{ data: Article[] }>(
+    ["articles", filter, query],
+    (signal) => api.get(`/articles?state=${encodeURIComponent(filter === "all" ? "" : filter)}&q=${encodeURIComponent(query)}&limit=200`, { signal }),
+  );
+  const rows = articlesQuery.data?.data ?? [];
 
   const columns: Column<Article>[] = [
     {
       key: "title",
       header: "Article",
       cell: (article) => {
-        const collection = collections.find((item) => item.id === article.collection_id);
         return (
           <div className="min-w-0">
             <p className="truncate text-sm text-fg">{article.title}</p>
             <p className="truncate text-xs text-fg-muted">
-              {collection?.name} · /{article.slug}
+              /{article.slug}
             </p>
           </div>
         );
@@ -112,7 +117,7 @@ export default function ArticleList() {
       width: "92px",
       numeric: true,
       cell: (article) => (
-        <span className="text-xs text-fg-muted">{formatRelativeShort(article.updated_at, NOW)}</span>
+        <span className="text-xs text-fg-muted">{formatRelativeShort(article.updated_at)}</span>
       ),
       sortable: true,
     },
@@ -162,34 +167,41 @@ export default function ArticleList() {
         }
       />
 
-      <div className="min-h-0 flex-1 overflow-auto">
-        <DataTable
-          aria-label="Articles"
-          rows={rows}
-          columns={columns}
-          rowKey={(article) => article.id}
-          onRowClick={(article) => navigate(`/kb/articles/${article.id}`)}
-          empty={
-            <EmptyState
-              icon={FileText}
-              title="No articles here"
-              description="A good first article answers the question your team types out most often."
-              action={
-                <Button variant="primary" size="sm" leading={<Plus />}>
-                  Write one
-                </Button>
-              }
-            />
-          }
-        />
-      </div>
+      <PageBody>
+        <QueryBoundary query={articlesQuery}>
+          {() => (
+            <div className="min-h-0 flex-1 overflow-auto">
+              <DataTable
+                aria-label="Articles"
+                rows={rows}
+                columns={columns}
+                rowKey={(article) => article.id}
+                onRowClick={(article) => navigate(`/kb/articles/${article.id}`)}
+                empty={
+                  <EmptyState
+                    icon={FileText}
+                    title="No articles here"
+                    description="A good first article answers the question your team types out most often."
+                    action={
+                      <Button variant="primary" size="sm" leading={<Plus />} onClick={() => navigate("/kb/articles/new")}>
+                        Write one
+                      </Button>
+                    }
+                  />
+                }
+              />
+              {articlesQuery.error instanceof ApiError && <p className="mt-3 text-sm text-danger">{articlesQuery.error.message}</p>}
+            </div>
+          )}
+        </QueryBoundary>
+      </PageBody>
 
       <Pagination
         hasPrevious={false}
         hasNext={false}
         onPrevious={() => undefined}
         onNext={() => undefined}
-        summary={`${rows.length} of ${articles.length} articles`}
+        summary={`${rows.length} article${rows.length === 1 ? "" : "s"}`}
       />
     </Page>
   );

@@ -1,78 +1,19 @@
-import {
-  Button,
-  Card,
-  CardBody,
-  EmptyState,
-  Page,
-  PageBody,
-  PageHeader,
-  Section,
-} from "@hubchat/shared";
-import { Boxes, GripVertical, Plus, Settings2 } from "lucide-react";
-import { Link } from "react-router-dom";
-import { collections } from "../../data/fixtures";
+import { ApiError, Button, Callout, Card, CardBody, Dialog, DialogContent, DialogTrigger, EmptyState, Field, Input, Page, PageBody, PageHeader, QueryBoundary, Section, api, idempotencyKey, useQuery, type ArticleCollection, type KnowledgeBase } from "@hubchat/shared";
+import { Boxes, GripVertical, Plus } from "lucide-react";
+import { useState } from "react";
 
-/**
- * Collections (§6.8) — the navigation customers actually browse.
- *
- * Order is meaningful and drag-reorderable, because a help centre's first
- * collection is doing most of the work.
- */
 export default function CollectionList() {
-  return (
-    <Page>
-      <PageHeader
-        title="Collections"
-        description="How articles are grouped in the portal and widget. Drag to reorder."
-        actions={
-          <Button variant="primary" size="sm" leading={<Plus />}>
-            New collection
-          </Button>
-        }
-      />
+  const bases = useQuery<{ data: KnowledgeBase[] }>(["knowledge-bases"], (signal) => api.get("/knowledge-bases", { signal }));
+  const [activeBase, setActiveBase] = useState<string | null>(null);
+  const base = bases.data?.data.find((item) => item.id === activeBase) ?? bases.data?.data[0];
+  const collections = useQuery<{ data: ArticleCollection[] }>(["collections", base?.id], (signal) => api.get(`/knowledge-bases/${encodeURIComponent(base?.id ?? "")}/collections`, { signal }), { enabled: Boolean(base?.id) });
+  const [creatingBase, setCreatingBase] = useState(false);
+  const [creatingCollection, setCreatingCollection] = useState(false);
 
-      <PageBody>
-        <Section>
-          {collections.length === 0 ? (
-            <EmptyState
-              icon={Boxes}
-              title="No collections"
-              description="Group related articles so customers can browse rather than only search."
-            />
-          ) : (
-            <div className="space-y-2">
-              {collections.map((collection) => (
-                <Card key={collection.id}>
-                  <CardBody className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      aria-label={`Reorder ${collection.name}`}
-                      className="cursor-grab rounded-sm p-1 text-fg-disabled transition-colors hover:bg-fill hover:text-fg-muted"
-                    >
-                      <GripVertical aria-hidden="true" className="size-4" />
-                    </button>
+  return <Page><PageHeader title="Collections" description="How articles are grouped in the portal and widget." actions={base ? <Button variant="primary" size="sm" leading={<Plus />} onClick={() => setCreatingCollection(true)}>New collection</Button> : <Button variant="primary" size="sm" leading={<Plus />} onClick={() => setCreatingBase(true)}>New knowledge base</Button>} /><PageBody><QueryBoundary query={bases}>{() => base ? <><div className="mb-5 flex items-center gap-2"><span className="text-xs text-fg-muted">Knowledge base</span><select className="rounded-md border border-line bg-surface px-2 py-1 text-sm" value={base.id} onChange={(event) => setActiveBase(event.target.value)}>{(bases.data?.data ?? []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div><QueryBoundary query={collections}>{() => <Section>{(collections.data?.data ?? []).length === 0 ? <EmptyState icon={Boxes} title="No collections" description="Group related articles so customers can browse rather than only search." /> : <div className="space-y-2">{(collections.data?.data ?? []).map((collection) => <Card key={collection.id}><CardBody className="flex items-center gap-3"><GripVertical aria-hidden="true" className="size-4 text-fg-disabled" /><div className="min-w-0 flex-1"><p className="text-sm font-medium text-fg">{collection.name}</p><p className="mt-0.5 truncate text-xs text-fg-muted">{collection.description || "No description"} · /{collection.slug}</p></div><span className="shrink-0 text-xs tabular text-fg-muted">{collection.article_count} articles</span></CardBody></Card>)}</div>}</Section>}</QueryBoundary></> : <EmptyState icon={Boxes} title="No knowledge base" description="Create a knowledge base before adding collections and articles." action={<Button variant="primary" size="sm" leading={<Plus />} onClick={() => setCreatingBase(true)}>Create knowledge base</Button>} />}</QueryBoundary>{bases.error instanceof ApiError && <Callout tone="danger" className="mt-4">{bases.error.message}</Callout>}</PageBody>{creatingBase && <CreateDialog title="Create knowledge base" onClose={() => setCreatingBase(false)} onSubmit={async (name, slug) => { await api.post("/knowledge-bases", { name, slug, default_language: "en", languages: ["en"], visibility: "public" }, { idempotencyKey: idempotencyKey() }); setCreatingBase(false); bases.refetch(); }} />}{creatingCollection && base && <CreateDialog title="Create collection" onClose={() => setCreatingCollection(false)} onSubmit={async (name, slug) => { await api.post(`/knowledge-bases/${base.id}/collections`, { name, slug, position: (collections.data?.data.length ?? 0) }, { idempotencyKey: idempotencyKey() }); setCreatingCollection(false); collections.refetch(); }} />}</Page>;
+}
 
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-fg">{collection.name}</p>
-                      <p className="mt-0.5 truncate text-xs text-fg-muted">
-                        {collection.description} · /{collection.slug}
-                      </p>
-                    </div>
-
-                    <span className="shrink-0 text-xs tabular text-fg-muted">
-                      {collection.article_count} articles
-                    </span>
-
-                    <Button variant="ghost" size="sm" leading={<Settings2 />} asChild>
-                      <Link to={`/kb?collection=${collection.slug}`}>Edit</Link>
-                    </Button>
-                  </CardBody>
-                </Card>
-              ))}
-            </div>
-          )}
-        </Section>
-      </PageBody>
-    </Page>
-  );
+function CreateDialog({ title, onClose, onSubmit }: { title: string; onClose: () => void; onSubmit: (name: string, slug: string) => Promise<void> }) {
+  const [name, setName] = useState(""); const [slug, setSlug] = useState(""); const [pending, setPending] = useState(false); const [error, setError] = useState<string | null>(null);
+  return <Dialog open onOpenChange={(open) => !open && onClose()}><DialogTrigger asChild><span /></DialogTrigger><DialogContent title={title} footer={<><Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button><Button variant="primary" size="sm" loading={pending} disabled={!name.trim() || !slug.trim()} onClick={() => { setPending(true); void onSubmit(name.trim(), slug.trim().toLowerCase()).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Could not save.")).finally(() => setPending(false)); }}>Create</Button></>}><div className="space-y-4"><Field label="Name"><Input autoFocus value={name} onChange={(event) => { setName(event.target.value); if (!slug) setSlug(event.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")); }} /></Field><Field label="Slug"><Input mono value={slug} onChange={(event) => setSlug(event.target.value)} /></Field>{error && <p className="text-sm text-danger">{error}</p>}</div></DialogContent></Dialog>;
 }
