@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ func registerPortalRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /v1/portal/auth/magic-link/redeem", handlePortalMagicLinkRedeem(deps))
 	mux.HandleFunc("POST /v1/portal/auth/logout", handlePortalLogout(deps))
 	mux.HandleFunc("GET /v1/portal/me", handlePortalMe(deps))
+	mux.HandleFunc("PATCH /v1/portal/me", handlePortalProfileUpdate(deps))
 	mux.HandleFunc("GET /v1/portal/tickets", handlePortalTickets(deps))
 	mux.HandleFunc("POST /v1/portal/tickets", Idempotency(deps)(handlePortalCreateTicket(deps)))
 	mux.HandleFunc("GET /v1/portal/tickets/{id}", handlePortalTicket(deps))
@@ -34,9 +36,10 @@ func registerPortalRoutes(mux *http.ServeMux, deps Deps) {
 }
 
 type portalBootstrapResponse struct {
-	Portal  map[string]any     `json:"portal"`
-	Viewer  *portal.Customer   `json:"viewer"`
-	Session *portalSessionJSON `json:"session,omitempty"`
+	Portal      map[string]any                  `json:"portal"`
+	Viewer      *portal.Customer                `json:"viewer"`
+	Preferences *portal.NotificationPreferences `json:"preferences,omitempty"`
+	Session     *portalSessionJSON              `json:"session,omitempty"`
 }
 
 type portalSessionJSON struct {
@@ -56,10 +59,10 @@ func handlePortalBootstrap(deps Deps) http.HandlerFunc {
 		if token := httpserver.PortalSessionToken(r); token != "" {
 			session, sessionErr := deps.Portal.Session(r.Context(), token, p.ID)
 			if sessionErr == nil {
-				response.Viewer = &session.Customer
-				response.Session = &portalSessionJSON{
-					PortalID: session.PortalID, ExpiresAt: session.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
-					AuthMethod: session.AuthMethod,
+				response, err = portalSessionResponse(r.Context(), deps, session)
+				if err != nil {
+					writePortalError(w, r, err)
+					return
 				}
 			}
 		}
@@ -114,10 +117,12 @@ func handlePortalMagicLinkRedeem(deps Deps) http.HandlerFunc {
 			return
 		}
 		httpserver.SetPortalSessionCookie(w, session.Token, secondsUntil(session.ExpiresAt), deps.CookieDomain, deps.CookieSecure)
-		httpserver.WriteJSON(w, http.StatusOK, portalBootstrapResponse{
-			Portal: portalJSON(*session.Portal), Viewer: &session.Customer,
-			Session: &portalSessionJSON{PortalID: session.PortalID, ExpiresAt: session.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z07:00"), AuthMethod: session.AuthMethod},
-		})
+		response, responseErr := portalSessionResponse(r.Context(), deps, session)
+		if responseErr != nil {
+			writePortalError(w, r, responseErr)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, response)
 	}
 }
 
@@ -139,8 +144,49 @@ func handlePortalMe(deps Deps) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"viewer": session.Customer, "portal": portalJSON(*session.Portal)})
+		preferences, err := deps.Portal.Preferences(r.Context(), session.WorkspaceID, session.CustomerID)
+		if err != nil {
+			writePortalError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"viewer": session.Customer, "portal": portalJSON(*session.Portal), "preferences": preferences})
 	}
+}
+
+func handlePortalProfileUpdate(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, ok := requirePortalSession(deps, w, r)
+		if !ok {
+			return
+		}
+		var input portal.ProfileInput
+		if err := httpserver.DecodeJSON(r, &input); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed profile update.")
+			return
+		}
+		viewer, err := deps.Portal.UpdateProfile(r.Context(), session, input)
+		if err != nil {
+			writePortalError(w, r, err)
+			return
+		}
+		preferences, err := deps.Portal.Preferences(r.Context(), session.WorkspaceID, session.CustomerID)
+		if err != nil {
+			writePortalError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"viewer": viewer, "preferences": preferences})
+	}
+}
+
+func portalSessionResponse(ctx context.Context, deps Deps, session *portal.Session) (portalBootstrapResponse, error) {
+	preferences, err := deps.Portal.Preferences(ctx, session.WorkspaceID, session.CustomerID)
+	if err != nil {
+		return portalBootstrapResponse{}, err
+	}
+	return portalBootstrapResponse{
+		Portal: portalJSON(*session.Portal), Viewer: &session.Customer, Preferences: preferences,
+		Session: &portalSessionJSON{PortalID: session.PortalID, ExpiresAt: session.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z07:00"), AuthMethod: session.AuthMethod},
+	}, nil
 }
 
 func handlePortalTickets(deps Deps) http.HandlerFunc {
@@ -513,6 +559,10 @@ func writePortalError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusUnauthorized, httpserver.CodeUnauthorized, "This sign-in link is invalid or expired.")
 	case errors.Is(err, portal.ErrSessionInvalid):
 		httpserver.WriteError(w, r, http.StatusUnauthorized, httpserver.CodeUnauthorized, "Your portal session has expired.")
+	case errors.Is(err, portal.ErrInvalidProfile):
+		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, "Check your profile details and try again.")
+	case errors.Is(err, portal.ErrCustomerNotFound):
+		httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Your customer profile is not available.")
 	case errors.Is(err, portal.ErrForbidden):
 		httpserver.WriteError(w, r, http.StatusForbidden, httpserver.CodeForbidden, "This portal sign-in method is not enabled.")
 	default:

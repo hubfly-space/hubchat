@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -22,19 +23,36 @@ func registerSLARoutes(mux *http.ServeMux, deps Deps) {
 
 func handleListSLAInstances(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		limit, _, err := PageParams(r)
+		limit, cursor, err := PageParams(r)
 		if err != nil {
 			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed pagination parameters.")
 			return
 		}
-		items, err := deps.SLA.ListInstances(r.Context(), actorFromRequest(r).WorkspaceID, r.URL.Query().Get("state"), limit)
+		items, err := deps.SLA.ListInstances(r.Context(), actorFromRequest(r).WorkspaceID, r.URL.Query().Get("state"), cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			writeSLAInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		page := NewPage(items, limit, func(item sla.Instance) Cursor {
+			return Cursor{At: item.StartedAt, ID: item.ID}
+		})
+		httpserver.WriteJSON(w, http.StatusOK, page)
 	}
 }
+
+func slaJSON(item *sla.SubjectSLA) any {
+	if item == nil {
+		return nil
+	}
+	return map[string]any{
+		"policy_id":                item.PolicyID,
+		"state":                    item.State,
+		"first_response_remaining": item.FirstResponseRemaining,
+		"next_response_remaining":  item.NextResponseRemaining,
+		"resolution_remaining":     item.ResolutionRemaining,
+	}
+}
+
 func handleListCalendars(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		items, err := deps.SLA.ListCalendars(r.Context(), actorFromRequest(r).WorkspaceID)
@@ -107,14 +125,34 @@ func handleGetSLAPolicy(deps Deps) http.HandlerFunc {
 }
 func handleUpdateSLAPolicy(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var raw map[string]json.RawMessage
+		if err := httpserver.DecodeJSON(r, &raw); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed SLA policy update.")
+			return
+		}
 		var input struct {
 			Enabled *bool `json:"enabled"`
 		}
-		if err := httpserver.DecodeJSON(r, &input); err != nil || input.Enabled == nil {
-			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "enabled is required.")
+		encoded, _ := json.Marshal(raw)
+		if err := json.Unmarshal(encoded, &input); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed SLA policy update.")
 			return
 		}
-		item, err := deps.SLA.SetPolicyEnabled(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"), *input.Enabled)
+		if len(raw) == 1 && input.Enabled != nil {
+			item, err := deps.SLA.SetPolicyEnabled(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"), *input.Enabled)
+			if err != nil {
+				writeSLAError(w, r, err)
+				return
+			}
+			httpserver.WriteJSON(w, http.StatusOK, item)
+			return
+		}
+		var policyInput sla.PolicyInput
+		if err := json.Unmarshal(encoded, &policyInput); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed SLA policy configuration.")
+			return
+		}
+		item, err := deps.SLA.UpdatePolicy(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"), policyInput)
 		if err != nil {
 			writeSLAError(w, r, err)
 			return

@@ -15,6 +15,7 @@ func registerSurveyRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/surveys/{id}", requireCapability(deps, authorization.SurveyManage, handleGetSurvey(deps)))
 	mux.HandleFunc("PATCH /v1/surveys/{id}", requireCapability(deps, authorization.SurveyManage, handleUpdateSurvey(deps)))
 	mux.HandleFunc("GET /v1/surveys/{id}/responses", requireCapability(deps, authorization.SurveyManage, handleListSurveyResponses(deps)))
+	mux.HandleFunc("GET /v1/surveys/{id}/summary", requireCapability(deps, authorization.SurveyManage, handleSurveySummary(deps)))
 	mux.HandleFunc("GET /v1/public/surveys/{workspaceID}/{id}", handlePublicGetSurvey(deps))
 	mux.HandleFunc("POST /v1/public/surveys/{workspaceID}/{id}/responses", Idempotency(deps)(handlePublicSubmitSurvey(deps)))
 }
@@ -79,6 +80,16 @@ func handleListSurveyResponses(deps Deps) http.HandlerFunc {
 			return
 		}
 		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+	}
+}
+func handleSurveySummary(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		item, err := deps.Survey.Summary(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"))
+		if err != nil {
+			writeSurveyError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, item)
 	}
 }
 func handlePublicGetSurvey(deps Deps) http.HandlerFunc {
