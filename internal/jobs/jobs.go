@@ -233,6 +233,8 @@ type ListFilter struct {
 	State       State
 	Queue       string
 	Limit       int
+	Before      time.Time
+	BeforeID    string
 }
 
 // List returns recent jobs for operational inspection. An empty workspace id
@@ -242,17 +244,24 @@ func (c *Client) List(ctx context.Context, filter ListFilter) ([]Job, error) {
 	if filter.Limit <= 0 || filter.Limit > 500 {
 		filter.Limit = 100
 	}
+	where := `WHERE ($1 = '' OR workspace_id = $1)
+		  AND ($2 = '' OR state = $2)
+		  AND ($3 = '' OR queue = $3)`
+	args := []any{filter.WorkspaceID, string(filter.State), filter.Queue}
+	if !filter.Before.IsZero() {
+		where += fmt.Sprintf(" AND (created_at,id) < ($%d,$%d)", len(args)+1, len(args)+2)
+		args = append(args, filter.Before, filter.BeforeID)
+	}
+	args = append(args, filter.Limit)
 	rows, err := c.pool.Query(ctx, `
 		SELECT id, coalesce(workspace_id, ''), queue, type, payload, state,
 		       priority, attempt, max_attempts, scheduled_at, started_at, finished_at,
 		       coalesce(last_error, ''), created_at
 		FROM jobs
-		WHERE ($1 = '' OR workspace_id = $1)
-		  AND ($2 = '' OR state = $2)
-		  AND ($3 = '' OR queue = $3)
+		`+where+`
 		ORDER BY created_at DESC, id DESC
-		LIMIT $4
-	`, filter.WorkspaceID, string(filter.State), filter.Queue, filter.Limit)
+		LIMIT $`+fmt.Sprint(len(args))+`
+	`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("jobs: list: %w", err)
 	}
@@ -271,6 +280,30 @@ func (c *Client) List(ctx context.Context, filter ListFilter) ([]Job, error) {
 		result = append(result, job)
 	}
 	return result, rows.Err()
+}
+
+type Summary struct {
+	QueueDepth int `json:"queue_depth"`
+	Running    int `json:"running"`
+	Failed24h  int `json:"failed_24h"`
+	Dead       int `json:"dead"`
+}
+
+func (c *Client) Summary(ctx context.Context, workspaceID string) (Summary, error) {
+	var summary Summary
+	err := c.pool.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (WHERE state='pending' AND scheduled_at <= now()),
+			count(*) FILTER (WHERE state='running'),
+			count(*) FILTER (WHERE state='failed' AND created_at >= now() - interval '24 hours'),
+			count(*) FILTER (WHERE state='dead')
+		FROM jobs
+		WHERE workspace_id=$1
+	`, workspaceID).Scan(&summary.QueueDepth, &summary.Running, &summary.Failed24h, &summary.Dead)
+	if err != nil {
+		return Summary{}, fmt.Errorf("jobs: summary: %w", err)
+	}
+	return summary, nil
 }
 
 // QueueDepth reports how many jobs are waiting, for /readyz and the ops screen.

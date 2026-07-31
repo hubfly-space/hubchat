@@ -132,12 +132,32 @@ func New(pool *database.Pool, targets ...TargetServices) *Service {
 	return service
 }
 
+// List returns every form for callers that need the complete configuration
+// set. HTTP list endpoints should use ListPage so large workspaces do not
+// materialize every form and field in one response.
 func (s *Service) List(ctx context.Context, workspaceID string) ([]Form, error) {
-	rows, err := s.pool.Query(ctx, `
+	return s.ListPage(ctx, workspaceID, time.Time{}, "", 0)
+}
+
+// ListPage returns forms ordered by creation time with an optional cursor.
+// The extra-row convention is owned by the API layer, so this method only
+// applies the requested limit and keeps the query workspace-scoped.
+func (s *Service) ListPage(ctx context.Context, workspaceID string, before time.Time, beforeID string, limit int) ([]Form, error) {
+	query := `
 		SELECT id, workspace_id, name, slug, description, purpose, routing, confirmation,
 		       access, spam_protection, max_submissions, submission_count, enabled, created_at, updated_at
-		FROM forms WHERE workspace_id = $1 ORDER BY created_at DESC, id DESC
-	`, workspaceID)
+		FROM forms WHERE workspace_id = $1`
+	args := []any{workspaceID}
+	if !before.IsZero() {
+		query += " AND (created_at, id) < ($2, $3)"
+		args = append(args, before, beforeID)
+	}
+	query += " ORDER BY created_at DESC, id DESC"
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		args = append(args, limit)
+	}
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("form: list: %w", err)
 	}

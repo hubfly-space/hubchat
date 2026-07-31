@@ -257,6 +257,28 @@ func (s *Service) ListArticles(ctx context.Context, workspaceID, state, query st
 	return scanArticles(rows)
 }
 
+// ListArticlesPage orders by the mutable update timestamp plus an id
+// tiebreaker so a cursor remains deterministic when several articles are
+// edited in the same instant.
+func (s *Service) ListArticlesPage(ctx context.Context, workspaceID, state, query string, before time.Time, beforeID string, limit int) ([]Article, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := []string{"workspace_id=$1", "($2='' OR state=$2)", "($3='' OR title ILIKE '%'||$3||'%' OR excerpt ILIKE '%'||$3||'%')"}
+	args := []any{workspaceID, state, strings.TrimSpace(query)}
+	if !before.IsZero() {
+		where = append(where, fmt.Sprintf("(updated_at,id) < ($%d,$%d)", len(args)+1, len(args)+2))
+		args = append(args, before, beforeID)
+	}
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, `SELECT id,workspace_id,knowledge_base_id,collection_id,title,slug,excerpt,body,state,language,author_id,seo,view_count,helpful_count,unhelpful_count,version,scheduled_at,published_at,created_at,updated_at FROM articles WHERE `+strings.Join(where, " AND ")+` ORDER BY updated_at DESC,id DESC LIMIT $`+fmt.Sprint(len(args)), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanArticles(rows)
+}
+
 func (s *Service) GetArticle(ctx context.Context, workspaceID, id string) (*Article, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id,workspace_id,knowledge_base_id,collection_id,title,slug,excerpt,body,state,language,author_id,seo,view_count,helpful_count,unhelpful_count,version,scheduled_at,published_at,created_at,updated_at FROM articles WHERE workspace_id=$1 AND id=$2`, workspaceID, id)
 	if err != nil {

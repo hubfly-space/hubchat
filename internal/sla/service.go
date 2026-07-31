@@ -160,6 +160,52 @@ func (s *Service) GetCalendar(ctx context.Context, workspaceID, id string) (*Cal
 	return item, err
 }
 
+// UpdateCalendar replaces a calendar's schedule and holiday set atomically.
+// Replacing the child rows in the same transaction keeps SLA calculations from
+// observing a partially updated calendar.
+func (s *Service) UpdateCalendar(ctx context.Context, workspaceID, id string, input CalendarInput) (*CalendarRecord, error) {
+	if strings.TrimSpace(input.Name) == "" {
+		return nil, ErrInvalidName
+	}
+	if input.Timezone == "" {
+		input.Timezone = "UTC"
+	}
+	if _, err := NewCalendar(input.Timezone, input.Weekly, holidayDates(input.Holidays)); err != nil {
+		return nil, err
+	}
+	weekly, err := json.Marshal(input.Weekly)
+	if err != nil {
+		return nil, fmt.Errorf("sla: encode calendar schedule: %w", err)
+	}
+	err = database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		if input.IsDefault {
+			if _, err := tx.Exec(ctx, `UPDATE business_hour_calendars SET is_default=false,updated_at=now() WHERE workspace_id=$1 AND id<>$2`, workspaceID, id); err != nil {
+				return err
+			}
+		}
+		result, err := tx.Exec(ctx, `UPDATE business_hour_calendars SET name=$3,timezone=$4,weekly=$5::jsonb,is_default=$6,updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, id, strings.TrimSpace(input.Name), input.Timezone, weekly, input.IsDefault)
+		if err != nil {
+			return err
+		}
+		if result.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM calendar_holidays WHERE calendar_id=$1`, id); err != nil {
+			return err
+		}
+		for _, holiday := range input.Holidays {
+			if _, err := tx.Exec(ctx, `INSERT INTO calendar_holidays(id,calendar_id,name,date) VALUES($1,$2,$3,$4)`, ids.New(ids.PrefixHoliday), id, strings.TrimSpace(holiday.Name), holiday.Date); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("sla: update calendar: %w", err)
+	}
+	return s.GetCalendar(ctx, workspaceID, id)
+}
+
 func (s *Service) CreatePolicy(ctx context.Context, workspaceID string, input PolicyInput) (*Policy, error) {
 	if strings.TrimSpace(input.Name) == "" {
 		return nil, ErrInvalidName
