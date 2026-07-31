@@ -308,6 +308,39 @@
         ]
       }
     },
+    "/v1/conversations/{id}/ticket": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        }
+      ],
+      "post": {
+        "summary": "Create a resource",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/Json"
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/Json"
+          },
+          "202": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "convertConversationToTicket",
+        "tags": [
+          "Tickets"
+        ]
+      }
+    },
     "/v1/conversations/{id}/messages": {
       "parameters": [
         {

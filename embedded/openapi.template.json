@@ -51,6 +51,10 @@
       "get": { "$ref": "#/components/operations/get", "operationId": "getConversation", "tags": ["Conversations"] },
       "patch": { "$ref": "#/components/operations/update", "operationId": "updateConversation", "tags": ["Conversations"] }
     },
+    "/v1/conversations/{id}/ticket": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "post": { "$ref": "#/components/operations/create", "operationId": "convertConversationToTicket", "tags": ["Tickets"] }
+    },
     "/v1/conversations/{id}/messages": {
       "parameters": [{ "$ref": "#/components/parameters/Id" }],
       "get": { "$ref": "#/components/operations/list", "operationId": "listConversationMessages", "tags": ["Conversations"] },

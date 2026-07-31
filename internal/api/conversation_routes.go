@@ -12,6 +12,7 @@ import (
 	"github.com/hubchat/hubchat/internal/file"
 	"github.com/hubchat/hubchat/internal/httpserver"
 	"github.com/hubchat/hubchat/internal/sla"
+	"github.com/hubchat/hubchat/internal/ticket"
 )
 
 func registerConversationRoutes(mux *http.ServeMux, deps Deps) {
@@ -31,6 +32,9 @@ func registerConversationRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /v1/conversations",
 		requireCapability(deps, authorization.ConversationReply,
 			idempotent(handleStartConversation(deps))))
+	mux.HandleFunc("POST /v1/conversations/{id}/ticket",
+		requireCapability(deps, authorization.TicketManage,
+			idempotent(handleConvertConversationToTicket(deps))))
 
 	mux.HandleFunc("GET /v1/conversations/{id}",
 		requireCapability(deps, authorization.ConversationRead, handleGetConversation(deps)))
@@ -87,6 +91,57 @@ func registerConversationRoutes(mux *http.ServeMux, deps Deps) {
 		requireCapability(deps, authorization.ConversationAssign, idempotent(handleMergeConversation(deps))))
 	mux.HandleFunc("GET /v1/conversations/{id}/transcript",
 		requireCapability(deps, authorization.ConversationRead, handleTranscript(deps)))
+}
+
+// handleConvertConversationToTicket turns the current conversation into a
+// tracked ticket while preserving the original thread. Ticket.Create owns the
+// transaction and writes the reverse conversation.ticket_id link atomically.
+func handleConvertConversationToTicket(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		var req createTicketRequest
+		if err := httpserver.DecodeJSON(r, &req); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed request body.")
+			return
+		}
+
+		conv, err := deps.Conversation.Get(r.Context(), actor.WorkspaceID, r.PathValue("id"))
+		if err != nil {
+			writeConversationError(w, r, err)
+			return
+		}
+		title := strings.TrimSpace(req.Title)
+		if title == "" && conv.Subject != nil {
+			title = strings.TrimSpace(*conv.Subject)
+		}
+		if title == "" {
+			title = "Support request"
+		}
+		inboxID := req.InboxID
+		if inboxID == "" {
+			inboxID = conv.InboxID
+		}
+		customerID := req.CustomerID
+		if customerID == nil {
+			customerID = conv.CustomerID
+		}
+		channel := req.Channel
+		if channel == "" {
+			channel = conv.Channel
+		}
+		conversationID := conv.ID
+		t, err := deps.Ticket.Create(r.Context(), actor.WorkspaceID, actor.MemberID, ticket.CreateRequest{
+			Title: title, Description: req.Description, Type: req.Type, Priority: req.Priority,
+			CustomerID: customerID, CompanyID: req.CompanyID, InboxID: inboxID, Channel: channel,
+			AssigneeID: req.AssigneeID, TeamID: req.TeamID, ConversationID: &conversationID,
+			ParentID: req.ParentID, DueAt: req.DueAt, FieldValues: req.FieldValues,
+		})
+		if err != nil {
+			writeTicketError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, singleTicketJSON(r, deps, actor.WorkspaceID, *t))
+	}
 }
 
 func handleConversationCounts(deps Deps) http.HandlerFunc {
