@@ -182,7 +182,9 @@ func Default() Config {
 			WriteTimeout:    60 * time.Second,
 			IdleTimeout:     120 * time.Second,
 			ShutdownTimeout: 25 * time.Second,
-			MaxRequestBytes: 10 << 20,
+			// Large enough for the default 25 MiB attachment limit plus
+			// multipart overhead, while still bounding every request body.
+			MaxRequestBytes: 32 << 20,
 		},
 		Database: Database{
 			MaxOpenConns:     25,

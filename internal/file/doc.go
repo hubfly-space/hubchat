@@ -4,6 +4,9 @@
 //
 // Upload validation, local and S3-compatible backends, signed URLs, checksums, and abandoned-upload cleanup.
 //
+// The local backend is implemented first. Metadata is kept in PostgreSQL and
+// is the authorization boundary; callers never open a storage key directly.
+//
 // # Boundary
 //
 // Every download is authorized. Object names are random and tenant-prefixed so a leaked URL is not a directory listing (§10.3).

@@ -42,18 +42,18 @@ const (
 
 // Job is one unit of durable work.
 type Job struct {
-	ID          string
-	WorkspaceID string
-	Queue       string
-	Type        string
-	Payload     json.RawMessage
-	State       State
-	Priority    int16
-	Attempt     int
-	MaxAttempts int
-	ScheduledAt time.Time
-	LastError   string
-	CreatedAt   time.Time
+	ID          string          `json:"id"`
+	WorkspaceID string          `json:"workspace_id,omitempty"`
+	Queue       string          `json:"queue"`
+	Type        string          `json:"type"`
+	Payload     json.RawMessage `json:"payload"`
+	State       State           `json:"state"`
+	Priority    int16           `json:"priority"`
+	Attempt     int             `json:"attempt"`
+	MaxAttempts int             `json:"max_attempts"`
+	ScheduledAt time.Time       `json:"scheduled_at"`
+	LastError   string          `json:"last_error,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
 }
 
 // Decode unmarshals the job payload into v.
@@ -225,6 +225,50 @@ func (c *Client) Retry(ctx context.Context, workspaceID, id string) error {
 
 // ErrNotFound is returned when a job id does not resolve within the workspace.
 var ErrNotFound = errors.New("jobs: not found")
+
+type ListFilter struct {
+	WorkspaceID string
+	State       State
+	Queue       string
+	Limit       int
+}
+
+// List returns recent jobs for operational inspection. An empty workspace id
+// is allowed only for the local CLI, which is already an operator-level
+// command; HTTP handlers must always supply a workspace scope.
+func (c *Client) List(ctx context.Context, filter ListFilter) ([]Job, error) {
+	if filter.Limit <= 0 || filter.Limit > 500 {
+		filter.Limit = 100
+	}
+	rows, err := c.pool.Query(ctx, `
+		SELECT id, coalesce(workspace_id, ''), queue, type, payload, state,
+		       priority, attempt, max_attempts, scheduled_at, coalesce(last_error, ''), created_at
+		FROM jobs
+		WHERE ($1 = '' OR workspace_id = $1)
+		  AND ($2 = '' OR state = $2)
+		  AND ($3 = '' OR queue = $3)
+		ORDER BY created_at DESC, id DESC
+		LIMIT $4
+	`, filter.WorkspaceID, string(filter.State), filter.Queue, filter.Limit)
+	if err != nil {
+		return nil, fmt.Errorf("jobs: list: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]Job, 0)
+	for rows.Next() {
+		var job Job
+		if err := rows.Scan(
+			&job.ID, &job.WorkspaceID, &job.Queue, &job.Type, &job.Payload,
+			&job.State, &job.Priority, &job.Attempt, &job.MaxAttempts,
+			&job.ScheduledAt, &job.LastError, &job.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("jobs: scan list: %w", err)
+		}
+		result = append(result, job)
+	}
+	return result, rows.Err()
+}
 
 // QueueDepth reports how many jobs are waiting, for /readyz and the ops screen.
 func (c *Client) QueueDepth(ctx context.Context) (map[string]int, error) {
