@@ -1,107 +1,15 @@
-import {
-  Badge,
-  Button,
-  Card,
-  CardBody,
-  EmptyState,
-  Page,
-  PageBody,
-  PageHeader,
-  Progress,
-  Section,
-  Switch,
-  formatDuration,
-  formatPercent,
-} from "@hubchat/shared";
+import { ApiError, Badge, Button, Card, CardBody, Dialog, DialogContent, DialogTrigger, EmptyState, Field, Input, Page, PageBody, PageHeader, Progress, Section, Switch, api, idempotencyKey, useMutation, useQuery, formatDuration } from "@hubchat/shared";
 import { Plus, Timer } from "lucide-react";
 import { Link } from "react-router-dom";
-import { slaPolicies } from "../../data/fixtures";
+import { useState } from "react";
 
-/** SLA policies (§6.14). */
+type Target = { id: string; priority: string; first_response_minutes: number | null; next_response_minutes: number | null; resolution_minutes: number | null };
+type TargetInput = { priority: string; first_response_minutes: number; next_response_minutes: number; resolution_minutes: number };
+type Policy = { id: string; name: string; description: string; targets: Target[]; enabled: boolean; warning_threshold_percent: number };
 export default function PolicyList() {
-  return (
-    <Page>
-      <PageHeader
-        title="SLA policies"
-        description="Response and resolution targets, measured against a business-hours calendar."
-        actions={
-          <Button variant="primary" size="sm" leading={<Plus />}>
-            New policy
-          </Button>
-        }
-      />
-
-      <PageBody>
-        <Section>
-          {slaPolicies.length === 0 ? (
-            <EmptyState
-              icon={Timer}
-              title="No SLA policies"
-              description="A policy turns 'we should reply quickly' into a number the inbox can count down."
-            />
-          ) : (
-            <div className="space-y-3">
-              {slaPolicies.map((policy) => (
-                <Card key={policy.id}>
-                  <CardBody>
-                    <div className="flex flex-wrap items-start gap-4">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <Link
-                            to={`/sla/policies/${policy.id}`}
-                            className="truncate text-sm font-medium text-fg hover:underline"
-                          >
-                            {policy.name}
-                          </Link>
-                          {policy.applies_to.conditions.length === 0 && (
-                            <Badge tone="neutral">Default</Badge>
-                          )}
-                        </div>
-                        {policy.description && (
-                          <p className="mt-1 text-xs text-fg-muted">{policy.description}</p>
-                        )}
-
-                        <dl className="mt-3 grid gap-x-6 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-4">
-                          {policy.targets.map((target) => (
-                            <div key={target.priority} className="flex items-center justify-between gap-2">
-                              <dt className="capitalize text-fg-muted">{target.priority}</dt>
-                              <dd className="tabular text-fg-secondary">
-                                {formatDuration(target.first_response_minutes * 60)} /{" "}
-                                {formatDuration(target.resolution_minutes * 60)}
-                              </dd>
-                            </div>
-                          ))}
-                        </dl>
-                        <p className="mt-1 text-2xs text-fg-disabled">
-                          First response / resolution, in business hours
-                        </p>
-                      </div>
-
-                      <div className="w-44 shrink-0">
-                        <p className="mb-1.5 flex items-baseline justify-between text-xs">
-                          <span className="text-fg-muted">30-day compliance</span>
-                          <span className="tabular text-fg">
-                            {policy.compliance_30d != null
-                              ? formatPercent(policy.compliance_30d, 1)
-                              : "—"}
-                          </span>
-                        </p>
-                        <Progress
-                          value={policy.compliance_30d ?? 0}
-                          tone={(policy.compliance_30d ?? 0) >= 0.95 ? "success" : "warning"}
-                          label={`${policy.name} compliance`}
-                        />
-                      </div>
-
-                      <Switch defaultChecked={policy.enabled} aria-label={`Enable ${policy.name}`} />
-                    </div>
-                  </CardBody>
-                </Card>
-              ))}
-            </div>
-          )}
-        </Section>
-      </PageBody>
-    </Page>
-  );
+  const query = useQuery<{ data: Policy[] }>(["sla-policies"], (signal) => api.get("/sla/policies", { signal }));
+  const [open, setOpen] = useState(false); const [name, setName] = useState(""); const [description, setDescription] = useState("");
+  const create = useMutation<{ name: string; description: string; targets: TargetInput[] }, Policy>((input) => api.post("/sla/policies", input, { idempotencyKey: idempotencyKey() }), { invalidates: [["sla-policies"]], onSuccess: () => { setOpen(false); setName(""); setDescription(""); } });
+  const toggle = useMutation<{ id: string; enabled: boolean }, Policy>(({ id, enabled }) => api.patch(`/sla/policies/${encodeURIComponent(id)}`, { enabled }), { invalidates: [["sla-policies"]] });
+  return <Page><PageHeader title="SLA policies" description="Response and resolution targets measured against a business-hours calendar." actions={<Dialog open={open} onOpenChange={setOpen}><DialogTrigger asChild><Button variant="primary" size="sm" leading={<Plus />}>New policy</Button></DialogTrigger><DialogContent title="Create SLA policy" footer={<><Button variant="ghost" size="sm" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" size="sm" loading={create.isPending} disabled={!name.trim()} onClick={() => void create.mutate({ name: name.trim(), description, targets: [{ priority: "normal", first_response_minutes: 60, next_response_minutes: 120, resolution_minutes: 1440 }] }).catch(() => {})}>Create policy</Button></>}><div className="space-y-4"><Field label="Name"><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Standard support" /></Field><Field label="Description"><Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Targets for normal priority support." /></Field>{Boolean(create.error) && <p className="text-sm text-danger">Could not create SLA policy.</p>}</div></DialogContent></Dialog>} /><PageBody><Section><div className="space-y-3">{query.isLoading ? <p className="text-sm text-fg-muted">Loading policies…</p> : query.error ? <EmptyState icon={Timer} title="SLA policies unavailable" description={query.error instanceof ApiError ? query.error.message : "Try again in a moment."} /> : (query.data?.data ?? []).length === 0 ? <EmptyState icon={Timer} title="No SLA policies" description="A policy turns response expectations into a timer the inbox can count down." /> : (query.data?.data ?? []).map((policy) => <Card key={policy.id}><CardBody className="flex flex-wrap items-start gap-4"><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><Link to={`/sla/policies/${policy.id}`} className="truncate text-sm font-medium text-fg hover:underline">{policy.name}</Link>{policy.enabled && <Badge tone="success">Active</Badge>}</div>{policy.description && <p className="mt-1 text-xs text-fg-muted">{policy.description}</p>}<dl className="mt-3 grid gap-x-6 gap-y-1 text-xs sm:grid-cols-2 lg:grid-cols-4">{policy.targets.map((target) => <div key={target.id} className="flex items-center justify-between gap-2"><dt className="capitalize text-fg-muted">{target.priority}</dt><dd className="tabular text-fg-secondary">{target.first_response_minutes != null ? formatDuration(target.first_response_minutes * 60) : "—"} / {target.resolution_minutes != null ? formatDuration(target.resolution_minutes * 60) : "—"}</dd></div>)}</dl><p className="mt-1 text-2xs text-fg-disabled">First response / resolution, in business hours</p></div><div className="w-44 shrink-0"><p className="mb-1.5 flex items-baseline justify-between text-xs"><span className="text-fg-muted">Warning threshold</span><span className="tabular text-fg">{policy.warning_threshold_percent}%</span></p><Progress value={policy.warning_threshold_percent / 100} tone="warning" label={`${policy.name} warning threshold`} /></div><Switch checked={policy.enabled} onCheckedChange={(enabled) => void toggle.mutate({ id: policy.id, enabled }).catch(() => {})} aria-label={`Enable ${policy.name}`} /></CardBody></Card>)}</div></Section></PageBody></Page>;
 }
