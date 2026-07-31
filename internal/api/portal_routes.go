@@ -23,19 +23,20 @@ import (
 )
 
 func registerPortalRoutes(mux *http.ServeMux, deps Deps) {
+	idempotent := Idempotency(deps)
 	mux.HandleFunc("GET /v1/portal/bootstrap", handlePortalBootstrap(deps))
 	mux.HandleFunc("POST /v1/portal/auth/magic-link", handlePortalMagicLink(deps))
 	mux.HandleFunc("POST /v1/portal/auth/magic-link/redeem", handlePortalMagicLinkRedeem(deps))
 	mux.HandleFunc("POST /v1/portal/auth/logout", handlePortalLogout(deps))
 	mux.HandleFunc("GET /v1/portal/me", handlePortalMe(deps))
-	mux.HandleFunc("PATCH /v1/portal/me", handlePortalProfileUpdate(deps))
+	mux.HandleFunc("PATCH /v1/portal/me", idempotent(handlePortalProfileUpdate(deps)))
 	mux.HandleFunc("GET /v1/portal/me/export", handlePortalCustomerExport(deps))
-	mux.HandleFunc("POST /v1/portal/me/delete", handlePortalCustomerDelete(deps))
+	mux.HandleFunc("POST /v1/portal/me/delete", idempotent(handlePortalCustomerDelete(deps)))
 	mux.HandleFunc("GET /v1/portal/tickets", handlePortalTickets(deps))
 	mux.HandleFunc("POST /v1/portal/tickets", Idempotency(deps)(handlePortalCreateTicket(deps)))
 	mux.HandleFunc("GET /v1/portal/tickets/{id}", handlePortalTicket(deps))
 	mux.HandleFunc("POST /v1/portal/tickets/{id}/files", Idempotency(deps)(handlePortalTicketFileUpload(deps)))
-	mux.HandleFunc("POST /v1/portal/tickets/{id}/replies", handlePortalTicketReply(deps))
+	mux.HandleFunc("POST /v1/portal/tickets/{id}/replies", idempotent(handlePortalTicketReply(deps)))
 	mux.HandleFunc("GET /v1/portal/files/{id}", handlePortalFileDownload(deps))
 }
 

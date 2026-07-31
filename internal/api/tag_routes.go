@@ -10,14 +10,15 @@ import (
 )
 
 func registerTagRoutes(mux *http.ServeMux, deps Deps) {
+	idempotent := Idempotency(deps)
 	mux.HandleFunc("GET /v1/tags",
 		requireActor(deps, handleListTags(deps)))
 	mux.HandleFunc("POST /v1/tags",
-		requireCapability(deps, authorization.WorkspaceManage, handleCreateTag(deps)))
+		requireCapability(deps, authorization.WorkspaceManage, idempotent(handleCreateTag(deps))))
 	mux.HandleFunc("DELETE /v1/tags/{id}",
 		requireCapability(deps, authorization.WorkspaceManage, handleDeleteTag(deps)))
 	mux.HandleFunc("POST /v1/tags/{id}/merge",
-		requireCapability(deps, authorization.WorkspaceManage, handleMergeTag(deps)))
+		requireCapability(deps, authorization.WorkspaceManage, idempotent(handleMergeTag(deps))))
 }
 
 func handleListTags(deps Deps) http.HandlerFunc {

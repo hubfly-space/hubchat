@@ -16,6 +16,7 @@ import (
 )
 
 func registerTicketRoutes(mux *http.ServeMux, deps Deps) {
+	idempotent := Idempotency(deps)
 	mux.HandleFunc("GET /v1/tickets",
 		requireCapability(deps, authorization.TicketManage, handleListTickets(deps)))
 	mux.HandleFunc("GET /v1/tickets/export",
@@ -23,7 +24,7 @@ func registerTicketRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/tickets/duplicates",
 		requireCapability(deps, authorization.TicketManage, handleDuplicateCandidates(deps)))
 	mux.HandleFunc("POST /v1/tickets",
-		requireCapability(deps, authorization.TicketManage, handleCreateTicket(deps)))
+		requireCapability(deps, authorization.TicketManage, idempotent(handleCreateTicket(deps))))
 	mux.HandleFunc("GET /v1/tickets/{id}",
 		requireCapability(deps, authorization.TicketManage, handleGetTicket(deps)))
 	mux.HandleFunc("PATCH /v1/tickets/{id}",
@@ -51,7 +52,7 @@ func registerTicketRoutes(mux *http.ServeMux, deps Deps) {
 		requireCapability(deps, authorization.TicketManage, handleTicketActivity(deps)))
 
 	mux.HandleFunc("POST /v1/tickets/{id}/tags",
-		requireCapability(deps, authorization.TicketManage, handleAddTicketTag(deps)))
+		requireCapability(deps, authorization.TicketManage, idempotent(handleAddTicketTag(deps))))
 	mux.HandleFunc("DELETE /v1/tickets/{id}/tags/{tagID}",
 		requireCapability(deps, authorization.TicketManage, handleRemoveTicketTag(deps)))
 
@@ -65,17 +66,17 @@ func registerTicketRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/tickets/{id}/links",
 		requireCapability(deps, authorization.TicketManage, handleListTicketLinks(deps)))
 	mux.HandleFunc("POST /v1/tickets/{id}/links",
-		requireCapability(deps, authorization.TicketManage, handleAddTicketLink(deps)))
+		requireCapability(deps, authorization.TicketManage, idempotent(handleAddTicketLink(deps))))
 	mux.HandleFunc("DELETE /v1/tickets/{id}/links/{targetID}",
 		requireCapability(deps, authorization.TicketManage, handleRemoveTicketLink(deps)))
 
 	mux.HandleFunc("PUT /v1/tickets/{id}/field-values/{key}",
-		requireCapability(deps, authorization.TicketManage, handleSetTicketFieldValue(deps)))
+		requireCapability(deps, authorization.TicketManage, idempotent(handleSetTicketFieldValue(deps))))
 
 	mux.HandleFunc("GET /v1/field-definitions",
 		requireCapability(deps, authorization.TicketManage, handleListFieldDefinitions(deps)))
 	mux.HandleFunc("POST /v1/field-definitions",
-		requireCapability(deps, authorization.TicketManage, handleCreateFieldDefinition(deps)))
+		requireCapability(deps, authorization.TicketManage, idempotent(handleCreateFieldDefinition(deps))))
 	mux.HandleFunc("PATCH /v1/field-definitions/{id}",
 		requireCapability(deps, authorization.TicketManage, handleUpdateFieldDefinition(deps)))
 	mux.HandleFunc("DELETE /v1/field-definitions/{id}",

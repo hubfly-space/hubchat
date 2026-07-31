@@ -11,16 +11,17 @@ import (
 )
 
 func registerTeamRoutes(mux *http.ServeMux, deps Deps) {
+	idempotent := Idempotency(deps)
 	mux.HandleFunc("GET /v1/teams",
 		requireActor(deps, handleListTeams(deps)))
 	mux.HandleFunc("POST /v1/teams",
-		requireCapability(deps, authorization.MemberManage, handleCreateTeam(deps)))
+		requireCapability(deps, authorization.MemberManage, idempotent(handleCreateTeam(deps))))
 	mux.HandleFunc("PATCH /v1/teams/{id}",
 		requireCapability(deps, authorization.MemberManage, handleUpdateTeam(deps)))
 	mux.HandleFunc("DELETE /v1/teams/{id}",
 		requireCapability(deps, authorization.MemberManage, handleDeleteTeam(deps)))
 	mux.HandleFunc("PUT /v1/teams/{id}/members/{memberId}",
-		requireCapability(deps, authorization.MemberManage, handleAddTeamMember(deps)))
+		requireCapability(deps, authorization.MemberManage, idempotent(handleAddTeamMember(deps))))
 	mux.HandleFunc("DELETE /v1/teams/{id}/members/{memberId}",
 		requireCapability(deps, authorization.MemberManage, handleRemoveTeamMember(deps)))
 }
