@@ -62,10 +62,36 @@ func (s *Service) Create(ctx context.Context, workspaceID string, input UploadIn
 	if workspaceID == "" {
 		return nil, errors.New("file: workspace id is required")
 	}
+	if input.Body == nil {
+		return nil, errors.New("file: upload body is required")
+	}
+	if input.SizeBytes < 0 {
+		return nil, ErrTooLarge
+	}
 	if err := s.validateOwner(ctx, workspaceID, input.OwnerType, input.OwnerID); err != nil {
 		return nil, err
 	}
 	id := ids.New(ids.PrefixFile)
+	// Reserve the metadata row before writing bytes. If the process dies or
+	// storage rejects the upload, the pending row gives the recurring cleanup
+	// job a workspace-scoped handle to reclaim the object.
+	pendingKey := storageKeyFor(workspaceID, id)
+	uploaderType := input.UploadedByType
+	if uploaderType == "" {
+		uploaderType = "user"
+	}
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO files (
+			id, workspace_id, storage_key, backend, name, mime_type, size_bytes,
+			owner_type, owner_id, uploaded_by_type, uploaded_by_id
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), NULLIF($9, ''), $10, NULLIF($11, ''))
+	`, id, workspaceID, pendingKey, s.backend, input.Name, input.MIMEType, input.SizeBytes,
+		input.OwnerType, input.OwnerID, uploaderType, input.UploadedByID,
+	); err != nil {
+		return nil, fmt.Errorf("file: create pending metadata: %w", err)
+	}
+
 	stored, err := s.store.Save(ctx, Upload{
 		WorkspaceID: workspaceID,
 		FileID:      id,
@@ -75,24 +101,20 @@ func (s *Service) Create(ctx context.Context, workspaceID string, input UploadIn
 		Body:        input.Body,
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("file: store upload: %w", err)
 	}
 
-	uploaderType := input.UploadedByType
-	if uploaderType == "" {
-		uploaderType = "user"
-	}
 	var record Record
 	err = s.pool.QueryRow(ctx, `
-		INSERT INTO files (
-			id, workspace_id, storage_key, backend, name, mime_type, size_bytes,
-			checksum, owner_type, owner_id, uploaded_by_type, uploaded_by_id, committed_at
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), NULLIF($10, ''), $11, NULLIF($12, ''), now())
+		UPDATE files
+		SET storage_key=$3, backend=$4, name=$5, mime_type=$6, size_bytes=$7,
+			checksum=$8, owner_type=NULLIF($9, ''), owner_id=NULLIF($10, ''),
+			uploaded_by_type=$11, uploaded_by_id=NULLIF($12, ''), committed_at=now()
+		WHERE workspace_id=$1 AND id=$2 AND committed_at IS NULL
 		RETURNING id, workspace_id, storage_key, backend, name, mime_type, size_bytes,
 		          coalesce(checksum, ''::bytea), coalesce(owner_type, ''), coalesce(owner_id, ''),
 		          uploaded_by_type, coalesce(uploaded_by_id, ''), committed_at, created_at
-	`, id, workspaceID, stored.StorageKey, s.backend, input.Name, input.MIMEType, stored.SizeBytes,
+	`, workspaceID, id, stored.StorageKey, s.backend, input.Name, input.MIMEType, stored.SizeBytes,
 		stored.Checksum[:], input.OwnerType, input.OwnerID, uploaderType, input.UploadedByID,
 	).Scan(
 		&record.ID, &record.WorkspaceID, &record.StorageKey, &record.Backend,
@@ -101,10 +123,72 @@ func (s *Service) Create(ctx context.Context, workspaceID string, input UploadIn
 		&record.CommittedAt, &record.CreatedAt,
 	)
 	if err != nil {
-		_ = s.store.Delete(context.Background(), workspaceID, id)
-		return nil, fmt.Errorf("file: create metadata: %w", err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			// The row may have been removed by an administrator or cleanup
+			// process while storage was committing. Do not leave bytes behind.
+			_ = s.store.Delete(context.Background(), workspaceID, id)
+		}
+		return nil, fmt.Errorf("file: commit metadata: %w", err)
 	}
 	return &record, nil
+}
+
+// SweepAbandoned removes pending upload rows older than before and their
+// corresponding storage objects. The delete predicate includes committed_at
+// so a late storage commit cannot have its metadata removed by this sweep.
+// Storage failures leave the row for a later retry.
+func (s *Service) SweepAbandoned(ctx context.Context, before time.Time, limit int) (int, error) {
+	if before.IsZero() {
+		before = time.Now().UTC().Add(-time.Hour)
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT workspace_id, id
+		FROM files
+		WHERE committed_at IS NULL AND created_at < $1
+		ORDER BY created_at ASC, id ASC
+		LIMIT $2
+	`, before, limit)
+	if err != nil {
+		return 0, fmt.Errorf("file: list abandoned uploads: %w", err)
+	}
+	type candidate struct{ workspaceID, fileID string }
+	candidates := make([]candidate, 0, limit)
+	for rows.Next() {
+		var item candidate
+		if err := rows.Scan(&item.workspaceID, &item.fileID); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("file: scan abandoned upload: %w", err)
+		}
+		candidates = append(candidates, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, fmt.Errorf("file: list abandoned uploads: %w", err)
+	}
+	rows.Close()
+
+	removed := 0
+	var firstErr error
+	for _, item := range candidates {
+		if err := s.store.Delete(ctx, item.workspaceID, item.fileID); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("file: delete abandoned object %s: %w", item.fileID, err)
+			}
+			continue
+		}
+		result, err := s.pool.Exec(ctx, `
+			DELETE FROM files
+			WHERE workspace_id=$1 AND id=$2 AND committed_at IS NULL
+		`, item.workspaceID, item.fileID)
+		if err != nil {
+			return removed, fmt.Errorf("file: delete abandoned metadata: %w", err)
+		}
+		removed += int(result.RowsAffected())
+	}
+	return removed, firstErr
 }
 
 func (s *Service) validateOwner(ctx context.Context, workspaceID, ownerType, ownerID string) error {
@@ -286,6 +370,10 @@ func ChecksumHex(checksum []byte) string {
 		return ""
 	}
 	return hex.EncodeToString(checksum)
+}
+
+func storageKeyFor(workspaceID, fileID string) string {
+	return workspaceID + "/" + fileID
 }
 
 func VerifyChecksum(body io.Reader, expected []byte) error {

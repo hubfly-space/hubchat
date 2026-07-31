@@ -21,17 +21,17 @@ import { useState } from "react";
 
 const SDK_METHODS = [
   { name: "boot", signature: "Hubchat('boot', { key })", detail: "Loads the widget. Safe to call once per page." },
-  { name: "identify", signature: "Hubchat('identify', { external_id, email, token })", detail: "Attaches a verified customer to the session." },
+  { name: "identify", signature: "Hubchat('identify', { external_id, email, signed_token, attributes })", detail: "Attaches a customer and applies only schema-approved attributes." },
   { name: "context", signature: "Hubchat('context', { plan, locale, … })", detail: "Records explicit page or account context for support." },
-  { name: "update", signature: "Hubchat('update', attributes)", detail: "Alias for sending explicit context attributes." },
-  { name: "track", signature: "Hubchat('track', type, payload)", detail: "Records a declared application event." },
-  { name: "show / hide", signature: "Hubchat('show')", detail: "Opens or closes the panel." },
+  { name: "update", signature: "Hubchat('update', { attributes })", detail: "Updates declared customer attributes through the server validator." },
+  { name: "track", signature: "Hubchat('track', { type, payload })", detail: "Records a declared application event." },
+  { name: "show / hide", signature: "Hubchat('show') / Hubchat('hide')", detail: "Opens or closes the panel; open/close are aliases." },
   { name: "startConversation", signature: "Hubchat('startConversation', { message })", detail: "Opens straight into a new thread." },
-  { name: "openArticle", signature: "Hubchat('openArticle', slug)", detail: "Deep-links to a help article." },
-  { name: "openForm", signature: "Hubchat('openForm', slug)", detail: "Opens a ticket or feedback form." },
-  { name: "openFeedback", signature: "Hubchat('openFeedback', { slug })", detail: "Opens a public feedback board." },
+  { name: "openArticle", signature: "Hubchat('openArticle', { slug })", detail: "Deep-links to a help article." },
+  { name: "openTicketForm", signature: "Hubchat('openTicketForm', { slug })", detail: "Opens a ticket form; openForm remains an alias." },
+  { name: "openFeedbackForm", signature: "Hubchat('openFeedbackForm', { slug })", detail: "Opens a feedback form; openFeedback remains an alias." },
   { name: "reset", signature: "Hubchat('reset')", detail: "Clears the visitor session. Call on sign-out." },
-  { name: "on", signature: "Hubchat('on', event, handler)", detail: "Subscribes to widget lifecycle events." },
+  { name: "on", signature: "Hubchat('on', { event, handler })", detail: "Subscribes to widget lifecycle events." },
 ];
 
 /** SDK and installation reference (§6.16). */
@@ -172,7 +172,7 @@ style-src   'unsafe-inline'   # widget styles are injected into a shadow root`}
                 code={`Hubchat('identify', {
   external_id: 'u_44192',
   email: 'mariana@atlasfreight.com',
-  token: window.__HUBCHAT_TOKEN__, // rendered by your server
+  signed_token: window.__HUBCHAT_TOKEN__, // rendered by your server
 });`}
               />
             </Section>
@@ -226,12 +226,12 @@ style-src   'unsafe-inline'   # widget styles are injected into a shadow root`}
             <Section title="Lifecycle events">
               <CodeBlock
                 language="javascript"
-                code={`Hubchat('on', 'ready',              () => {});
-Hubchat('on', 'open',               () => {});
-Hubchat('on', 'close',              () => {});
-Hubchat('on', 'conversation:started', ({ id }) => {});
-Hubchat('on', 'message:received',   ({ id, body }) => {});
-Hubchat('on', 'unread:changed',     ({ count }) => {});`}
+                code={`Hubchat('on', { event: 'ready', handler: () => {} });
+Hubchat('on', { event: 'open', handler: () => {} });
+Hubchat('on', { event: 'close', handler: () => {} });
+Hubchat('on', { event: 'conversation:started', handler: ({ id }) => {} });
+Hubchat('on', { event: 'message:received', handler: ({ id, body }) => {} });
+Hubchat('on', { event: 'unread:changed', handler: ({ count }) => {} });`}
               />
             </Section>
           </TabsContent>

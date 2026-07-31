@@ -26,6 +26,8 @@ var (
 	ErrInvalidAttachment = errors.New("file: attachment is not valid for this workspace")
 )
 
+const JobCleanupAbandoned = "file.cleanup_abandoned"
+
 // Upload is the validated metadata and body for one object. File names are
 // display metadata only; the local backend never uses them to construct a
 // storage path.
