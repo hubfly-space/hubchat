@@ -19,7 +19,6 @@ import {
   Section,
   Select,
   SettingsRow,
-  Switch,
   Tabs,
   TabsContent,
   TabsList,
@@ -28,7 +27,7 @@ import {
   useMutation,
   useQuery,
 } from "@hubchat/shared";
-import { AlertTriangle, CheckCircle2, RefreshCw, Send, Trash2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useWorkspace } from "../../app/workspace-context";
 
@@ -40,6 +39,11 @@ type Mailbox = {
   inbound_mode: "webhook" | "imap" | "off";
   imap_configured: boolean;
   inbound_secret_configured: boolean;
+  imap_host?: string | null;
+  imap_port?: number | null;
+  imap_username?: string | null;
+  allowed_senders?: string[];
+  blocked_senders?: string[];
   enabled: boolean;
   last_polled_at?: string | null;
   last_error?: string | null;
@@ -57,12 +61,16 @@ export default function EmailChannel() {
   const [newAddress, setNewAddress] = useState("");
   const [newInboxID, setNewInboxID] = useState("");
   const [newSecret, setNewSecret] = useState("");
+  const [imapHost, setImapHost] = useState("");
+  const [imapPort, setImapPort] = useState("993");
+  const [imapUsername, setImapUsername] = useState("");
+  const [imapPassword, setImapPassword] = useState("");
   const emailStatus = useQuery<EmailStatus>(["email-status"], (signal) => api.get("/email/status", { signal }));
   const mailboxes = useQuery<{ data: Mailbox[] }>(["email-mailboxes"], (signal) => api.get("/email/mailboxes", { signal }));
   const [activeID, setActiveID] = useState("");
   const active = mailboxes.data?.data.find((item) => item.id === activeID) ?? mailboxes.data?.data[0];
   const [inboundMode, setInboundMode] = useState<Mailbox["inbound_mode"]>("off");
-  const update = useMutation<Partial<Mailbox>, Mailbox>((input) => api.patch(`/email/mailboxes/${encodeURIComponent(active?.id ?? "")}`, input, { idempotencyKey: idempotencyKey() }), { invalidates: [["email-mailboxes"]] });
+  const update = useMutation<Record<string, unknown>, Mailbox>((input) => api.patch(`/email/mailboxes/${encodeURIComponent(active?.id ?? "")}`, input, { idempotencyKey: idempotencyKey() }), { invalidates: [["email-mailboxes"]] });
   const create = useMutation<{ address: string; inbox_id: string; inbound_mode: "webhook"; enabled: boolean }, CreatedMailbox>((input) => api.post("/email/mailboxes", input, { idempotencyKey: idempotencyKey() }), { invalidates: [["email-mailboxes"]], onSuccess: (value) => { setCreateOpen(false); setNewAddress(""); setNewInboxID(""); setNewSecret(value.inbound_secret); } });
   const deliveryEvents = useQuery<{ data: DeliveryEvent[] }>(active ? ["email-delivery-events", active.id] : null, (signal) => api.get(`/email/mailboxes/${encodeURIComponent(active?.id ?? "")}/delivery-events?limit=20`, { signal, fresh: true }));
   const suppressions = useQuery<{ data: Suppression[] }>(["email-suppressions"], (signal) => api.get("/email/suppressions", { signal }));
@@ -72,6 +80,10 @@ export default function EmailChannel() {
     if (active) {
       setActiveID(active.id);
       setInboundMode(active.inbound_mode);
+      setImapHost(active.imap_host ?? "");
+      setImapPort(String(active.imap_port ?? 993));
+      setImapUsername(active.imap_username ?? "");
+      setImapPassword("");
     }
   }, [active]);
 
@@ -107,26 +119,31 @@ export default function EmailChannel() {
             <Section title="SMTP">
               <Card>
                 <CardBody className="pt-0">
+                  <Callout tone="info" className="mb-4">
+                    Outbound SMTP is configured at the deployment level. These values are read-only here;
+                    set <code className="font-mono">HUBCHAT_SMTP_*</code> and restart the worker to change them.
+                  </Callout>
                   <SettingsRow label="Host" htmlFor="smtp-host">
-                    <Input id="smtp-host" inputSize="sm" mono placeholder="smtp.postmarkapp.com" />
+                    <Input id="smtp-host" inputSize="sm" mono readOnly value={emailStatus.data?.host ?? ""} placeholder="Not configured" />
                   </SettingsRow>
                   <SettingsRow label="Port" htmlFor="smtp-port">
-                    <Input id="smtp-port" inputSize="sm" type="number" defaultValue={587} className="max-w-32" />
+                    <Input id="smtp-port" inputSize="sm" type="number" readOnly value={emailStatus.data?.port ?? ""} className="max-w-32" />
                   </SettingsRow>
                   <SettingsRow label="Username" htmlFor="smtp-user">
-                    <Input id="smtp-user" inputSize="sm" mono />
+                    <Input id="smtp-user" inputSize="sm" mono readOnly value="Configured outside Hubchat" />
                   </SettingsRow>
                   <SettingsRow
                     label="Password"
                     description="Stored encrypted. Never returned by the API or written to logs (§11.5)."
                     htmlFor="smtp-pass"
                   >
-                    <Input id="smtp-pass" inputSize="sm" type="password" />
+                    <Input id="smtp-pass" inputSize="sm" type="password" readOnly value="********" />
                   </SettingsRow>
                   <SettingsRow label="Encryption">
                     <Select
                       size="sm"
-                      defaultValue="starttls"
+                      value={emailStatus.data?.encryption ?? ""}
+                      disabled
                       aria-label="Encryption"
                       options={[
                         { value: "starttls", label: "STARTTLS", description: "Recommended" },
@@ -143,26 +160,25 @@ export default function EmailChannel() {
               <Card>
                 <CardBody className="pt-0">
                   <SettingsRow label="From name" htmlFor="from-name">
-                    <Input id="from-name" inputSize="sm" defaultValue="Northwind Support" />
+                    <Input id="from-name" inputSize="sm" readOnly value="Configured outside Hubchat" />
                   </SettingsRow>
                   <SettingsRow label="From address" htmlFor="from-email">
-                    <Input id="from-email" inputSize="sm" mono defaultValue="support@northwind.cloud" />
+                    <Input id="from-email" inputSize="sm" mono readOnly value={emailStatus.data?.from_address ?? ""} placeholder="Not configured" />
                   </SettingsRow>
                   <SettingsRow
                     label="Reply-to"
                     description="Where customer replies are delivered so they thread back onto the conversation."
                     htmlFor="reply-to"
                   >
-                    <Input id="reply-to" inputSize="sm" mono defaultValue="reply@in.northwind.cloud" />
+                    <Input id="reply-to" inputSize="sm" mono readOnly value="Derived from the inbound mailbox" />
                   </SettingsRow>
                 </CardBody>
               </Card>
 
-              <div className="mt-3 flex justify-end">
-                <Button variant="secondary" size="sm" leading={<Send />}>
-                  Send a test email
-                </Button>
-              </div>
+              <p className="mt-3 text-2xs text-fg-muted">
+                A test message can be verified by creating a mailbox and sending a real customer notification;
+                arbitrary SMTP test delivery is not exposed without a recipient audit trail.
+              </p>
             </Section>
           </TabsContent>
 
@@ -213,7 +229,7 @@ export default function EmailChannel() {
                       signature; unsigned requests are rejected.
                     </p>
                     <CodeBlock
-                      code="https://support.northwind.cloud/api/v1/email/inbound/postmark"
+                      code={`${window.location.origin}/api/v1/email/inbound/postmark`}
                       language="url"
                     />
                   </CardBody>
@@ -226,14 +242,28 @@ export default function EmailChannel() {
                 <Card>
                   <CardBody className="pt-0">
                     <SettingsRow label="Host" htmlFor="imap-host">
-                      <Input id="imap-host" inputSize="sm" mono placeholder="imap.example.com" />
+                      <Input id="imap-host" inputSize="sm" mono value={imapHost} onChange={(event) => setImapHost(event.target.value)} placeholder="imap.example.com" />
                     </SettingsRow>
                     <SettingsRow label="Username" htmlFor="imap-user">
-                      <Input id="imap-user" inputSize="sm" mono />
+                      <Input id="imap-user" inputSize="sm" mono value={imapUsername} onChange={(event) => setImapUsername(event.target.value)} />
                     </SettingsRow>
-                    <SettingsRow label="Poll interval" htmlFor="imap-interval">
-                      <Input id="imap-interval" inputSize="sm" type="number" suffix="seconds" defaultValue={60} />
+                    <SettingsRow label="Password" htmlFor="imap-pass" description="Stored encrypted and never returned by the API.">
+                      <Input id="imap-pass" inputSize="sm" type="password" value={imapPassword} onChange={(event) => setImapPassword(event.target.value)} placeholder={active?.imap_configured ? "Leave blank to keep current password" : "IMAP password"} />
                     </SettingsRow>
+                    <SettingsRow label="Port" htmlFor="imap-port">
+                      <Input id="imap-port" inputSize="sm" type="number" value={imapPort} onChange={(event) => setImapPort(event.target.value)} className="max-w-32" />
+                    </SettingsRow>
+                    <div className="mt-4 flex justify-end">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        loading={update.isPending}
+                        disabled={!active || !imapHost.trim() || !imapUsername.trim() || !Number(imapPort)}
+                        onClick={() => void update.mutate({ imap_host: imapHost.trim(), imap_port: Number(imapPort), imap_username: imapUsername.trim(), ...(imapPassword.trim() ? { imap_password: imapPassword } : {}) }).then(() => setImapPassword("")).catch(() => {})}
+                      >
+                        Save IMAP settings
+                      </Button>
+                    </div>
                   </CardBody>
                 </Card>
                 {active?.last_error && <Callout tone="danger" className="mt-3" title="Last IMAP poll failed">{active.last_error}</Callout>}
@@ -259,13 +289,13 @@ export default function EmailChannel() {
                     label="Strip quoted replies"
                     description="Removes the quoted history below the reply so the timeline stays readable."
                   >
-                    <Switch defaultChecked aria-label="Strip quoted replies" />
+                    <Badge tone="neutral">Provider default</Badge>
                   </SettingsRow>
                   <SettingsRow
                     label="Accept mail from unknown senders"
                     description="Off means only addresses already attached to a customer can create conversations."
                   >
-                    <Switch defaultChecked aria-label="Accept unknown senders" />
+                    <Badge tone="neutral">Configured by provider policy</Badge>
                   </SettingsRow>
                 </CardBody>
               </Card>
@@ -290,10 +320,7 @@ export default function EmailChannel() {
                     ].map((template) => (
                       <li key={template} className="flex items-center gap-3 px-4 py-2.5">
                         <span className="min-w-0 flex-1 text-sm text-fg">{template}</span>
-                        <Badge tone="neutral">Default</Badge>
-                        <Button variant="ghost" size="sm">
-                          Customise
-                        </Button>
+                        <Badge tone="neutral">Binary default</Badge>
                       </li>
                     ))}
                   </ul>
@@ -305,27 +332,11 @@ export default function EmailChannel() {
           <TabsContent value="deliverability">
             <Section title="DNS records">
               <Card>
-                <CardBody className="space-y-3">
-                  {[
-                    { label: "SPF", status: "ok", value: "v=spf1 include:spf.postmarkapp.com ~all" },
-                    { label: "DKIM", status: "ok", value: "pm._domainkey.northwind.cloud" },
-                    { label: "DMARC", status: "missing", value: "v=DMARC1; p=none; rua=mailto:dmarc@northwind.cloud" },
-                  ].map((record) => (
-                    <div key={record.label} className="flex items-start gap-3">
-                      {record.status === "ok" ? (
-                        <CheckCircle2 aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-success-text" />
-                      ) : (
-                        <AlertTriangle aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-warning-text" />
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm text-fg">{record.label}</p>
-                        <p className="mt-0.5 truncate font-mono text-2xs text-fg-muted">{record.value}</p>
-                      </div>
-                      <Badge tone={record.status === "ok" ? "success" : "warning"}>
-                        {record.status === "ok" ? "Verified" : "Not found"}
-                      </Badge>
-                    </div>
-                  ))}
+                <CardBody>
+                  <Callout tone="info" icon={<AlertTriangle />}>
+                    DNS verification is not performed by the current binary. Verify SPF, DKIM, and DMARC
+                    for the configured sender domain with your DNS provider before enabling customer mail.
+                  </Callout>
                 </CardBody>
               </Card>
             </Section>

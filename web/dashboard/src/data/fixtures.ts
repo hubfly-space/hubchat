@@ -1812,6 +1812,7 @@ function job(
     started_at: state === "pending" ? null : scheduledAt,
     finished_at: state === "succeeded" || state === "failed" || state === "dead" ? scheduledAt : null,
     error: state === "failed" ? "dial tcp: i/o timeout" : state === "dead" ? "exceeded max attempts" : null,
+    created_at: scheduledAt,
   };
 }
 
