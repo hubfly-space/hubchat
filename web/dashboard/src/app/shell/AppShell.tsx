@@ -1,7 +1,7 @@
-import { useHotkey } from "@hubchat/shared";
+import { api, useHotkey, useQuery, type Paginated, type Conversation } from "@hubchat/shared";
 import { useEffect, useRef, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
-import { conversations } from "../../data/fixtures";
+import { useWorkspace } from "../workspace-context";
 import { InboxSidebar } from "../../pages/inbox/InboxSidebar";
 import { GlobalSearch } from "./GlobalSearch";
 import { NavRail } from "./NavRail";
@@ -23,9 +23,11 @@ export function AppShell() {
   const { pathname } = useLocation();
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const { isLive } = useWorkspace();
+  const conversations = useQuery<Paginated<Conversation>>(["shell", "conversations"], (signal) => api.get("/conversations?limit=50", { signal }));
 
   const section = sectionForPath(pathname);
-  const unreadCount = conversations.filter((conversation) => conversation.unread).length;
+  const unreadCount = conversations.data?.data.filter((conversation) => conversation.unread).length ?? 0;
 
   useHotkey("mod+k", () => setSearchOpen(true), { allowInInput: true });
   useHotkey("/", () => setSearchOpen(true));
@@ -43,7 +45,7 @@ export function AppShell() {
       <NavRail unreadCount={unreadCount} />
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-[var(--hc-float-radius)] border border-transparent bg-canvas shadow-[var(--hc-float-shadow)] transition-[border-color,border-radius,box-shadow] duration-base ease-out compact:border-line">
-        <TopBar onOpenSearch={() => setSearchOpen(true)} connection="connected" />
+        <TopBar onOpenSearch={() => setSearchOpen(true)} connection={isLive ? "connected" : "reconnecting"} />
 
         <div className="flex min-h-0 flex-1 gap-[var(--hc-shell-gap)] transition-[gap] duration-base ease-out">
           {section?.id === "inbox" ? (
