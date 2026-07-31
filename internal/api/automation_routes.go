@@ -10,18 +10,19 @@ import (
 )
 
 func registerAutomationRoutes(mux *http.ServeMux, deps Deps) {
+	idempotent := Idempotency(deps)
 	mux.HandleFunc("GET /v1/automation/rules", requireCapability(deps, authorization.AutomationManage, handleListAutomationRules(deps)))
 	mux.HandleFunc("POST /v1/automation/rules", requireCapability(deps, authorization.AutomationManage, Idempotency(deps)(handleCreateAutomationRule(deps))))
 	mux.HandleFunc("GET /v1/automation/rules/{id}", requireCapability(deps, authorization.AutomationManage, handleGetAutomationRule(deps)))
-	mux.HandleFunc("PATCH /v1/automation/rules/{id}", requireCapability(deps, authorization.AutomationManage, handleUpdateAutomationRule(deps)))
-	mux.HandleFunc("POST /v1/automation/rules/{id}/dry-run", requireCapability(deps, authorization.AutomationManage, handleDryRunAutomationRule(deps)))
+	mux.HandleFunc("PATCH /v1/automation/rules/{id}", requireCapability(deps, authorization.AutomationManage, idempotent(handleUpdateAutomationRule(deps))))
+	mux.HandleFunc("POST /v1/automation/rules/{id}/dry-run", requireCapability(deps, authorization.AutomationManage, idempotent(handleDryRunAutomationRule(deps))))
 	mux.HandleFunc("GET /v1/automation/executions", requireCapability(deps, authorization.AutomationManage, handleListAutomationExecutions(deps)))
 	mux.HandleFunc("GET /v1/automation/macros", requireCapability(deps, authorization.AutomationManage, handleListMacros(deps)))
 	mux.HandleFunc("POST /v1/automation/macros", requireCapability(deps, authorization.AutomationManage, Idempotency(deps)(handleCreateMacro(deps))))
-	mux.HandleFunc("POST /v1/automation/macros/{id}/use", requireCapability(deps, authorization.AutomationManage, handleUseMacro(deps)))
+	mux.HandleFunc("POST /v1/automation/macros/{id}/use", requireCapability(deps, authorization.AutomationManage, idempotent(handleUseMacro(deps))))
 	mux.HandleFunc("GET /v1/automation/replies", requireCapability(deps, authorization.AutomationManage, handleListSavedReplies(deps)))
 	mux.HandleFunc("POST /v1/automation/replies", requireCapability(deps, authorization.AutomationManage, Idempotency(deps)(handleCreateSavedReply(deps))))
-	mux.HandleFunc("POST /v1/automation/replies/{id}/use", requireCapability(deps, authorization.AutomationManage, handleUseSavedReply(deps)))
+	mux.HandleFunc("POST /v1/automation/replies/{id}/use", requireCapability(deps, authorization.AutomationManage, idempotent(handleUseSavedReply(deps))))
 }
 func handleListAutomationRules(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

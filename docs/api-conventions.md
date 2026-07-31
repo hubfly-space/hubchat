@@ -65,7 +65,7 @@ between requests — which, in an inbox, is constantly.
 
 ## 5. Idempotency
 
-Every create accepts:
+Every create and retryable state-changing action accepts:
 
 ```http
 Idempotency-Key: 0d4f1a2c-9b3e-4f10-a5c2-77b1de3a9e04
@@ -74,6 +74,14 @@ Idempotency-Key: 0d4f1a2c-9b3e-4f10-a5c2-77b1de3a9e04
 A repeated key within the retention window returns the original response.
 Clients should retry on network failure; without this, a retried "send message"
 posts twice, and the customer sees it.
+
+The server rejects reuse of a key with a different request body. Concurrent
+requests with the same key receive `409 idempotency_in_flight`; retry after the
+`Retry-After` interval. A successful replay includes
+`Idempotent-Replay: true`. Dashboard and portal keys are workspace-scoped,
+first-run workspace creation keys are user-scoped, and public widget keys are
+workspace-scoped with a visitor-token scope when one is present. The retention
+window is 24 hours.
 
 ## 6. Errors
 

@@ -11,8 +11,10 @@ with `Hubchat-Workspace-Id`.
 
 All errors use the standard envelope described in
 [`api-conventions.md`](api-conventions.md), including a request ID. List
-endpoints use opaque cursor pagination. Retryable creates and actions should
-send an `Idempotency-Key`.
+endpoints use opaque cursor pagination. Retryable creates, updates, and actions
+should send an `Idempotency-Key`. Successful replays include
+`Idempotent-Replay: true`; reuse with a different body is rejected, and
+concurrent attempts return `409 idempotency_in_flight`.
 
 The checked-in document is generated from
 [`openapi.template.json`](../embedded/openapi.template.json) with

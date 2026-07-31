@@ -14,7 +14,7 @@ import (
 func registerAPIKeyRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/api-keys", requireCapability(deps, authorization.IntegrationManage, handleListAPIKeys(deps)))
 	mux.HandleFunc("POST /v1/api-keys", requireCapability(deps, authorization.IntegrationManage, Idempotency(deps)(handleCreateAPIKey(deps))))
-	mux.HandleFunc("DELETE /v1/api-keys/{id}", requireCapability(deps, authorization.IntegrationManage, handleRevokeAPIKey(deps)))
+	mux.HandleFunc("DELETE /v1/api-keys/{id}", requireCapability(deps, authorization.IntegrationManage, Idempotency(deps)(handleRevokeAPIKey(deps))))
 	mux.HandleFunc("POST /v1/api-keys/{id}/rotate", requireCapability(deps, authorization.IntegrationManage, Idempotency(deps)(handleRotateAPIKey(deps))))
 }
 
