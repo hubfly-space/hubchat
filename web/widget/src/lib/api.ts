@@ -16,6 +16,26 @@ export type WireMessage = {
   body: string;
   sequence: number;
   created_at: string;
+  attachments?: { id: string; name: string; mime_type?: string; size_bytes?: number; url: string }[];
+};
+
+export type WidgetForm = {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string | null;
+  purpose: string;
+  fields: {
+    key: string;
+    label: string;
+    type: string;
+    placeholder?: string | null;
+    description?: string | null;
+    options?: string[];
+    required: boolean;
+    condition?: Record<string, unknown>;
+  }[];
+  confirmation?: Record<string, unknown>;
 };
 
 export type StartConversationResponse = {
@@ -71,8 +91,46 @@ export function postMessage(
   token: string,
   conversationId: string,
   body: string,
+  fileIDs: string[] = [],
 ): Promise<WireMessage> {
-  return post(host, `/conversations/${conversationId}/messages`, { public_key: publicKey, url: location.href, token, body });
+  return post(host, `/conversations/${conversationId}/messages`, { public_key: publicKey, url: location.href, token, body, file_ids: fileIDs });
+}
+
+export async function listForms(host: string, publicKey: string): Promise<WidgetForm[]> {
+  const params = new URLSearchParams({ key: publicKey, url: location.href });
+  const response = await fetch(`${endpoint(host, "/forms")}?${params.toString()}`, { credentials: "omit" });
+  const parsed = await parse<{ data: WidgetForm[] }>(response);
+  return parsed.data;
+}
+
+export function submitForm(
+  host: string,
+  publicKey: string,
+  token: string | null,
+  slug: string,
+  values: Record<string, unknown>,
+): Promise<{ id: string; status: string; token?: string }> {
+  return post(host, `/forms/${encodeURIComponent(slug)}/submissions`, {
+    public_key: publicKey, url: location.href, token: token ?? "", values,
+  });
+}
+
+export async function uploadFile(
+  host: string,
+  publicKey: string,
+  token: string,
+  conversationId: string,
+  messageId: string,
+  file: File,
+): Promise<{ id: string; name: string; mime_type?: string; size_bytes?: number; url?: string }> {
+  const body = new FormData();
+  body.append("file", file);
+  body.append("public_key", publicKey);
+  body.append("url", location.href);
+  body.append("token", token);
+  body.append("message_id", messageId);
+  const response = await fetch(endpoint(host, `/conversations/${conversationId}/files`), { method: "POST", credentials: "omit", body });
+  return parse(response);
 }
 
 export async function listMessages(

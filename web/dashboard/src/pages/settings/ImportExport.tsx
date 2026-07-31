@@ -1,9 +1,10 @@
 import {
+  ApiError,
+  Badge,
   Button,
   Callout,
   Card,
   CardBody,
-  CardHeader,
   CodeBlock,
   Page,
   PageBody,
@@ -12,45 +13,130 @@ import {
   Tabs,
   TabsContent,
   TabsList,
+  api,
+  idempotencyKey,
+  useMutation,
+  useQuery,
 } from "@hubchat/shared";
-import { Download, Upload } from "lucide-react";
-import { useState } from "react";
+import { Download, FileArchive, RefreshCw, Upload } from "lucide-react";
+import { useRef, useState } from "react";
+import { useWorkspace } from "../../app/workspace-context";
 
-const IMPORTERS = [
-  { key: "customers", label: "Customers", detail: "CSV with email, name, external ID, and any declared attributes." },
-  { key: "companies", label: "Companies", detail: "CSV with name, domain, external ID, and tier." },
-  { key: "tickets", label: "Tickets", detail: "CSV with subject, body, status, and requester email." },
-  { key: "articles", label: "Knowledge-base articles", detail: "Markdown files with front matter, or a zip of them." },
-  { key: "feedback", label: "Feedback items", detail: "CSV with title, description, and vote count." },
-];
+type ExportRequest = {
+  id: string;
+  kind: string;
+  state: "pending" | "running" | "completed" | "failed" | "expired";
+  file_id?: string;
+  row_count?: number;
+  error?: string;
+  expires_at?: string;
+  completed_at?: string;
+  created_at: string;
+};
 
-const EXPORTS = [
-  { key: "workspace", label: "Full workspace archive", detail: "Everything below, plus settings and an attachment manifest." },
-  { key: "conversations", label: "Conversations and messages", detail: "JSONL, one conversation per line." },
-  { key: "tickets", label: "Tickets", detail: "CSV or JSONL, including custom field values." },
-  { key: "customers", label: "Customers and companies", detail: "CSV. Sensitive fields are excluded unless you hold the capability." },
-  { key: "kb", label: "Knowledge base", detail: "Markdown files, ready to re-import elsewhere." },
-  { key: "audit", label: "Audit log", detail: "JSONL, append-only ordering preserved." },
-];
+type ImportRequest = {
+  id: string;
+  kind: string;
+  state: "pending" | "validating" | "running" | "completed" | "failed" | "cancelled";
+  file_id?: string;
+  total_rows?: number;
+  processed_rows: number;
+  failed_rows: number;
+  error?: string;
+  created_at: string;
+};
+
+type PreviewSummary = { name: string; rows: number; existing?: number; new?: number };
+
+const statusTone = (state: string): "neutral" | "info" | "success" | "warning" | "danger" => {
+  if (state === "completed") return "success";
+  if (state === "failed" || state === "expired" || state === "cancelled") return "danger";
+  if (state === "running" || state === "validating") return "info";
+  return "neutral";
+};
+
+function statusLabel(state: string): string {
+  return state.replaceAll("_", " ").replace(/^./, (character) => character.toUpperCase());
+}
+
+function displayDate(value?: string): string {
+  if (!value) return "—";
+  return new Date(value).toLocaleString();
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof ApiError ? error.message : fallback;
+}
 
 /** Import, export, and portability (§6.20). */
 export default function ImportExport() {
   const [tab, setTab] = useState("export");
+  const [downloadError, setDownloadError] = useState("");
+  const [previewRows, setPreviewRows] = useState<PreviewSummary[] | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const { workspace } = useWorkspace();
+  const workspaceId = workspace.id;
+
+  const exportsQuery = useQuery<{ data: ExportRequest[] }>(
+    ["portability-exports", workspaceId],
+    (signal) => api.get("/portability/exports", { signal, workspaceId }),
+    { staleTime: 5_000 },
+  );
+  const importsQuery = useQuery<{ data: ImportRequest[] }>(
+    ["portability-imports", workspaceId],
+    (signal) => api.get("/portability/imports", { signal, workspaceId }),
+    { staleTime: 5_000 },
+  );
+
+  const startExport = useMutation<void, ExportRequest>(
+    () => api.post("/portability/exports", { kind: "workspace" }, { workspaceId, idempotencyKey: idempotencyKey() }),
+    { invalidates: [["portability-exports", workspaceId]] },
+  );
+  const createImport = useMutation<{ file_id: string }, ImportRequest>(
+    (input) => api.post("/portability/imports", { ...input, kind: "workspace" }, { workspaceId, idempotencyKey: idempotencyKey() }),
+    { invalidates: [["portability-imports", workspaceId]] },
+  );
+  const uploadAndImport = async (selected: File) => {
+    const form = new FormData();
+    form.append("file", selected);
+    form.append("owner_type", "workspace");
+    form.append("owner_id", workspaceId);
+    const uploaded = await api.post<{ id: string }>("/files", form, { workspaceId, idempotencyKey: idempotencyKey() });
+    await createImport.mutate({ file_id: uploaded.id });
+  };
+  const downloadExport = async (fileID: string) => {
+    setDownloadError("");
+    try {
+      const response = await fetch(`/api/v1/files/${encodeURIComponent(fileID)}`, { headers: { "Hubchat-Workspace-Id": workspaceId } });
+      if (!response.ok) throw new Error("The archive download failed.");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `hubchat-${workspaceId}.json.gz`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setDownloadError(error instanceof Error ? error.message : "The archive download failed.");
+    }
+  };
+  const preview = useMutation<string, { data: Array<{ name: string; rows: number }> }>(
+    (id) => api.post(`/portability/imports/${encodeURIComponent(id)}/preview`, undefined, { workspaceId }),
+  );
+
+  const exportRows = exportsQuery.data?.data ?? [];
+  const importRows = importsQuery.data?.data ?? [];
+  const activeExports = exportRows.filter((item) => item.state === "pending" || item.state === "running");
+  const uploadError = createImport.error;
 
   return (
     <Page>
       <PageHeader
         title="Import & export"
-        description="Your data is yours. Everything Hubchat stores can leave in a documented format."
+        description="Move a complete workspace between Hubchat installations with a versioned, inspectable archive."
         tabs={
           <Tabs value={tab} onValueChange={setTab}>
-            <TabsList
-              items={[
-                { value: "export", label: "Export" },
-                { value: "import", label: "Import" },
-                { value: "backups", label: "Backups" },
-              ]}
-            />
+            <TabsList items={[{ value: "export", label: "Export" }, { value: "import", label: "Import" }, { value: "backups", label: "Backups" }]} />
           </Tabs>
         }
       />
@@ -59,157 +145,67 @@ export default function ImportExport() {
         <Tabs value={tab} onValueChange={setTab}>
           <TabsContent value="export">
             <Callout tone="info" className="mb-4">
-              Exports run as background jobs and email you a signed download link when ready. Links
-              expire after 24 hours; the archive itself is deleted after 7 days.
+              Archives run as durable background jobs. The generated file is stored in the configured file backend, expires after seven days, and remains workspace-scoped.
             </Callout>
 
             <Section title="In progress">
               <Card>
                 <CardBody>
-                  <p className="text-sm text-fg">No export jobs are currently running.</p>
-                  <p className="mt-1 text-xs text-fg-muted">New exports will appear here with their verified row counts, attachment manifest, checksums, and expiry.</p>
+                  {exportsQuery.isLoading ? <p className="text-sm text-fg-muted">Loading export jobs…</p> : exportsQuery.error ? <div className="space-y-2"><p className="text-sm text-danger">Could not load export jobs.</p><Button variant="secondary" size="sm" leading={<RefreshCw />} onClick={exportsQuery.refetch}>Retry</Button></div> : activeExports.length === 0 ? <p className="text-sm text-fg-muted">No export jobs are currently running.</p> : <div className="space-y-2">{activeExports.map((item) => <RequestRow key={item.id} request={item} />)}</div>}
                 </CardBody>
               </Card>
             </Section>
 
             <Section title="Start an export">
-              <div className="space-y-2">
-                {EXPORTS.map((item) => (
-                  <Card key={item.key}>
-                    <CardBody className="flex items-center gap-4">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm text-fg">{item.label}</p>
-                        <p className="mt-0.5 text-xs text-fg-muted">{item.detail}</p>
-                      </div>
-                      <Button variant="secondary" size="sm" leading={<Download />}>
-                        Export
-                      </Button>
-                    </CardBody>
-                  </Card>
-                ))}
-              </div>
+              <Card>
+                <CardBody className="flex items-center gap-4">
+                  <FileArchive className="size-5 shrink-0 text-fg-muted" />
+                  <div className="min-w-0 flex-1"><p className="text-sm text-fg">Full workspace archive</p><p className="mt-0.5 text-xs text-fg-muted">Customers, conversations, tickets, settings, integrations, audit records, and attachment metadata in a versioned JSON archive.</p></div>
+                  <Button variant="secondary" size="sm" leading={<Download />} loading={startExport.isPending} onClick={() => void startExport.mutate(undefined).catch(() => {})}>Export</Button>
+                </CardBody>
+              </Card>
+              {Boolean(startExport.error) && <p className="mt-2 text-sm text-danger">{errorMessage(startExport.error, "The export could not be started.")}</p>}
+            </Section>
+
+            <Section title="Export history">
+              <Card>
+                <CardBody className="p-0">
+                  {exportRows.length === 0 && !exportsQuery.isLoading ? <p className="px-4 py-6 text-sm text-fg-muted">Completed archives will appear here.</p> : <ul className="divide-y divide-line-subtle">{exportRows.map((item) => <li key={item.id} className="flex items-center gap-3 px-4 py-3"><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate font-mono text-xs text-fg">{item.id}</span><Badge tone={statusTone(item.state)}>{statusLabel(item.state)}</Badge></div><p className="mt-1 text-xs text-fg-muted">{item.row_count === undefined ? "Rows pending" : `${item.row_count.toLocaleString()} rows`} · created {displayDate(item.created_at)}{item.expires_at ? ` · expires ${displayDate(item.expires_at)}` : ""}</p>{item.error && <p className="mt-1 text-xs text-danger">{item.error}</p>}</div>{item.file_id && item.state === "completed" && <Button variant="ghost" size="sm" onClick={() => void downloadExport(item.file_id ?? "")}>Download</Button>}</li>)}</ul>}
+                </CardBody>
+              </Card>
+              {downloadError && <p className="mt-2 text-sm text-danger">{downloadError}</p>}
             </Section>
 
             <Section title="From the command line">
-              <CodeBlock
-                language="bash"
-                code={`hubchat workspace export --slug northwind --out ./northwind.tar.zst
-hubchat workspace import --file ./northwind.tar.zst --slug northwind-restored`}
-              />
+              <CodeBlock language="bash" code={`hubchat workspace export --slug northwind --out ./northwind.json.gz\nhubchat workspace import --file ./northwind.json.gz --slug northwind-restored`} />
             </Section>
           </TabsContent>
 
           <TabsContent value="import">
-            <Callout tone="warning" className="mb-4">
-              Every import runs in preview first. You see the parsed rows, the columns Hubchat
-              matched, and the ones it could not, before anything is written.
-            </Callout>
-
-            <Section title="Import data">
-              <div className="space-y-2">
-                {IMPORTERS.map((importer) => (
-                  <Card key={importer.key}>
-                    <CardBody className="flex items-center gap-4">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm text-fg">{importer.label}</p>
-                        <p className="mt-0.5 text-xs text-fg-muted">{importer.detail}</p>
-                      </div>
-                      <Button variant="secondary" size="sm" leading={<Upload />}>
-                        Choose file
-                      </Button>
-                    </CardBody>
-                  </Card>
-                ))}
-              </div>
+            <Callout tone="warning" className="mb-4">Upload a Hubchat workspace archive to preview its row counts before importing. The preview reads the archive without writing tenant records.</Callout>
+            <input ref={fileInput} type="file" accept=".gz,.json,application/gzip,application/json" className="sr-only" onChange={(event) => { const selected = event.target.files?.[0]; event.target.value = ""; if (selected) void uploadAndImport(selected).catch(() => {}); }} />
+            <Section title="Workspace archive">
+              <Card><CardBody className="flex items-center gap-4"><Upload className="size-5 shrink-0 text-fg-muted" /><div className="min-w-0 flex-1"><p className="text-sm text-fg">Import a .json.gz archive</p><p className="mt-0.5 text-xs text-fg-muted">The archive is uploaded as a workspace-owned file and processed by the job queue.</p></div><Button variant="secondary" size="sm" leading={<Upload />} loading={createImport.isPending} onClick={() => fileInput.current?.click()}>Choose file</Button></CardBody></Card>
+              {Boolean(uploadError) && <p className="mt-2 text-sm text-danger">{errorMessage(uploadError, "The import could not be started.")}</p>}
             </Section>
-
-            <Section title="Matching existing records">
-              <Card>
-                <CardHeader
-                  title="How duplicates are handled"
-                  description="Hubchat never merges on weak signals like a similar name (§26.3)."
-                />
-                <CardBody>
-                  <ul className="space-y-2 text-xs text-fg-secondary">
-                    <li>
-                      <span className="text-fg">External ID</span> — an exact match updates the
-                      existing record.
-                    </li>
-                    <li>
-                      <span className="text-fg">Verified email</span> — an exact match updates, and
-                      the import is recorded as the verification source.
-                    </li>
-                    <li>
-                      <span className="text-fg">Anything else</span> — creates a new record. You can
-                      merge manually afterwards with a preview.
-                    </li>
-                  </ul>
-                </CardBody>
-              </Card>
-            </Section>
-
-            <Section title="Example CSV">
-              <CodeBlock
-                filename="customers.csv"
-                code={`external_id,email,name,plan,seats,region
-u_44192,mariana@atlasfreight.com,Mariana Costa,enterprise,240,eu
-u_88103,d.osei@orbital.dev,Daniel Osei,enterprise,410,apac`}
-              />
+            <Section title="Import history">
+              <Card><CardBody className="p-0">{importsQuery.isLoading ? <p className="px-4 py-6 text-sm text-fg-muted">Loading import jobs…</p> : importsQuery.error ? <div className="space-y-2 px-4 py-6"><p className="text-sm text-danger">Could not load import jobs.</p><Button variant="secondary" size="sm" leading={<RefreshCw />} onClick={importsQuery.refetch}>Retry</Button></div> : importRows.length === 0 ? <p className="px-4 py-6 text-sm text-fg-muted">Uploaded archives will appear here.</p> : <ul className="divide-y divide-line-subtle">{importRows.map((item) => <li key={item.id} className="flex items-center gap-3 px-4 py-3"><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate font-mono text-xs text-fg">{item.id}</span><Badge tone={statusTone(item.state)}>{statusLabel(item.state)}</Badge></div><p className="mt-1 text-xs text-fg-muted">{item.processed_rows.toLocaleString()} processed · {item.failed_rows.toLocaleString()} failed · created {displayDate(item.created_at)}</p></div>{item.state === "pending" && <Button variant="ghost" size="sm" loading={preview.isPending} onClick={() => void preview.mutate(item.id).then((result) => setPreviewRows(result.data)).catch(() => {})}>Preview</Button>}</li>)}</ul>}</CardBody></Card>
+              {Boolean(preview.error) && <p className="mt-2 text-sm text-danger">{errorMessage(preview.error, "The archive preview failed.")}</p>}
+              {previewRows && <Card className="mt-3"><CardBody><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-medium text-fg">Preview result</p><p className="mt-1 text-xs text-fg-muted">Existing rows will be skipped by the idempotent importer. New rows are candidates for insertion.</p></div><Button variant="ghost" size="sm" onClick={() => setPreviewRows(null)}>Dismiss</Button></div><div className="mt-3 max-h-64 overflow-auto rounded-md border border-line"><table className="w-full text-left text-xs"><thead className="border-b border-line bg-inset text-fg-muted"><tr><th className="px-3 py-2 font-medium">Table</th><th className="px-3 py-2 text-right font-medium">Rows</th><th className="px-3 py-2 text-right font-medium">Existing</th><th className="px-3 py-2 text-right font-medium">New</th></tr></thead><tbody className="divide-y divide-line-subtle">{previewRows.filter((summary) => summary.rows > 0).map((summary) => <tr key={summary.name}><td className="px-3 py-2 font-mono text-fg-secondary">{summary.name}</td><td className="px-3 py-2 text-right tabular text-fg-secondary">{summary.rows.toLocaleString()}</td><td className="px-3 py-2 text-right tabular text-warning-text">{(summary.existing ?? 0).toLocaleString()}</td><td className="px-3 py-2 text-right tabular text-success-text">{(summary.new ?? summary.rows).toLocaleString()}</td></tr>)}</tbody></table></div></CardBody></Card>}
             </Section>
           </TabsContent>
 
           <TabsContent value="backups">
-            <Callout tone="info" className="mb-4">
-              Hubchat does not take your backups for you on a self-hosted deployment — your
-              PostgreSQL and file storage are yours to snapshot. What it does provide is a logical
-              export that is portable across versions.
-            </Callout>
-
-            <Section title="What to back up">
-              <Card>
-                <CardBody>
-                  <ul className="space-y-3 text-sm">
-                    <li>
-                      <p className="text-fg">PostgreSQL database</p>
-                      <p className="mt-0.5 text-xs text-fg-muted">
-                        The source of truth. Everything except attachment bytes lives here.
-                      </p>
-                    </li>
-                    <li>
-                      <p className="text-fg">File storage</p>
-                      <p className="mt-0.5 text-xs text-fg-muted">
-                        The data directory, or your S3 bucket. Attachments and generated exports.
-                      </p>
-                    </li>
-                    <li>
-                      <p className="text-fg">Secret key</p>
-                      <p className="mt-0.5 text-xs text-fg-muted">
-                        Without <code className="font-mono">HUBCHAT_SECRET_KEY</code>, encrypted
-                        integration secrets in a restored database cannot be decrypted.
-                      </p>
-                    </li>
-                  </ul>
-                </CardBody>
-              </Card>
-            </Section>
-
-            <Section title="Restore procedure">
-              <CodeBlock
-                language="bash"
-                code={`# 1. Restore the database
-pg_restore --clean --if-exists -d hubchat hubchat-2026-07-26.dump
-
-# 2. Restore files
-rsync -a backup/files/ /var/lib/hubchat/files/
-
-# 3. Verify before serving traffic
-hubchat migrate status
-hubchat doctor --json`}
-              />
-            </Section>
+            <Callout tone="info" className="mb-4">Hubchat does not take database backups for you on a self-hosted deployment. PostgreSQL and file storage remain the source of truth; logical archives provide a portable restore path.</Callout>
+            <Section title="What to back up"><Card><CardBody><ul className="space-y-3 text-sm"><li><p className="text-fg">PostgreSQL database</p><p className="mt-0.5 text-xs text-fg-muted">Everything except attachment bytes lives here.</p></li><li><p className="text-fg">File storage</p><p className="mt-0.5 text-xs text-fg-muted">The local data directory or configured S3-compatible bucket.</p></li><li><p className="text-fg">Secret key</p><p className="mt-0.5 text-xs text-fg-muted">Without <code className="font-mono">HUBCHAT_SECRET_KEY</code>, encrypted integration secrets cannot be decrypted after restore.</p></li></ul></CardBody></Card></Section>
+            <Section title="Restore procedure"><CodeBlock language="bash" code={`# 1. Restore the database\npg_restore --clean --if-exists -d hubchat hubchat-2026-07-26.dump\n\n# 2. Restore files\nrsync -a backup/files/ /var/lib/hubchat/files/\n\n# 3. Verify before serving traffic\nhubchat migrate status\nhubchat doctor --json`} /></Section>
           </TabsContent>
         </Tabs>
       </PageBody>
     </Page>
   );
+}
+
+function RequestRow({ request }: { request: ExportRequest }) {
+  return <div className="flex items-center gap-2"><Badge tone={statusTone(request.state)}>{statusLabel(request.state)}</Badge><span className="font-mono text-xs text-fg-muted">{request.id}</span></div>;
 }

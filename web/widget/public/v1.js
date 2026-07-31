@@ -40,7 +40,7 @@
       return;
     }
     state.pending.push([method, payload]);
-    if (method !== "boot") load();
+    if (method !== "boot" && state.config) load();
   }
 
   var loading = false;
