@@ -78,6 +78,7 @@ func handlePortalBootstrap(deps Deps) http.HandlerFunc {
 type portalMagicLinkRequest struct {
 	Portal string `json:"portal"`
 	Email  string `json:"email"`
+	Next   string `json:"next"`
 }
 
 func handlePortalMagicLink(deps Deps) http.HandlerFunc {
@@ -92,7 +93,7 @@ func handlePortalMagicLink(deps Deps) http.HandlerFunc {
 			link, issueErr := deps.Portal.IssueMagicLink(r.Context(), p.ID, req.Email)
 			if issueErr == nil {
 				deps.sendMail(r, link.Customer.Email, "Your Hubchat portal sign-in link", "magic_link", mailer.Data{
-					Name: link.Customer.Name, Link: portalMagicLink(deps, p.ID, link.Token), ExpiresIn: "15 minutes",
+					Name: link.Customer.Name, Link: portalMagicLink(deps, p.ID, link.Token, safePortalNext(req.Next)), ExpiresIn: "15 minutes",
 				})
 			} else if !errors.Is(issueErr, portal.ErrCustomerNotFound) && !errors.Is(issueErr, portal.ErrForbidden) {
 				deps.Logger.Error("issuing portal magic link failed", "error", issueErr)
@@ -280,6 +281,7 @@ func handlePortalTickets(deps Deps) http.HandlerFunc {
 type portalCreateTicketRequest struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
+	Priority    string `json:"priority"`
 }
 
 func handlePortalCreateTicket(deps Deps) http.HandlerFunc {
@@ -313,8 +315,9 @@ func handlePortalCreateTicket(deps Deps) http.HandlerFunc {
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not start your request.")
 			return
 		}
+		priority := portalTicketPriority(req.Priority)
 		ticket, err := deps.Ticket.CreateAsCustomer(r.Context(), session.WorkspaceID, customerID, session.Customer.Name, ticket.CreateRequest{
-			Title: req.Title, Description: req.Description, Priority: "normal", CustomerID: &customerID,
+			Title: req.Title, Description: req.Description, Priority: priority, CustomerID: &customerID,
 			InboxID: *session.Portal.DefaultInboxID, Channel: "portal", ConversationID: &conv.ID,
 		})
 		if err != nil {
@@ -590,17 +593,54 @@ func portalJSON(p portal.Portal) map[string]any {
 	}
 }
 
-func portalMagicLink(deps Deps, portalID, token string) string {
+func portalMagicLink(deps Deps, portalID, token, next string) string {
 	if deps.PublicURL == nil {
-		return fmt.Sprintf("/portal/sign-in?portal=%s&token=%s", url.QueryEscape(portalID), url.QueryEscape(token))
+		link := fmt.Sprintf("/portal/sign-in?portal=%s&token=%s", url.QueryEscape(portalID), url.QueryEscape(token))
+		if next != "" {
+			link += "&next=" + url.QueryEscape(next)
+		}
+		return link
 	}
 	target := *deps.PublicURL
 	target.Path = strings.TrimSuffix(target.Path, "/") + "/portal/sign-in"
 	query := target.Query()
 	query.Set("portal", portalID)
 	query.Set("token", token)
+	if next != "" {
+		query.Set("next", next)
+	}
 	target.RawQuery = query.Encode()
 	return target.String()
+}
+
+// safePortalNext only accepts a path handled by the portal bundle. It is
+// intentionally validated before being placed in a customer email so a
+// caller cannot turn the magic-link flow into an open redirect.
+func safePortalNext(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") || strings.Contains(value, "\\") {
+		return ""
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || !strings.HasPrefix(parsed.Path, "/") {
+		return ""
+	}
+	return parsed.String()
+}
+
+func portalTicketPriority(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "blocking", "urgent":
+		return "urgent"
+	case "major", "high":
+		return "high"
+	case "minor", "normal":
+		return "normal"
+	case "question", "low":
+		return "low"
+	default:
+		return "normal"
+	}
 }
 
 func secondsUntil(at time.Time) int {

@@ -801,6 +801,8 @@ func writeTicketError(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, ticket.ErrInvalidInbox),
 		errors.Is(err, ticket.ErrInvalidCustomer),
 		errors.Is(err, ticket.ErrInvalidCompany),
+		errors.Is(err, ticket.ErrInvalidConversation),
+		errors.Is(err, ticket.ErrConversationAlreadyTicket),
 		errors.Is(err, ticket.ErrTagNotFound),
 		errors.Is(err, ticket.ErrInvalidRelation),
 		errors.Is(err, ticket.ErrLinkToSelf),
