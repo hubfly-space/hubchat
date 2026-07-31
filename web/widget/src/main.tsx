@@ -33,7 +33,7 @@ export function mount({
   config,
 }: {
   host: string;
-  config: { key: string; remote?: WidgetConfig };
+  config: { key: string; remote: WidgetConfig };
 }): Promise<WidgetHandle> {
   if (container) return Promise.resolve(handle);
 
@@ -87,7 +87,7 @@ export function mount({
         <Widget
           host={host}
           publicKey={config.key}
-          config={config.remote ?? FALLBACK_CONFIG}
+          config={config.remote}
           onEvent={(name, payload) => emit(name, payload)}
         />
       </StrictMode>,
@@ -140,37 +140,3 @@ const handle: WidgetHandle = {
 function emit(name: string, payload: unknown) {
   for (const listener of listeners.get(name) ?? []) listener(payload);
 }
-
-/** Used only when the configuration request failed but the host called show(). */
-const FALLBACK_CONFIG: WidgetConfig = {
-  enabled: true,
-  appearance: {
-    accent: "#3B6EF6",
-    theme: "auto",
-    launcher_shape: "circle",
-    launcher_size: "md",
-    launcher_label: null,
-    position: "bottom-right",
-    offset_x: 20,
-    offset_y: 20,
-    panel_width: 384,
-    panel_height: 620,
-    radius: 14,
-    header_style: "solid",
-    bubble_style: "rounded",
-    z_index: 2_147_483_000,
-    hide_branding: false,
-  },
-  content: {
-    title: "Support",
-    subtitle: "We usually reply in a few minutes",
-    welcome_message: "Hi there 👋 How can we help?",
-    input_placeholder: "Write a message…",
-    response_time_text: "",
-    offline_message: "We're offline — leave a message and we'll reply by email.",
-  },
-  behavior: { trigger: "manual", delay_seconds: 0, scroll_percent: 0, allow_anonymous: true, persist_conversation: false },
-  modes: ["chat"],
-  online: true,
-  articles: [],
-};

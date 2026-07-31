@@ -63,4 +63,5 @@ export type WidgetMessage = {
   body: string;
   at: string;
   delivery?: "sending" | "sent" | "failed";
+  attachments?: { id: string; name: string; mime_type?: string; size_bytes?: number; url: string }[];
 };

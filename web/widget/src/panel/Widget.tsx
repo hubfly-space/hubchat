@@ -16,12 +16,16 @@ import {
   clearSession,
   identify as apiIdentify,
   issueVisitor,
+  listForms,
   listMessages,
   loadSession,
   postMessage,
   saveSession,
   startConversation,
+  submitForm,
   track as apiTrack,
+  uploadFile,
+  type WidgetForm,
   type WireMessage,
 } from "../lib/api";
 import { VisitorSocket, type WireEvent } from "../lib/socket";
@@ -37,6 +41,7 @@ function fromWire(m: WireMessage): WidgetMessage {
     body: m.body,
     at: m.created_at,
     delivery: "sent",
+    attachments: m.attachments,
   };
 }
 
@@ -66,6 +71,9 @@ export function Widget({
   const [unread, setUnread] = useState(0);
   const [messages, setMessages] = useState<WidgetMessage[]>([]);
   const [draft, setDraft] = useState("");
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [attachmentError, setAttachmentError] = useState("");
   const [query, setQuery] = useState("");
   const [agentTyping, setAgentTyping] = useState(false);
 
@@ -216,6 +224,7 @@ export function Widget({
           show();
           break;
         case "openForm":
+          setActiveArticle(typeof payload?.slug === "string" ? payload.slug : null);
           setScreen("form");
           show();
           break;
@@ -309,8 +318,10 @@ export function Widget({
           tokenRef.current = token;
         }
 
+        let sentMessageID = "";
         if (!conversationRef.current) {
           const result = await startConversation(host, publicKey, token, body);
+          sentMessageID = result.message.id;
           conversationRef.current = result.conversation_id;
           // The server mints a fresh token only when the request arrived
           // without one; otherwise it echoes back an empty string and the
@@ -321,11 +332,28 @@ export function Widget({
           openSocket(token);
           onEvent("conversation:started", { id: result.conversation_id });
         } else {
-          await postMessage(host, publicKey, token, conversationRef.current, body);
+          const result = await postMessage(host, publicKey, token, conversationRef.current, body);
+          sentMessageID = result.id;
           saveSession(publicKey, { token, conversationId: conversationRef.current });
         }
 
         markDelivery("sent");
+        if (attachments.length > 0 && conversationRef.current && sentMessageID) {
+          setUploading(true);
+          try {
+            const uploaded = [] as { id: string; name: string; url?: string }[];
+            for (const file of attachments) uploaded.push(await uploadFile(host, publicKey, token, conversationRef.current, sentMessageID, file));
+            setMessages((current) => current.map((item) => item.id === clientId ? {
+              ...item,
+              attachments: uploaded.filter((file): file is { id: string; name: string; url: string } => Boolean(file.url)).map((file) => ({ id: file.id, name: file.name, url: file.url })),
+            } : item));
+            setAttachments([]);
+          } catch {
+            setAttachmentError("Your message was sent, but an attachment could not be uploaded.");
+          } finally {
+            setUploading(false);
+          }
+        }
       } catch {
         markDelivery("failed");
       }
@@ -394,7 +422,7 @@ export function Widget({
                   window.setTimeout(() => inputRef.current?.focus(), 60);
                 }}
                 onBrowse={() => setScreen("articles")}
-                onForm={() => setScreen("form")}
+                onForm={() => { setActiveArticle(null); setScreen("form"); }}
                 onArticle={(slug) => {
                   setActiveArticle(slug);
                   setScreen("article");
@@ -407,6 +435,9 @@ export function Widget({
                 config={config}
                 messages={messages}
                 typing={agentTyping}
+                host={host}
+                publicKey={publicKey}
+                token={tokenRef.current}
               />
             )}
 
@@ -462,7 +493,7 @@ export function Widget({
               </div>
             )}
 
-            {screen === "form" && <FormScreen onDone={() => setScreen("home")} />}
+            {screen === "form" && <FormScreen host={host} publicKey={publicKey} token={tokenRef.current} initialSlug={activeArticle} onToken={(token) => { tokenRef.current = token; saveSession(publicKey, { token, conversationId: conversationRef.current }); }} onDone={() => setScreen("home")} />}
           </div>
 
           {screen === "chat" && (
@@ -475,6 +506,10 @@ export function Widget({
               disabled={!config.online}
               offlineMessage={content.offline_message}
               accent={appearance.accent}
+              files={attachments}
+              uploading={uploading}
+              error={attachmentError}
+              onChooseFiles={(files) => { setAttachments(files); setAttachmentError(""); }}
             />
           )}
 
@@ -707,10 +742,16 @@ function ChatScreen({
   config,
   messages,
   typing,
+  host,
+  publicKey,
+  token,
 }: {
   config: WidgetConfig;
   messages: WidgetMessage[];
   typing: boolean;
+  host: string;
+  publicKey: string;
+  token: string | null;
 }) {
   const square = config.appearance.bubble_style === "square";
 
@@ -740,6 +781,21 @@ function ChatScreen({
                 <p className={mine ? "text-sm leading-normal" : "text-sm leading-normal text-fg"}>
                   {message.body}
                 </p>
+                {message.attachments && message.attachments.length > 0 && (
+                  <div className="mt-2 space-y-1 border-t border-white/20 pt-2">
+                    {message.attachments.map((attachment) => (
+                      <a
+                        key={attachment.id}
+                        href={`${host}${attachment.url}?${new URLSearchParams({ key: publicKey, url: window.location.href, token: token ?? "" }).toString()}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={mine ? "block truncate text-xs underline" : "block truncate text-xs text-accent underline"}
+                      >
+                        <Paperclip className="mr-1 inline size-3" aria-hidden="true" />{attachment.name}
+                      </a>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {mine && (
@@ -830,69 +886,62 @@ function ArticlesScreen({
   );
 }
 
-function FormScreen({ onDone }: { onDone: () => void }) {
+function FormScreen({ host, publicKey, token, initialSlug, onToken, onDone }: {
+  host: string;
+  publicKey: string;
+  token: string | null;
+  initialSlug: string | null;
+  onToken: (token: string) => void;
+  onDone: () => void;
+}) {
+  const [forms, setForms] = useState<WidgetForm[]>([]);
+  const [form, setForm] = useState<WidgetForm | null>(null);
+  const [values, setValues] = useState<Record<string, unknown>>({});
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const [error, setError] = useState("");
 
-  if (sent) {
-    return (
-      <div className="p-6 text-center">
-        <p className="text-sm font-medium text-fg">Request received</p>
-        <p className="mt-1.5 text-xs leading-normal text-fg-muted">
-          We have emailed you a copy. Replies arrive in your inbox and here.
-        </p>
-        <button
-          type="button"
-          onClick={onDone}
-          className="mt-4 rounded-md border border-line px-3 py-1.5 text-xs text-fg-secondary transition-colors hover:bg-fill"
-        >
-          Back
-        </button>
-      </div>
-    );
-  }
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    void listForms(host, publicKey).then((items) => {
+      if (cancelled) return;
+      setForms(items);
+      setForm(items.find((item) => item.slug === initialSlug) ?? items[0] ?? null);
+    }).catch((reason: unknown) => {
+      if (!cancelled) setError(reason instanceof Error ? reason.message : "Forms are unavailable.");
+    }).finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [host, publicKey, initialSlug]);
 
-  return (
-    <form
-      className="flex flex-col gap-3 p-3"
-      onSubmit={(event) => {
-        event.preventDefault();
-        setSent(true);
-      }}
-    >
-      <label className="flex flex-col gap-1">
-        <span className="text-xs font-medium text-fg-secondary">Your email</span>
-        <input
-          type="email"
-          required
-          className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent"
-        />
-      </label>
+  const visible = (field: WidgetForm["fields"][number]) => {
+    const condition = field.condition ?? {};
+    const key = typeof condition.field === "string" ? condition.field : typeof condition.key === "string" ? condition.key : "";
+    if (!key) return true;
+    if ("equals" in condition) return values[key] === condition.equals;
+    if ("not_equals" in condition) return values[key] !== condition.not_equals;
+    return true;
+  };
+  const setValue = (key: string, value: unknown) => setValues((current) => ({ ...current, [key]: value }));
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!form) return;
+    setSending(true); setError("");
+    try {
+      const result = await submitForm(host, publicKey, token, form.slug, values);
+      if (result.token) onToken(result.token);
+      setSent(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The form could not be sent.");
+    } finally { setSending(false); }
+  };
 
-      <label className="flex flex-col gap-1">
-        <span className="text-xs font-medium text-fg-secondary">Subject</span>
-        <input
-          required
-          className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent"
-        />
-      </label>
+  if (loading) return <p className="p-6 text-center text-xs text-fg-muted">Loading request forms…</p>;
+  if (sent) return <div className="p-6 text-center"><p className="text-sm font-medium text-fg">Request received</p><p className="mt-1.5 text-xs leading-normal text-fg-muted">Your submission was sent to the support team.</p><button type="button" onClick={onDone} className="mt-4 rounded-md border border-line px-3 py-1.5 text-xs text-fg-secondary transition-colors hover:bg-fill">Back</button></div>;
+  if (!form) return <div className="p-6 text-center"><p className="text-sm font-medium text-fg">No request forms are available</p><p className="mt-1.5 text-xs text-fg-muted">Start a conversation instead and a person will help you there.</p>{error && <p className="mt-2 text-xs text-danger">{error}</p>}<button type="button" onClick={onDone} className="mt-4 rounded-md border border-line px-3 py-1.5 text-xs text-fg-secondary">Back</button></div>;
 
-      <label className="flex flex-col gap-1">
-        <span className="text-xs font-medium text-fg-secondary">How can we help?</span>
-        <textarea
-          required
-          rows={5}
-          className="resize-none rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent"
-        />
-      </label>
-
-      <button
-        type="submit"
-        className="rounded-md bg-accent px-3 py-2 text-sm font-medium text-accent-fg"
-      >
-        Send request
-      </button>
-    </form>
-  );
+  return <div className="p-3"><div className="mb-3 flex items-center gap-2">{forms.length > 1 && <select value={form.slug} onChange={(event) => { setForm(forms.find((item) => item.slug === event.target.value) ?? form); setValues({}); }} className="min-w-0 flex-1 rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg"><option value={form.slug}>{form.name}</option>{forms.filter((item) => item.slug !== form.slug).map((item) => <option key={item.slug} value={item.slug}>{item.name}</option>)}</select>}{forms.length === 1 && <p className="text-sm font-medium text-fg">{form.name}</p>}</div>{form.description && <p className="mb-3 text-xs leading-normal text-fg-muted">{form.description}</p>}<form className="flex flex-col gap-3" onSubmit={(event) => void submit(event)}>{form.fields.filter(visible).map((field) => <label key={field.key} className="flex flex-col gap-1"><span className="text-xs font-medium text-fg-secondary">{field.label}{field.required && <span className="text-danger"> *</span>}</span>{field.description && <span className="text-[11px] text-fg-muted">{field.description}</span>}{field.type === "text" ? <textarea required={field.required} rows={4} value={String(values[field.key] ?? "")} placeholder={field.placeholder ?? ""} onChange={(event) => setValue(field.key, event.target.value)} className="resize-none rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" /> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(values[field.key])} onChange={(event) => setValue(field.key, event.target.checked)} className="size-4 accent-accent" /> : field.type === "enum" ? <select required={field.required} value={String(values[field.key] ?? "")} onChange={(event) => setValue(field.key, event.target.value)} className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent"><option value="">Choose…</option>{(field.options ?? []).map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input required={field.required} type={field.type === "email" ? "email" : field.type === "integer" || field.type === "decimal" ? "number" : "text"} value={String(values[field.key] ?? "")} placeholder={field.placeholder ?? ""} onChange={(event) => setValue(field.key, field.type === "integer" || field.type === "decimal" ? Number(event.target.value) : event.target.value)} className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" />}</label>)}{error && <p className="text-xs text-danger">{error}</p>}<button type="submit" disabled={sending} className="rounded-md bg-accent px-3 py-2 text-sm font-medium text-accent-fg disabled:opacity-50">{sending ? "Sending…" : "Send request"}</button></form></div>;
 }
 
 /** React 19 passes `ref` as an ordinary prop, so no forwardRef wrapper. */
@@ -905,6 +954,10 @@ function Composer({
   disabled,
   offlineMessage,
   accent,
+  files,
+  uploading,
+  error,
+  onChooseFiles,
 }: {
   ref?: React.Ref<HTMLTextAreaElement>;
   value: string;
@@ -914,6 +967,10 @@ function Composer({
   disabled: boolean;
   offlineMessage: string;
   accent: string;
+  files: File[];
+  uploading: boolean;
+  error: string;
+  onChooseFiles: (files: File[]) => void;
 }) {
   return (
     <div className="shrink-0 border-t border-line bg-surface p-2">
@@ -922,6 +979,8 @@ function Composer({
           {offlineMessage}
         </p>
       )}
+      {files.length > 0 && <p className="mb-2 truncate rounded-md bg-fill px-2.5 py-1.5 text-[11px] text-fg-muted">{uploading ? "Uploading…" : files.map((file) => file.name).join(", ")}</p>}
+      {error && <p className="mb-2 rounded-md bg-danger-subtle px-2.5 py-1.5 text-[11px] text-danger-text">{error}</p>}
 
       <div className="flex items-end gap-2 rounded-md border border-line bg-inset px-2.5 py-1.5 focus-within:border-accent">
         <textarea
@@ -945,9 +1004,10 @@ function Composer({
           className="max-h-24 min-w-0 flex-1 resize-none bg-transparent py-1 text-sm leading-normal text-fg outline-none"
         />
 
-        <button type="button" aria-label="Attach a file" className="pb-1.5 text-fg-muted">
+        <label aria-label="Attach a file" className="cursor-pointer pb-1.5 text-fg-muted">
           <Paperclip className="size-4" />
-        </button>
+          <input type="file" multiple className="sr-only" onChange={(event) => { onChooseFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
+        </label>
 
         <button
           type="button"
