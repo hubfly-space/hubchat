@@ -12,7 +12,7 @@ func registerWorkspaceRoutes(mux *http.ServeMux, deps Deps) {
 	// Bootstrap requires only a session, not an existing workspace membership
 	// — this is the endpoint §7.2's onboarding flow calls to create the very
 	// first workspace for a new owner.
-	mux.HandleFunc("POST /v1/workspaces", handleCreateWorkspace(deps))
+	mux.HandleFunc("POST /v1/workspaces", UserIdempotency(deps)(handleCreateWorkspace(deps)))
 }
 
 type createWorkspaceRequest struct {

@@ -34,10 +34,11 @@ import (
 // browser running on an arbitrary customer domain, and everything else in
 // this router deliberately stays same-origin only.
 func registerWidgetRoutes(mux *http.ServeMux, deps Deps) {
+	idempotent := Idempotency(deps)
 	mux.HandleFunc("GET /v1/widgets",
 		requireCapability(deps, authorization.WidgetManage, handleListWidgets(deps)))
 	mux.HandleFunc("POST /v1/widgets",
-		requireCapability(deps, authorization.WidgetManage, handleCreateWidget(deps)))
+		requireCapability(deps, authorization.WidgetManage, idempotent(handleCreateWidget(deps))))
 	mux.HandleFunc("GET /v1/widgets/{id}",
 		requireCapability(deps, authorization.WidgetManage, handleGetWidget(deps)))
 	mux.HandleFunc("PUT /v1/widgets/{id}",
@@ -48,14 +49,14 @@ func registerWidgetRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/widgets/{id}/versions",
 		requireCapability(deps, authorization.WidgetManage, handleListWidgetVersions(deps)))
 	mux.HandleFunc("POST /v1/widgets/{id}/rollback",
-		requireCapability(deps, authorization.WidgetManage, handleRollbackWidget(deps)))
+		requireCapability(deps, authorization.WidgetManage, idempotent(handleRollbackWidget(deps))))
 
 	mux.HandleFunc("GET /v1/widgets/{id}/domains",
 		requireCapability(deps, authorization.WidgetManage, handleListWidgetDomains(deps)))
 	mux.HandleFunc("PUT /v1/widgets/{id}/domains",
 		requireCapability(deps, authorization.WidgetManage, handleReplaceWidgetDomains(deps)))
 	mux.HandleFunc("POST /v1/widgets/{id}/domains",
-		requireCapability(deps, authorization.WidgetManage, handleAddWidgetDomain(deps)))
+		requireCapability(deps, authorization.WidgetManage, idempotent(handleAddWidgetDomain(deps))))
 	mux.HandleFunc("DELETE /v1/widgets/{id}/domains/{domainID}",
 		requireCapability(deps, authorization.WidgetManage, handleRemoveWidgetDomain(deps)))
 
