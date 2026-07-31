@@ -438,6 +438,13 @@ func parseRoles(value string) ([]Role, error) {
 	return roles, nil
 }
 
+// ParseRoles validates the process-role list used by configuration and the
+// serve command's explicit --roles override. Keeping one parser prevents the
+// CLI and environment variable from accepting different deployment shapes.
+func ParseRoles(value string) ([]Role, error) {
+	return parseRoles(value)
+}
+
 // Redacted returns a copy safe to print in diagnostics (§11.5).
 func (c Config) Redacted() Config {
 	redacted := c

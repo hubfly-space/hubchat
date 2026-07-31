@@ -22,6 +22,7 @@ var (
 	ErrInvalidName  = errors.New("api key: name is required")
 	ErrInvalidToken = errors.New("api key: invalid or expired token")
 	ErrNotFound     = errors.New("api key: not found")
+	ErrRevoked      = errors.New("api key: cannot rotate a revoked key")
 	ErrRandomness   = errors.New("api key: could not generate token")
 )
 
@@ -77,6 +78,67 @@ func (s *Service) Create(ctx context.Context, workspaceID, memberID, name string
 		return nil, fmt.Errorf("api key: create: %w", err)
 	}
 	key, err := s.Get(ctx, workspaceID, id)
+	if err != nil {
+		return nil, err
+	}
+	return &Created{Key: *key, Token: token}, nil
+}
+
+// Rotate creates the replacement and revokes the old key in one transaction.
+// The old credential remains usable until the replacement is durably stored;
+// if either write fails, callers do not end up with two live keys or no key.
+func (s *Service) Rotate(ctx context.Context, workspaceID, memberID, id, name string, scopes []string, expiresAt *time.Time) (*Created, error) {
+	token, err := newToken()
+	if err != nil {
+		return nil, err
+	}
+	hash := tokenHash(token)
+	prefix := token
+	if len(prefix) > 22 {
+		prefix = prefix[:22]
+	}
+	newID := ids.New(ids.PrefixAPIKey)
+	name = strings.TrimSpace(name)
+
+	err = database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		var oldName string
+		var oldScopes []string
+		var oldExpiresAt, revokedAt *time.Time
+		if err := tx.QueryRow(ctx, `
+			SELECT name,scopes,expires_at,revoked_at
+			FROM api_keys WHERE workspace_id=$1 AND id=$2 FOR UPDATE
+		`, workspaceID, id).Scan(&oldName, &oldScopes, &oldExpiresAt, &revokedAt); errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		if revokedAt != nil {
+			return ErrRevoked
+		}
+		if name == "" {
+			name = oldName
+		}
+		if len(scopes) == 0 {
+			scopes = oldScopes
+		}
+		if expiresAt == nil {
+			expiresAt = oldExpiresAt
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO api_keys (id,workspace_id,name,prefix,key_hash,scopes,expires_at,created_by)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		`, newID, workspaceID, name, prefix, hash[:], uniqueStrings(scopes), expiresAt, memberID); err != nil {
+			return fmt.Errorf("api key: rotate create: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE api_keys SET revoked_at=coalesce(revoked_at,now()) WHERE workspace_id=$1 AND id=$2`, workspaceID, id); err != nil {
+			return fmt.Errorf("api key: rotate revoke: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	key, err := s.Get(ctx, workspaceID, newID)
 	if err != nil {
 		return nil, err
 	}
