@@ -116,6 +116,7 @@ const (
 	PrefixSLATarget           = "slt"
 	PrefixSLAInstance         = "sli"
 	PrefixScheduledAction     = "sch"
+	PrefixTask                = "tsk"
 
 	// Integrations and operations.
 	PrefixAPIKey          = "key"

@@ -26,8 +26,10 @@ type Archive struct {
 }
 
 type TableSummary struct {
-	Name string `json:"name"`
-	Rows int    `json:"rows"`
+	Name     string `json:"name"`
+	Rows     int    `json:"rows"`
+	Existing int    `json:"existing,omitempty"`
+	New      int    `json:"new,omitempty"`
 }
 
 var tableSpecs = []struct {
@@ -39,9 +41,19 @@ var tableSpecs = []struct {
 	{name: "inboxes", where: "workspace_id=$1", direct: true},
 	{name: "companies", where: "workspace_id=$1", direct: true},
 	{name: "customers", where: "workspace_id=$1", direct: true},
+	{name: "customer_emails", where: "workspace_id=$1", direct: true},
+	{name: "customer_phones", where: "workspace_id=$1", direct: true},
+	{name: "contact_sessions", where: "workspace_id=$1", direct: true},
+	{name: "customer_events", where: "workspace_id=$1", direct: true},
+	{name: "customer_notes", where: "workspace_id=$1", direct: true},
+	{name: "attribute_definitions", where: "workspace_id=$1", direct: true},
+	{name: "attribute_blocklist", where: "workspace_id=$1", direct: true},
+	{name: "identity_merge_history", where: "workspace_id=$1", direct: true},
+	{name: "blocked_contacts", where: "workspace_id=$1", direct: true},
 	{name: "visitors", where: "workspace_id=$1", direct: true},
 	{name: "conversations", where: "workspace_id=$1", direct: true},
 	{name: "tags", where: "workspace_id=$1", direct: true},
+	{name: "workspace_event_sequences", where: "workspace_id=$1", direct: true},
 	{name: "tickets", where: "workspace_id=$1", direct: true},
 	{name: "field_definitions", where: "workspace_id=$1", direct: true},
 	{name: "saved_views", where: "workspace_id=$1", direct: true},
@@ -49,17 +61,37 @@ var tableSpecs = []struct {
 	{name: "saved_replies", where: "workspace_id=$1", direct: true},
 	{name: "widgets", where: "workspace_id=$1", direct: true},
 	{name: "portals", where: "workspace_id=$1", direct: true},
+	{name: "portal_identities", where: "workspace_id=$1", direct: true},
+	{name: "portal_sessions", where: "workspace_id=$1", direct: true},
+	{name: "portal_access_tokens", where: "workspace_id=$1", direct: true},
+	{name: "announcements", where: "workspace_id=$1", direct: true},
 	{name: "forms", where: "workspace_id=$1", direct: true},
 	{name: "feedback_boards", where: "workspace_id=$1", direct: true},
+	{name: "feedback_items", where: "workspace_id=$1", direct: true},
+	{name: "feedback_comments", where: "workspace_id=$1", direct: true},
+	{name: "feedback_links", where: "workspace_id=$1", direct: true},
 	{name: "knowledge_bases", where: "workspace_id=$1", direct: true},
+	{name: "article_collections", where: "workspace_id=$1", direct: true},
+	{name: "articles", where: "workspace_id=$1", direct: true},
+	{name: "article_feedback", where: "workspace_id=$1", direct: true},
+	{name: "article_searches", where: "workspace_id=$1", direct: true},
+	{name: "changelog_entries", where: "workspace_id=$1", direct: true},
 	{name: "surveys", where: "workspace_id=$1", direct: true},
 	{name: "business_hour_calendars", where: "workspace_id=$1", direct: true},
 	{name: "sla_policies", where: "workspace_id=$1", direct: true},
+	{name: "sla_instances", where: "workspace_id=$1", direct: true},
 	{name: "automation_rules", where: "workspace_id=$1", direct: true},
+	{name: "automation_executions", where: "workspace_id=$1", direct: true},
+	{name: "scheduled_actions", where: "workspace_id=$1", direct: true},
+	{name: "tasks", where: "workspace_id=$1", direct: true},
 	{name: "saved_reports", where: "workspace_id=$1", direct: true},
+	{name: "report_schedules", where: "workspace_id=$1", direct: true},
+	{name: "usage_counters", where: "workspace_id=$1", direct: true},
 	{name: "workspace_limits", where: "workspace_id=$1", direct: true},
 	{name: "api_keys", where: "workspace_id=$1", direct: true},
 	{name: "webhook_endpoints", where: "workspace_id=$1", direct: true},
+	{name: "webhook_deliveries", where: "workspace_id=$1", direct: true},
+	{name: "integration_connections", where: "workspace_id=$1", direct: true},
 	{name: "email_mailboxes", where: "workspace_id=$1", direct: true},
 	{name: "email_messages", where: "workspace_id=$1", direct: true},
 	{name: "files", where: "workspace_id=$1", direct: true},
@@ -67,33 +99,48 @@ var tableSpecs = []struct {
 	{name: "audit_logs", where: "workspace_id=$1", direct: true},
 	{name: "notifications", where: "workspace_id=$1", direct: true},
 	{name: "notification_preferences", where: "workspace_id=$1", direct: true},
-	{name: "idempotency_keys", where: "workspace_id=$1", direct: true},
-	{name: "jobs", where: "workspace_id=$1", direct: true},
 	{name: "report_rollups", where: "workspace_id=$1", direct: true},
 	{name: "report_rollup_state", where: "workspace_id=$1", direct: true},
 	{name: "feature_flags", where: "workspace_id=$1", direct: true},
-	{name: "export_requests", where: "workspace_id=$1", direct: true},
-	{name: "import_requests", where: "workspace_id=$1", direct: true},
 	{name: "inbox_teams", where: "inbox_id IN (SELECT id FROM inboxes WHERE workspace_id=$1)"},
+	{name: "widget_config_versions", where: "widget_id IN (SELECT id FROM widgets WHERE workspace_id=$1)"},
+	{name: "widget_domains", where: "widget_id IN (SELECT id FROM widgets WHERE workspace_id=$1)"},
+	{name: "portal_domains", where: "portal_id IN (SELECT id FROM portals WHERE workspace_id=$1)"},
+	{name: "portal_navigation_items", where: "portal_id IN (SELECT id FROM portals WHERE workspace_id=$1)"},
+	{name: "company_customers", where: "company_id IN (SELECT id FROM companies WHERE workspace_id=$1)"},
+	{name: "visitor_customer_links", where: "visitor_id IN (SELECT id FROM visitors WHERE workspace_id=$1)"},
+	{name: "customer_tags", where: "customer_id IN (SELECT id FROM customers WHERE workspace_id=$1)"},
+	{name: "company_tags", where: "company_id IN (SELECT id FROM companies WHERE workspace_id=$1)"},
+	{name: "conversation_participants", where: "conversation_id IN (SELECT id FROM conversations WHERE workspace_id=$1)"},
+	{name: "conversation_followers", where: "conversation_id IN (SELECT id FROM conversations WHERE workspace_id=$1)"},
+	{name: "composer_drafts", where: "conversation_id IN (SELECT id FROM conversations WHERE workspace_id=$1)"},
 	{name: "messages", where: "conversation_id IN (SELECT id FROM conversations WHERE workspace_id=$1)"},
 	{name: "message_revisions", where: "message_id IN (SELECT m.id FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE c.workspace_id=$1)"},
+	{name: "message_reads", where: "message_id IN (SELECT m.id FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE c.workspace_id=$1)"},
 	{name: "conversation_tags", where: "conversation_id IN (SELECT id FROM conversations WHERE workspace_id=$1)"},
 	{name: "conversation_status_history", where: "conversation_id IN (SELECT id FROM conversations WHERE workspace_id=$1)"},
 	{name: "ticket_tags", where: "ticket_id IN (SELECT id FROM tickets WHERE workspace_id=$1)"},
+	{name: "ticket_links", where: "workspace_id=$1", direct: true},
 	{name: "ticket_status_history", where: "ticket_id IN (SELECT id FROM tickets WHERE workspace_id=$1)"},
 	{name: "ticket_followers", where: "ticket_id IN (SELECT id FROM tickets WHERE workspace_id=$1)"},
+	{name: "field_values", where: "workspace_id=$1", direct: true},
 	{name: "calendar_holidays", where: "calendar_id IN (SELECT id FROM business_hour_calendars WHERE workspace_id=$1)"},
 	{name: "sla_policy_targets", where: "policy_id IN (SELECT id FROM sla_policies WHERE workspace_id=$1)"},
 	{name: "automation_rule_versions", where: "rule_id IN (SELECT id FROM automation_rules WHERE workspace_id=$1)"},
-	{name: "automation_executions", where: "workspace_id=$1", direct: true},
 	{name: "form_fields", where: "form_id IN (SELECT id FROM forms WHERE workspace_id=$1)"},
 	{name: "form_submissions", where: "workspace_id=$1", direct: true},
 	{name: "form_submission_values", where: "submission_id IN (SELECT id FROM form_submissions WHERE workspace_id=$1)"},
 	{name: "survey_questions", where: "survey_id IN (SELECT id FROM surveys WHERE workspace_id=$1)"},
 	{name: "survey_responses", where: "workspace_id=$1", direct: true},
 	{name: "survey_answers", where: "response_id IN (SELECT id FROM survey_responses WHERE workspace_id=$1)"},
+	{name: "feedback_votes", where: "workspace_id=$1", direct: true},
+	{name: "feedback_subscriptions", where: "item_id IN (SELECT id FROM feedback_items WHERE workspace_id=$1)"},
+	{name: "feedback_status_history", where: "item_id IN (SELECT id FROM feedback_items WHERE workspace_id=$1)"},
+	{name: "feedback_tags", where: "item_id IN (SELECT id FROM feedback_items WHERE workspace_id=$1)"},
+	{name: "article_revisions", where: "article_id IN (SELECT id FROM articles WHERE workspace_id=$1)"},
+	{name: "article_tags", where: "article_id IN (SELECT id FROM articles WHERE workspace_id=$1)"},
+	{name: "article_relations", where: "article_id IN (SELECT id FROM articles WHERE workspace_id=$1)"},
 	{name: "message_attachments", where: "message_id IN (SELECT m.id FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE c.workspace_id=$1)"},
-	{name: "job_attempts", where: "job_id IN (SELECT id FROM jobs WHERE workspace_id=$1)"},
 }
 
 func Export(ctx context.Context, pool *database.Pool, workspaceID string, now time.Time) (*Archive, []TableSummary, error) {
@@ -154,7 +201,20 @@ func Import(ctx context.Context, pool *database.Pool, archive *Archive, targetWo
 	summaries := make([]TableSummary, 0, len(tableSpecs))
 	for _, spec := range tableSpecs {
 		rows := archive.Tables[spec.name]
-		summaries = append(summaries, TableSummary{Name: spec.name, Rows: len(rows)})
+		summary := TableSummary{Name: spec.name, Rows: len(rows)}
+		if spec.direct {
+			ids := archiveIDs(rows)
+			if len(ids) > 0 {
+				var existing int
+				query := fmt.Sprintf(`SELECT count(*) FROM %s WHERE workspace_id=$1 AND id = ANY($2::text[])`, spec.name)
+				if err := pool.QueryRow(ctx, query, targetWorkspaceID, ids).Scan(&existing); err != nil {
+					return nil, fmt.Errorf("portability: preview %s: %w", spec.name, err)
+				}
+				summary.Existing = existing
+				summary.New = len(ids) - existing
+			}
+		}
+		summaries = append(summaries, summary)
 	}
 	if dryRun {
 		return summaries, nil
@@ -186,4 +246,25 @@ func Import(ctx context.Context, pool *database.Pool, archive *Archive, targetWo
 		return nil, err
 	}
 	return summaries, nil
+}
+
+func archiveIDs(rows []json.RawMessage) []string {
+	seen := make(map[string]struct{}, len(rows))
+	ids := make([]string, 0, len(rows))
+	for _, raw := range rows {
+		var object map[string]any
+		if json.Unmarshal(raw, &object) != nil {
+			continue
+		}
+		id, ok := object["id"].(string)
+		if !ok || id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids
 }

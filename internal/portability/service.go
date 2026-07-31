@@ -32,7 +32,7 @@ type Request struct {
 	FileID        *string        `json:"file_id,omitempty"`
 	State         string         `json:"state"`
 	RowCount      *int64         `json:"row_count,omitempty"`
-	TotalRows     *int          `json:"total_rows,omitempty"`
+	TotalRows     *int           `json:"total_rows,omitempty"`
 	ProcessedRows int            `json:"processed_rows"`
 	FailedRows    int            `json:"failed_rows"`
 	Errors        []any          `json:"errors,omitempty"`
@@ -75,12 +75,12 @@ func (s *Service) CreateExport(ctx context.Context, workspaceID, memberID, kind 
 	if err != nil {
 		return nil, err
 	}
-	id := ids.New(ids.PrefixExportRequest)
+	id := ids.New(ids.PrefixExport)
 	var request Request
 	err = s.pool.QueryRow(ctx, `
 		INSERT INTO export_requests(id,workspace_id,kind,scope,format,requested_by)
 		VALUES($1,$2,$3,$4::jsonb,'json',NULLIF($5,''))
-		RETURNING id,workspace_id,kind,scope,format,file_id,state,row_count,error,requested_by,expires_at,completed_at,created_at`,
+		RETURNING id,workspace_id,kind,scope,format,file_id,state,row_count,coalesce(error,''),requested_by,expires_at,completed_at,created_at`,
 		id, workspaceID, kind, scopeJSON, memberID,
 	).Scan(exportArgs(&request)...)
 	if err != nil {
@@ -120,7 +120,7 @@ func (s *Service) CreateImport(ctx context.Context, workspaceID, memberID, fileI
 	if _, err := s.files.Get(ctx, workspaceID, fileID); err != nil {
 		return nil, fmt.Errorf("portability: import file: %w", err)
 	}
-	id := ids.New(ids.PrefixImportRequest)
+	id := ids.New(ids.PrefixImport)
 	if _, err := s.pool.Exec(ctx, `INSERT INTO import_requests(id,workspace_id,kind,file_id,mapping,requested_by) VALUES($1,$2,$3,$4,$5::jsonb,NULLIF($6,''))`, id, workspaceID, kind, fileID, mappingJSON, memberID); err != nil {
 		return nil, fmt.Errorf("portability: create import: %w", err)
 	}
@@ -139,7 +139,7 @@ func (s *Service) List(ctx context.Context, workspaceID, state string, limit int
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	query := `SELECT id,workspace_id,kind,scope,format,file_id,state,row_count,error,requested_by,expires_at,completed_at,created_at FROM export_requests WHERE workspace_id=$1`
+	query := `SELECT id,workspace_id,kind,scope,format,file_id,state,row_count,coalesce(error,''),requested_by,expires_at,completed_at,created_at FROM export_requests WHERE workspace_id=$1`
 	args := []any{workspaceID}
 	if state != "" {
 		query += ` AND state=$2`
@@ -193,7 +193,7 @@ func (s *Service) ListImports(ctx context.Context, workspaceID, state string, li
 
 func (s *Service) Get(ctx context.Context, workspaceID, id string) (*Request, error) {
 	var request Request
-	err := s.pool.QueryRow(ctx, `SELECT id,workspace_id,kind,scope,format,file_id,state,row_count,error,requested_by,expires_at,completed_at,created_at FROM export_requests WHERE workspace_id=$1 AND id=$2`, workspaceID, id).Scan(exportArgs(&request)...)
+	err := s.pool.QueryRow(ctx, `SELECT id,workspace_id,kind,scope,format,file_id,state,row_count,coalesce(error,''),requested_by,expires_at,completed_at,created_at FROM export_requests WHERE workspace_id=$1 AND id=$2`, workspaceID, id).Scan(exportArgs(&request)...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errors.New("portability: export request not found")
 	}
@@ -229,7 +229,7 @@ func (s *Service) PreviewImport(ctx context.Context, workspaceID, id string) ([]
 
 func (s *Service) RunExport(ctx context.Context, id string) error {
 	var request Request
-	err := s.pool.QueryRow(ctx, `UPDATE export_requests SET state='running' WHERE id=$1 AND state='pending' RETURNING id,workspace_id,kind,scope,format,file_id,state,row_count,error,requested_by,expires_at,completed_at,created_at`, id).Scan(exportArgs(&request)...)
+	err := s.pool.QueryRow(ctx, `UPDATE export_requests SET state='running' WHERE id=$1 AND state='pending' RETURNING id,workspace_id,kind,scope,format,file_id,state,row_count,coalesce(error,''),requested_by,expires_at,completed_at,created_at`, id).Scan(exportArgs(&request)...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
