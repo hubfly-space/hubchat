@@ -158,11 +158,15 @@ func (s *Service) Create(ctx context.Context, workspaceID string, input Input) (
 	if err != nil {
 		return nil, err
 	}
+	delivery := input.Delivery
+	if delivery == nil {
+		delivery = []string{"email"}
+	}
 	trigger, _ := json.Marshal(input.Trigger)
 	completion, _ := json.Marshal(input.Completion)
 	id := ids.New(ids.PrefixSurvey)
 	err = database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `INSERT INTO surveys(id,workspace_id,name,type,delivery,trigger,completion,anonymous,max_responses,expires_at) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9,$10)`, id, workspaceID, name, typ, input.Delivery, trigger, completion, input.Anonymous, input.MaxResponses, input.ExpiresAt); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO surveys(id,workspace_id,name,type,delivery,trigger,completion,anonymous,max_responses,expires_at) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9,$10)`, id, workspaceID, name, typ, delivery, trigger, completion, input.Anonymous, input.MaxResponses, input.ExpiresAt); err != nil {
 			return err
 		}
 		for index, question := range questions {

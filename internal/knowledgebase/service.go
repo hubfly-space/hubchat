@@ -351,6 +351,21 @@ func (s *Service) SaveArticle(ctx context.Context, workspaceID, authorID, id str
 	if _, err := s.GetKnowledgeBase(ctx, workspaceID, input.KnowledgeBaseID); err != nil {
 		return nil, err
 	}
+	if input.CollectionID != nil {
+		collectionID := strings.TrimSpace(*input.CollectionID)
+		if collectionID == "" {
+			input.CollectionID = nil
+		} else {
+			var exists bool
+			if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM article_collections WHERE workspace_id=$1 AND knowledge_base_id=$2 AND id=$3)`, workspaceID, input.KnowledgeBaseID, collectionID).Scan(&exists); err != nil {
+				return nil, err
+			}
+			if !exists {
+				return nil, ErrNotFound
+			}
+			input.CollectionID = &collectionID
+		}
+	}
 	seo := input.SEO
 	if seo == nil {
 		seo = map[string]any{}
@@ -557,7 +572,7 @@ func scanChangelog(rows pgx.Rows) ([]ChangelogEntry, error) {
 	return result, rows.Err()
 }
 
-func (s *Service) SearchPublished(ctx context.Context, workspaceID, kbSlug, query, language, surface string, limit int) ([]SearchResult, error) {
+func (s *Service) SearchPublished(ctx context.Context, workspaceID, kbSlug, collectionSlug, query, language, surface string, limit int) ([]SearchResult, error) {
 	query = strings.TrimSpace(query)
 	if limit <= 0 || limit > 50 {
 		limit = 20
@@ -565,7 +580,7 @@ func (s *Service) SearchPublished(ctx context.Context, workspaceID, kbSlug, quer
 	if surface == "" {
 		surface = "portal"
 	}
-	rows, err := s.pool.Query(ctx, `SELECT a.id,a.workspace_id,a.knowledge_base_id,a.collection_id,a.title,a.slug,a.excerpt,a.body,a.state,a.language,a.author_id,a.seo,a.view_count,a.helpful_count,a.unhelpful_count,a.version,a.scheduled_at,a.published_at,a.created_at,a.updated_at,ts_rank(setweight(to_tsvector('english',a.title),'A')||setweight(to_tsvector('english',a.excerpt),'B')||setweight(to_tsvector('english',a.body),'C'),websearch_to_tsquery('english',$3)) FROM articles a JOIN knowledge_bases k ON k.id=a.knowledge_base_id WHERE a.workspace_id=$1 AND ($2='' OR k.slug=$2) AND a.state='published' AND ($4='' OR a.language=$4) AND ($3='' OR (setweight(to_tsvector('english',a.title),'A')||setweight(to_tsvector('english',a.excerpt),'B')||setweight(to_tsvector('english',a.body),'C')) @@ websearch_to_tsquery('english',$3)) ORDER BY 21 DESC,a.published_at DESC LIMIT $5`, workspaceID, kbSlug, query, language, limit)
+	rows, err := s.pool.Query(ctx, `SELECT a.id,a.workspace_id,a.knowledge_base_id,a.collection_id,a.title,a.slug,a.excerpt,a.body,a.state,a.language,a.author_id,a.seo,a.view_count,a.helpful_count,a.unhelpful_count,a.version,a.scheduled_at,a.published_at,a.created_at,a.updated_at,ts_rank(setweight(to_tsvector('english',a.title),'A')||setweight(to_tsvector('english',a.excerpt),'B')||setweight(to_tsvector('english',a.body),'C'),websearch_to_tsquery('english',$4)) FROM articles a JOIN knowledge_bases k ON k.id=a.knowledge_base_id LEFT JOIN article_collections c ON c.id=a.collection_id AND c.workspace_id=a.workspace_id AND c.knowledge_base_id=a.knowledge_base_id WHERE a.workspace_id=$1 AND ($2='' OR k.slug=$2) AND ($3='' OR c.slug=$3) AND a.state='published' AND ($5='' OR a.language=$5) AND ($4='' OR (setweight(to_tsvector('english',a.title),'A')||setweight(to_tsvector('english',a.excerpt),'B')||setweight(to_tsvector('english',a.body),'C')) @@ websearch_to_tsquery('english',$4)) ORDER BY 21 DESC,a.published_at DESC LIMIT $6`, workspaceID, kbSlug, collectionSlug, query, language, limit)
 	if err != nil {
 		return nil, err
 	}
