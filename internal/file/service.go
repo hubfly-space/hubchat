@@ -17,12 +17,17 @@ import (
 // Service owns file metadata and uses Store for the bytes. The database row is
 // the authorization boundary: callers never open a storage key directly.
 type Service struct {
-	pool  *database.Pool
-	store *LocalStore
+	pool    *database.Pool
+	store   Store
+	backend string
 }
 
-func New(pool *database.Pool, store *LocalStore) *Service {
-	return &Service{pool: pool, store: store}
+func New(pool *database.Pool, store Store) *Service {
+	backend := "local"
+	if _, ok := store.(*S3Store); ok {
+		backend = "s3"
+	}
+	return &Service{pool: pool, store: store, backend: backend}
 }
 
 type Record struct {
@@ -83,11 +88,11 @@ func (s *Service) Create(ctx context.Context, workspaceID string, input UploadIn
 			id, workspace_id, storage_key, backend, name, mime_type, size_bytes,
 			checksum, owner_type, owner_id, uploaded_by_type, uploaded_by_id, committed_at
 		)
-		VALUES ($1, $2, $3, 'local', $4, $5, $6, $7, NULLIF($8, ''), NULLIF($9, ''), $10, NULLIF($11, ''), now())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, ''), NULLIF($10, ''), $11, NULLIF($12, ''), now())
 		RETURNING id, workspace_id, storage_key, backend, name, mime_type, size_bytes,
 		          coalesce(checksum, ''::bytea), coalesce(owner_type, ''), coalesce(owner_id, ''),
 		          uploaded_by_type, coalesce(uploaded_by_id, ''), committed_at, created_at
-	`, id, workspaceID, stored.StorageKey, input.Name, input.MIMEType, stored.SizeBytes,
+	`, id, workspaceID, stored.StorageKey, s.backend, input.Name, input.MIMEType, stored.SizeBytes,
 		stored.Checksum[:], input.OwnerType, input.OwnerID, uploaderType, input.UploadedByID,
 	).Scan(
 		&record.ID, &record.WorkspaceID, &record.StorageKey, &record.Backend,
@@ -122,7 +127,7 @@ func (s *Service) validateOwner(ctx context.Context, workspaceID, ownerType, own
 	case "form_submission":
 		query = `SELECT EXISTS (SELECT 1 FROM form_submissions WHERE id = $1 AND workspace_id = $2)`
 	case "workspace":
-		query = `SELECT EXISTS (SELECT 1 FROM workspaces WHERE id = $1)`
+		query = `SELECT EXISTS (SELECT 1 FROM workspaces WHERE id = $1 AND id = $2)`
 	default:
 		return ErrInvalidOwner
 	}
@@ -257,6 +262,23 @@ func (s *Service) Open(ctx context.Context, workspaceID, id string) (*Record, io
 		return nil, nil, fmt.Errorf("file: open %s: %w", id, err)
 	}
 	return record, opened, nil
+}
+
+// Delete removes committed metadata and bytes for a workspace-owned file.
+// Callers must already have authorized the record; the workspace predicate is
+// still enforced here so cleanup jobs cannot cross tenant boundaries.
+func (s *Service) Delete(ctx context.Context, workspaceID, id string) error {
+	record, err := s.Get(ctx, workspaceID, id)
+	if err != nil {
+		return err
+	}
+	if err := s.store.Delete(ctx, workspaceID, id); err != nil {
+		return err
+	}
+	if _, err := s.pool.Exec(ctx, `DELETE FROM files WHERE workspace_id=$1 AND id=$2`, workspaceID, record.ID); err != nil {
+		return fmt.Errorf("file: delete metadata: %w", err)
+	}
+	return nil
 }
 
 func ChecksumHex(checksum []byte) string {

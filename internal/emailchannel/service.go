@@ -18,13 +18,16 @@ import (
 	"io"
 	"net/mail"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hubchat/hubchat/internal/conversation"
 	"github.com/hubchat/hubchat/internal/customer"
 	"github.com/hubchat/hubchat/internal/database"
+	"github.com/hubchat/hubchat/internal/events"
 	"github.com/hubchat/hubchat/internal/ids"
 	"github.com/hubchat/hubchat/internal/inbox"
+	"github.com/hubchat/hubchat/internal/jobs"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -47,6 +50,9 @@ type Service struct {
 	customer     *customer.Service
 	inbox        *inbox.Service
 	key          []byte
+	jobs         *jobs.Client
+	seenMu       sync.Mutex
+	seen         map[string]int64
 }
 
 type Mailbox struct {
@@ -123,9 +129,198 @@ type IngestResult struct {
 	Created        bool   `json:"created"`
 }
 
-func New(pool *database.Pool, secretKey []byte, conversationService *conversation.Service, customerService *customer.Service, inboxService *inbox.Service) *Service {
+// outboundPayload is intentionally small and stable: it is persisted in the
+// jobs table and may be retried by a later binary version.
+type outboundPayload struct {
+	WorkspaceID    string `json:"workspace_id"`
+	EmailMessageID string `json:"email_message_id"`
+	To             string `json:"to"`
+	Subject        string `json:"subject"`
+	Body           string `json:"body"`
+	ReplyTo        string `json:"reply_to,omitempty"`
+}
+
+const (
+	jobSend       = "email.send"
+	maxEventBatch = 200
+)
+
+func New(pool *database.Pool, secretKey []byte, conversationService *conversation.Service, customerService *customer.Service, inboxService *inbox.Service, queue ...*jobs.Client) *Service {
 	key := sha256.Sum256(append([]byte("hubchat/email-secrets:"), secretKey...))
-	return &Service{pool: pool, key: key[:], conversation: conversationService, customer: customerService, inbox: inboxService}
+	var jobClient *jobs.Client
+	if len(queue) > 0 {
+		jobClient = queue[0]
+	}
+	return &Service{pool: pool, key: key[:], conversation: conversationService, customer: customerService, inbox: inboxService, jobs: jobClient, seen: make(map[string]int64)}
+}
+
+// RunEventConsumer queues one durable outbound email for each agent reply in
+// an email conversation. The event log is the source of truth; the unique
+// RFC message id and job dedupe key make a replay harmless.
+func (s *Service) RunEventConsumer(ctx context.Context, signals <-chan events.Signal, source interface {
+	Since(context.Context, string, int64, int) ([]events.Record, error)
+}) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case signal, ok := <-signals:
+			if !ok {
+				return
+			}
+			s.seenMu.Lock()
+			after, exists := s.seen[signal.WorkspaceID]
+			if !exists {
+				after = signal.Sequence - 1
+			}
+			s.seenMu.Unlock()
+			for {
+				records, err := source.Since(ctx, signal.WorkspaceID, after, maxEventBatch)
+				if err != nil || len(records) == 0 {
+					break
+				}
+				failed := false
+				for _, record := range records {
+					if err := s.processEvent(ctx, record); err != nil {
+						failed = true
+						break
+					}
+					after = record.Sequence
+				}
+				if failed {
+					break
+				}
+				s.seenMu.Lock()
+				s.seen[signal.WorkspaceID] = after
+				s.seenMu.Unlock()
+				if len(records) < maxEventBatch {
+					break
+				}
+			}
+		}
+	}
+}
+
+func (s *Service) processEvent(ctx context.Context, record events.Record) error {
+	if record.Type != events.MessageCreated {
+		return nil
+	}
+	var message conversation.MessageEvent
+	if err := json.Unmarshal(record.Data, &message); err != nil {
+		return fmt.Errorf("emailchannel: decode message event: %w", err)
+	}
+	if message.AuthorType != "agent" || message.Kind != "reply" || strings.TrimSpace(message.Body) == "" {
+		return nil
+	}
+	return s.queueOutbound(ctx, record.WorkspaceID, message)
+}
+
+func (s *Service) queueOutbound(ctx context.Context, workspaceID string, message conversation.MessageEvent) error {
+	if s.jobs == nil {
+		return errors.New("emailchannel: outbound queue is unavailable")
+	}
+	var mailboxAddress, recipient, subject, inReplyTo string
+	err := s.pool.QueryRow(ctx, `
+		SELECT m.address::text,
+		       coalesce(verified.email::text, CASE WHEN cst.verification='verified' THEN cst.email::text ELSE '' END),
+		       coalesce(c.subject,''),
+		       coalesce(previous.message_id_header,'')
+		FROM conversations c
+		JOIN customers cst ON cst.workspace_id=c.workspace_id AND cst.id=c.customer_id
+		JOIN email_mailboxes m ON m.workspace_id=c.workspace_id AND m.inbox_id=c.inbox_id AND m.enabled
+		LEFT JOIN LATERAL (
+			SELECT ce.email FROM customer_emails ce
+			WHERE ce.workspace_id=c.workspace_id AND ce.customer_id=c.customer_id AND ce.verified_at IS NOT NULL
+			ORDER BY ce.is_primary DESC, ce.created_at DESC LIMIT 1
+		) verified ON true
+		LEFT JOIN LATERAL (
+			SELECT em.message_id_header FROM email_messages em
+			WHERE em.workspace_id=c.workspace_id AND em.conversation_id=c.id AND em.direction='inbound' AND em.message_id_header IS NOT NULL
+			ORDER BY em.created_at DESC, em.id DESC LIMIT 1
+		) previous ON true
+		WHERE c.workspace_id=$1 AND c.id=$2 AND c.channel='email'
+		ORDER BY m.created_at, m.id
+		LIMIT 1`, workspaceID, message.ConversationID).Scan(&mailboxAddress, &recipient, &subject, &inReplyTo)
+	if errors.Is(err, pgx.ErrNoRows) || strings.TrimSpace(recipient) == "" {
+		// Anonymous or unverified conversations are valid, but there is no safe
+		// address to mail. They remain HTTP/widget-only until identity is proven.
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("emailchannel: resolve outbound recipient: %w", err)
+	}
+
+	header := outboundHeader(message.MessageID, mailboxAddress)
+	if subject == "" {
+		subject = "Your Hubchat support conversation"
+	} else if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(subject)), "re:") {
+		subject = "Re: " + subject
+	}
+	var emailID, existingStatus string
+	err = s.pool.QueryRow(ctx, `
+		INSERT INTO email_messages
+		(id,workspace_id,mailbox_id,direction,message_id,conversation_id,message_id_header,in_reply_to,references_headers,from_address,to_addresses,subject,status)
+		SELECT $2, $1, m.id, 'outbound', $3, $4, $5, NULLIF($6,''),
+		       CASE WHEN NULLIF($6,'') IS NULL THEN '{}'::text[] ELSE ARRAY[$6]::text[] END,
+		       m.address, ARRAY[$7]::text[], $8, 'pending'
+		FROM email_mailboxes m
+		WHERE m.workspace_id=$1 AND m.address=$9 AND m.enabled
+		ON CONFLICT (workspace_id,message_id_header) DO NOTHING
+		RETURNING id`, workspaceID, ids.New(ids.PrefixEmailMessage), message.MessageID, message.ConversationID, header, inReplyTo, recipient, subject, mailboxAddress).Scan(&emailID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = s.pool.QueryRow(ctx, `SELECT id,status FROM email_messages WHERE workspace_id=$1 AND message_id_header=$2`, workspaceID, header).Scan(&emailID, &existingStatus)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("emailchannel: find outbound message: %w", err)
+		}
+		if existingStatus == "sent" || existingStatus == "delivered" {
+			return nil
+		}
+	} else if err != nil {
+		return fmt.Errorf("emailchannel: record outbound message: %w", err)
+	}
+	_, err = s.jobs.Enqueue(ctx, jobs.Spec{
+		WorkspaceID: workspaceID,
+		Queue:       "email",
+		Type:        jobSend,
+		Payload: outboundPayload{WorkspaceID: workspaceID, EmailMessageID: emailID, To: recipient,
+			Subject: subject, Body: message.Body, ReplyTo: mailboxAddress},
+		DedupeKey: "email-outbound:" + emailID,
+	})
+	if errors.Is(err, jobs.ErrDuplicate) {
+		return nil
+	}
+	if err != nil {
+		_ = s.MarkFailed(ctx, workspaceID, emailID, err)
+		return err
+	}
+	return nil
+}
+
+func outboundHeader(messageID, mailboxAddress string) string {
+	parsed, err := mail.ParseAddress(mailboxAddress)
+	if err != nil || parsed == nil || !strings.Contains(parsed.Address, "@") {
+		return "<" + messageID + "@hubchat.invalid>"
+	}
+	return "<" + messageID + "@" + strings.SplitN(parsed.Address, "@", 2)[1] + ">"
+}
+
+// MarkSent and MarkFailed are called by the worker after the SMTP attempt.
+// Both predicates include the workspace so a malformed job cannot update a
+// same-named record in another tenant.
+func (s *Service) MarkSent(ctx context.Context, workspaceID, emailID string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE email_messages SET status='sent',sent_at=now(),error=NULL WHERE workspace_id=$1 AND id=$2 AND direction='outbound'`, workspaceID, emailID)
+	return err
+}
+
+func (s *Service) MarkFailed(ctx context.Context, workspaceID, emailID string, cause error) error {
+	if cause == nil {
+		cause = errors.New("email delivery failed")
+	}
+	_, err := s.pool.Exec(ctx, `UPDATE email_messages SET status='failed',error=left($3,2000) WHERE workspace_id=$1 AND id=$2 AND direction='outbound'`, workspaceID, emailID, cause.Error())
+	return err
 }
 
 func (s *Service) List(ctx context.Context, workspaceID string) ([]Mailbox, error) {
@@ -300,7 +495,7 @@ func (s *Service) Ingest(ctx context.Context, raw []byte, signature string, inpu
 		return nil, ErrInvalidMessage
 	}
 	emailID := ids.New(ids.PrefixEmailMessage)
-	_, err = s.pool.Exec(ctx, `INSERT INTO email_messages(id,workspace_id,mailbox_id,message_id_header,in_reply_to,references_headers,from_address,to_addresses,subject,status,received_at) VALUES($1,$2,$3,NULLIF($4,''),NULLIF($5,''),$6,$7,$8,NULLIF($9,''),'pending',$10)`, emailID, mailbox.WorkspaceID, mailbox.ID, strings.TrimSpace(input.MessageID), strings.TrimSpace(input.InReplyTo), input.References, from, input.To, strings.TrimSpace(input.Subject), input.ReceivedAt)
+	_, err = s.pool.Exec(ctx, `INSERT INTO email_messages(id,workspace_id,mailbox_id,direction,message_id_header,in_reply_to,references_headers,from_address,to_addresses,subject,status,received_at) VALUES($1,$2,$3,'inbound',NULLIF($4,''),NULLIF($5,''),$6,$7,$8,NULLIF($9,''),'pending',$10)`, emailID, mailbox.WorkspaceID, mailbox.ID, strings.TrimSpace(input.MessageID), strings.TrimSpace(input.InReplyTo), input.References, from, input.To, strings.TrimSpace(input.Subject), input.ReceivedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return nil, ErrDuplicateMessage

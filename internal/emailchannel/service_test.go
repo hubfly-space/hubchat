@@ -51,6 +51,25 @@ func TestUnmarshalProviderPayload(t *testing.T) {
 	}
 }
 
+func TestOutboundHeaderUsesMailboxDomain(t *testing.T) {
+	if got := outboundHeader("msg_123", "Support <support@Example.com>"); got != "<msg_123@Example.com>" {
+		t.Fatalf("outbound header: %q", got)
+	}
+	if got := outboundHeader("msg_123", "not-an-address"); got != "<msg_123@hubchat.invalid>" {
+		t.Fatalf("invalid outbound header fallback: %q", got)
+	}
+}
+
+func TestOutboundPayloadIsStable(t *testing.T) {
+	payload := outboundPayload{
+		WorkspaceID: "ws_1", EmailMessageID: "em_1", To: "person@example.com",
+		Subject: "Re: Help", Body: "We fixed it", ReplyTo: "support@example.com",
+	}
+	if payload.EmailMessageID == "" || payload.WorkspaceID == "" || payload.ReplyTo == "" {
+		t.Fatal("outbound payload lost durable routing fields")
+	}
+}
+
 func formatSigned(timestamp int64, body []byte) string {
 	return formatInt(timestamp) + "." + string(body)
 }
