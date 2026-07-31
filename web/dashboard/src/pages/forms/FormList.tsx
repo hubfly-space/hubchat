@@ -1,30 +1,69 @@
 import {
   Badge,
   Button,
+  Callout,
   Card,
   CardBody,
   CopyField,
+  Dialog,
+  DialogContent,
   EmptyState,
+  Field,
+  Input,
   Page,
   PageBody,
   PageHeader,
   Section,
+  api,
+  idempotencyKey,
   formatCompact,
   formatRelativeShort,
+  useMutation,
+  useQuery,
+  ApiError,
 } from "@hubchat/shared";
 import { ClipboardList, Plus, Settings2 } from "lucide-react";
 import { Link } from "react-router-dom";
-import { NOW, forms } from "../../data/fixtures";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+
+type LiveForm = {
+  id: string;
+  name: string;
+  slug: string;
+  purpose: string;
+  fields: unknown[];
+  access: string;
+  submission_count: number;
+  enabled: boolean;
+  updated_at: string;
+};
+
+type CreateForm = { name: string; slug: string; purpose: string; access: string; enabled: boolean; fields: unknown[] };
 
 /** Intake forms (§6.11). */
 export default function FormList() {
+  const navigate = useNavigate();
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [slug, setSlug] = useState("");
+  const query = useQuery<{ data: LiveForm[] }>(["forms"], (signal) => api.get("/forms", { signal }));
+  const create = useMutation<CreateForm, LiveForm>(
+    (input) => api.post<LiveForm>("/forms", input, { idempotencyKey: idempotencyKey() }),
+    {
+      invalidates: [["forms"]],
+      onSuccess: (form) => navigate(`/forms/${form.id}`),
+    },
+  );
+  const forms = query.data?.data ?? [];
+
   return (
     <Page>
       <PageHeader
         title="Forms"
         description="Reusable intake for bug reports, refunds, access requests, and anything else with a fixed shape."
         actions={
-          <Button variant="primary" size="sm" leading={<Plus />}>
+          <Button variant="primary" size="sm" leading={<Plus />} onClick={() => setCreating(true)}>
             New form
           </Button>
         }
@@ -32,7 +71,9 @@ export default function FormList() {
 
       <PageBody>
         <Section>
-          {forms.length === 0 ? (
+          {query.isLoading ? <p className="py-12 text-center text-sm text-fg-muted">Loading forms…</p> : query.isError ? (
+            <div className="py-12 text-center text-sm text-danger">{query.error instanceof ApiError ? query.error.message : "Could not load forms."}<div><Button className="mt-4" variant="secondary" size="sm" onClick={query.refetch}>Try again</Button></div></div>
+          ) : forms.length === 0 ? (
             <EmptyState
               icon={ClipboardList}
               title="No forms yet"
@@ -60,7 +101,7 @@ export default function FormList() {
                         <p className="mt-1 text-xs text-fg-muted">
                           Creates a {form.purpose} · {form.fields.length} fields ·{" "}
                           {formatCompact(form.submission_count)} submissions · updated{" "}
-                          {formatRelativeShort(form.updated_at, NOW)} ago
+                          {formatRelativeShort(form.updated_at)} ago
                         </p>
                       </div>
 
@@ -82,6 +123,12 @@ export default function FormList() {
           )}
         </Section>
       </PageBody>
+      <Dialog open={creating} onOpenChange={setCreating}>
+        <DialogContent title="New form" description="Create the intake shell, then add fields and routing in the builder." footer={<Button variant="primary" size="sm" loading={create.isPending} disabled={!name.trim() || !slug.trim()} onClick={() => void create.mutate({ name: name.trim(), slug: slug.trim().toLowerCase(), purpose: "ticket", access: "public", enabled: true, fields: [] }).catch(() => {})}>Create form</Button>}>
+          {Boolean(create.error) && <Callout tone="danger" className="mb-3">{create.error instanceof Error ? create.error.message : "Could not create this form."}</Callout>}
+          <div className="flex flex-col gap-3 pb-4"><Field label="Name"><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Bug report" autoFocus /></Field><Field label="Slug" description="Lowercase letters, numbers, and hyphens."><Input value={slug} onChange={(event) => setSlug(event.target.value.replace(/[^a-zA-Z0-9-]/g, "-"))} placeholder="bug-report" /></Field></div>
+        </DialogContent>
+      </Dialog>
     </Page>
   );
 }

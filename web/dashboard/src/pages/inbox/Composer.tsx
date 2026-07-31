@@ -5,7 +5,9 @@ import {
   TabsList,
   Textarea,
   Tooltip,
+  api,
   cn,
+  idempotencyKey,
   useToast,
 } from "@hubchat/shared";
 import {
@@ -34,8 +36,10 @@ export type ComposerProps = {
    * attach anything it cannot.
    */
   conversationId: string;
-  onSend: (body: string, kind: ComposerMode) => Promise<void>;
+  onSend: (body: string, kind: ComposerMode, fileIDs: string[]) => Promise<void>;
 };
+
+type PendingAttachment = { id: string; name: string };
 
 function draftKey(conversationId: string) {
   return `hubchat.draft.${conversationId}`;
@@ -59,7 +63,10 @@ export function Composer({ customerName, conversationId, onSend }: ComposerProps
     }
   });
   const [sending, setSending] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
 
   // Switching conversations loads that thread's own draft rather than
@@ -82,16 +89,37 @@ export function Composer({ customerName, conversationId, onSend }: ComposerProps
   }, [conversationId, value]);
 
   const isNote = mode === "note";
-  const canSend = value.trim().length > 0 && !sending;
+  const canSend = value.trim().length > 0 && !sending && !uploading;
+
+  const chooseFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    try {
+      for (const selected of Array.from(files)) {
+        const form = new FormData();
+        form.append("file", selected);
+        form.append("owner_type", "conversation");
+        form.append("owner_id", conversationId);
+        const uploaded = await api.post<{ id: string; name: string }>("/files", form, { idempotencyKey: idempotencyKey() });
+        setAttachments((current) => [...current, { id: uploaded.id, name: uploaded.name }]);
+      }
+    } catch (error) {
+      toast.error({ title: "Could not attach file", description: error instanceof Error ? error.message : "Try again." });
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   const send = () => {
     if (!canSend) return;
 
     const body = value;
     setSending(true);
-    onSend(body, mode)
+    onSend(body, mode, attachments.map((attachment) => attachment.id))
       .then(() => {
         setValue("");
+        setAttachments([]);
         toast.success({
           title: isNote ? "Note added" : "Reply sent",
           description: isNote ? "Only your team can see this." : `Delivered to ${customerName}.`,
@@ -165,6 +193,18 @@ export function Composer({ customerName, conversationId, onSend }: ComposerProps
           aria-label={isNote ? "Internal note" : "Public reply"}
         />
 
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 border-t border-line-subtle px-3 py-2">
+            {attachments.map((attachment) => (
+              <span key={attachment.id} className="inline-flex max-w-full items-center gap-1 rounded-md bg-fill px-2 py-1 text-2xs text-fg-secondary">
+                <Paperclip aria-hidden="true" className="size-3 shrink-0" />
+                <span className="max-w-48 truncate">{attachment.name}</span>
+                <button type="button" className="text-fg-muted hover:text-fg" aria-label={`Remove ${attachment.name}`} onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}>×</button>
+              </span>
+            ))}
+          </div>
+        )}
+
         <div className="flex items-center justify-between gap-2 border-t border-line-subtle px-2 py-1.5">
           <div className="flex items-center gap-0.5">
             <Tooltip content="Bold" shortcut="mod+b">
@@ -183,8 +223,9 @@ export function Composer({ customerName, conversationId, onSend }: ComposerProps
             <span className="mx-1 h-4 w-px bg-line" aria-hidden="true" />
 
             <Tooltip content="Attach file">
-              <Button variant="ghost" size="xs" iconOnly aria-label="Attach file" leading={<Paperclip />} />
+              <Button variant="ghost" size="xs" iconOnly aria-label="Attach file" loading={uploading} leading={<Paperclip />} onClick={() => fileInputRef.current?.click()} />
             </Tooltip>
+            <input ref={fileInputRef} type="file" multiple className="sr-only" onChange={(event) => void chooseFiles(event.target.files)} />
             <Tooltip content="Emoji">
               <Button variant="ghost" size="xs" iconOnly aria-label="Insert emoji" leading={<Smile />} />
             </Tooltip>

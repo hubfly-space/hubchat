@@ -21,7 +21,11 @@ import {
   Textarea,
   Toolbar,
   Tooltip,
+  ApiError,
+  api,
   cn,
+  useMutation,
+  useQuery,
 } from "@hubchat/shared";
 import {
   AlignLeft,
@@ -39,10 +43,22 @@ import {
   Trash2,
   Type,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { forms, inboxes, tags, teams } from "../../data/fixtures";
 import type { FormField } from "@hubchat/shared";
+
+type LiveForm = {
+  id: string;
+  name: string;
+  slug: string;
+  purpose: string;
+  fields: FormField[];
+  routing: { inbox_id: string | null; team_id: string | null; tag_ids: string[] };
+  confirmation: Record<string, unknown>;
+  access: "public" | "authenticated";
+  spam_protection: Record<string, unknown>;
+  enabled: boolean;
+};
 
 const FIELD_TYPES = [
   { type: "string", label: "Short text", icon: Type },
@@ -66,11 +82,34 @@ const FIELD_TYPES = [
  */
 export default function FormBuilder() {
   const { formId } = useParams();
-  const form = forms.find((item) => item.id === formId) ?? forms[0]!;
-  const [fields, setFields] = useState<FormField[]>(form.fields);
-  const [activeId, setActiveId] = useState<string | null>(form.fields[0]?.id ?? null);
+  const query = useQuery<LiveForm>(formId ? ["form", formId] : null, (signal) => api.get(`/forms/${formId}`, { signal }), { enabled: Boolean(formId) });
+  const inboxes = useQuery<{ data: { id: string; name: string }[] }>(["inboxes"], (signal) => api.get("/inboxes", { signal }));
+  const teams = useQuery<{ data: { id: string; name: string }[] }>(["teams"], (signal) => api.get("/teams", { signal }));
+  const tags = useQuery<{ data: { id: string; name: string }[] }>(["tags"], (signal) => api.get("/tags", { signal }));
+  const form = query.data;
+  const [fields, setFields] = useState<FormField[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!form) return;
+    setFields(form.fields);
+    setActiveId(form.fields[0]?.id ?? null);
+  }, [form]);
+
+  const save = useMutation<void, LiveForm>(
+    () => api.patch<LiveForm>(`/forms/${formId}`, { ...form, fields }),
+    { invalidates: [["form", formId], ["forms"]] },
+  );
+
+  if (query.isLoading) return <Page><div className="p-8 text-sm text-fg-muted">Loading form…</div></Page>;
+  if (query.isError || !form) return <Page><div className="p-8 text-sm text-danger">{query.error instanceof ApiError ? query.error.message : "Could not load this form."}</div></Page>;
 
   const active = fields.find((field) => field.id === activeId);
+
+  const updateActiveField = (patch: Partial<FormField>) => {
+    if (!activeId) return;
+    setFields((current) => current.map((field) => field.id === activeId ? { ...field, ...patch } : field));
+  };
 
   const addField = (type: (typeof FIELD_TYPES)[number]["type"]) => {
     const field: FormField = {
@@ -110,7 +149,7 @@ export default function FormBuilder() {
             <Button variant="secondary" size="sm">
               Discard
             </Button>
-            <Button variant="primary" size="sm">
+            <Button variant="primary" size="sm" loading={save.isPending} onClick={() => void save.mutate().catch(() => {})}>
               Save
             </Button>
           </>
@@ -201,7 +240,7 @@ export default function FormBuilder() {
                   <Card>
                     <CardBody className="space-y-4">
                       <Field label="Label" htmlFor="field-label">
-                        <Input id="field-label" defaultValue={active.label} />
+                        <Input id="field-label" value={active.label} onChange={(event) => updateActiveField({ label: event.target.value })} />
                       </Field>
 
                       <Field
@@ -209,20 +248,20 @@ export default function FormBuilder() {
                         htmlFor="field-key"
                         description="Used in the API payload and in automation conditions. Avoid changing it after launch."
                       >
-                        <Input id="field-key" mono defaultValue={active.key} />
+                        <Input id="field-key" mono value={active.key} onChange={(event) => updateActiveField({ key: event.target.value })} />
                       </Field>
 
                       <Field label="Help text" htmlFor="field-help">
-                        <Textarea id="field-help" rows={2} defaultValue={active.description ?? ""} />
+                        <Textarea id="field-help" rows={2} value={active.description ?? ""} onChange={(event) => updateActiveField({ description: event.target.value || null })} />
                       </Field>
 
                       {active.options && (
                         <Field label="Options" description="One per line.">
-                          <Textarea rows={4} defaultValue={active.options.join("\n")} />
+                          <Textarea rows={4} value={active.options.join("\n")} onChange={(event) => updateActiveField({ options: event.target.value.split("\n").map((option) => option.trim()).filter(Boolean) })} />
                         </Field>
                       )}
 
-                      <Checkbox label="Required" defaultChecked={active.required} />
+                      <Checkbox label="Required" checked={active.required} onCheckedChange={(checked) => updateActiveField({ required: checked === true })} />
                     </CardBody>
                   </Card>
                 </Section>
@@ -271,7 +310,7 @@ export default function FormBuilder() {
                         <Select
                           id="routing-inbox"
                           defaultValue={form.routing.inbox_id ?? undefined}
-                          options={inboxes.map((inbox) => ({ value: inbox.id, label: inbox.name }))}
+                          options={(inboxes.data?.data ?? []).map((inbox) => ({ value: inbox.id, label: inbox.name }))}
                           aria-label="Inbox"
                         />
                       </Field>
@@ -279,17 +318,17 @@ export default function FormBuilder() {
                         <Select
                           id="routing-team"
                           defaultValue={form.routing.team_id ?? undefined}
-                          options={teams.map((team) => ({ value: team.id, label: team.name }))}
+                          options={(teams.data?.data ?? []).map((team) => ({ value: team.id, label: team.name }))}
                           aria-label="Team"
                         />
                       </Field>
                       <Field label="Automatic tags">
                         <div className="flex flex-wrap gap-1.5">
-                          {tags.slice(0, 4).map((tag) => (
+                          {(tags.data?.data ?? []).slice(0, 4).map((tag) => (
                             <Checkbox
                               key={tag.id}
                               label={tag.name}
-                              defaultChecked={form.routing.tag_ids.includes(tag.id)}
+                              defaultChecked={form.routing.tag_ids?.includes(tag.id)}
                             />
                           ))}
                         </div>
@@ -309,7 +348,7 @@ export default function FormBuilder() {
                       <Switch
                         label="Spam protection"
                         description="Rate limits by IP and requires a proof-of-work token on public forms."
-                        defaultChecked={form.spam_protection}
+                        defaultChecked={Object.keys(form.spam_protection ?? {}).length > 0}
                       />
                     </CardBody>
                   </Card>
