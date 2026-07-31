@@ -1,8 +1,8 @@
-import { Button, Callout, Field, Input, Separator } from "@hubchat/shared";
+import { ApiError, Button, Callout, Field, Input, Separator, api, useMutation } from "@hubchat/shared";
 import { ArrowLeft, MailCheck } from "lucide-react";
-import { useState } from "react";
-import { Link } from "react-router-dom";
-import { portal } from "../data";
+import { useEffect, useState, type FormEvent } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { portalAccent, portalErrorMessage, usePortal } from "../portal-context";
 
 /**
  * Customer sign-in.
@@ -13,11 +13,34 @@ import { portal } from "../data";
  */
 export default function SignIn() {
   const [sent, setSent] = useState(false);
+  const [email, setEmail] = useState("");
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const { data, isLoading, error } = usePortal();
+  const requestLink = useMutation(({ email: value, portal }: { email: string; portal?: string }) =>
+    api.post("/portal/auth/magic-link", { email: value, portal }),
+  );
+
+  useEffect(() => {
+    const token = params.get("token");
+    if (!token) return;
+    void api.post("/portal/auth/magic-link/redeem", { token }).then(() => navigate(`/?portal=${encodeURIComponent(params.get("portal") ?? "")}`, { replace: true }));
+  }, [navigate, params]);
+
+  if (isLoading) return <div className="grid min-h-dvh place-items-center bg-canvas text-sm text-fg-muted">Loading portal…</div>;
+  if (error || !data) return <div className="grid min-h-dvh place-items-center bg-canvas px-4 text-center text-sm text-fg-muted">{portalErrorMessage(error)}</div>;
+
+  const { portal } = data;
+  const accent = portalAccent(portal);
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    void requestLink.mutate({ email, portal: portal.id }).then(() => setSent(true));
+  };
 
   return (
     <div
       data-branded
-      style={{ ["--hc-accent-brand" as string]: portal.accent }}
+      style={{ ["--hc-accent-brand" as string]: accent }}
       className="flex min-h-dvh flex-col items-center justify-center bg-canvas px-4 py-12"
     >
       <div className="w-full max-w-sm">
@@ -25,7 +48,7 @@ export default function SignIn() {
           <span
             aria-hidden="true"
             className="grid size-7 place-items-center rounded-md text-xs font-bold text-white"
-            style={{ backgroundColor: portal.accent }}
+            style={{ backgroundColor: accent }}
           >
             N
           </span>
@@ -56,18 +79,16 @@ export default function SignIn() {
 
             <form
               className="flex flex-col gap-4"
-              onSubmit={(event) => {
-                event.preventDefault();
-                setSent(true);
-              }}
+              onSubmit={submit}
             >
               <Field label="Email">
-                <Input type="email" inputSize="lg" autoComplete="email" required autoFocus />
+                <Input type="email" inputSize="lg" autoComplete="email" required autoFocus value={email} onChange={(event) => setEmail(event.target.value)} />
               </Field>
 
               <Button type="submit" variant="primary" size="lg" fullWidth>
-                Email me a sign-in link
+                {requestLink.isPending ? "Sending…" : "Email me a sign-in link"}
               </Button>
+              {Boolean(requestLink.error) && <p className="text-sm text-danger">{requestLink.error instanceof ApiError ? requestLink.error.message : "Could not send the sign-in link."}</p>}
             </form>
 
             <div className="my-6 flex items-center gap-3">

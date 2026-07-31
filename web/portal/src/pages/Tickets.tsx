@@ -5,12 +5,14 @@ import {
   EmptyState,
   SegmentedControl,
   formatRelativeShort,
+  api,
+  useQuery,
   type BadgeTone,
 } from "@hubchat/shared";
 import { Plus, TicketCheck } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { NOW, tickets } from "../data";
+import { portalErrorMessage, usePortal } from "../portal-context";
 
 const STATUS: Record<string, { label: string; tone: BadgeTone }> = {
   open: { label: "Open", tone: "accent" },
@@ -18,9 +20,34 @@ const STATUS: Record<string, { label: string; tone: BadgeTone }> = {
   resolved: { label: "Resolved", tone: "success" },
 };
 
+type PortalTicket = {
+  id: string;
+  number: number;
+  prefix: string;
+  title: string;
+  description: string;
+  status: string;
+  priority: string;
+  conversation_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export default function Tickets() {
   const [filter, setFilter] = useState<"open" | "all">("open");
+  const { data: portalData } = usePortal();
+  const query = useQuery<{ data: PortalTicket[]; has_more: boolean; next_cursor: string | null }>(
+    portalData?.viewer ? ["portal", "tickets"] : null,
+    (signal) => api.get("/portal/tickets?limit=100", { signal }),
+  );
 
+  if (!portalData?.viewer) {
+    return <EmptyState icon={TicketCheck} title="Sign in to view your requests" description="Use your email to access requests and replies from this portal." action={<Button variant="primary" size="sm" asChild><Link to="/sign-in">Sign in</Link></Button>} />;
+  }
+  if (query.isLoading) return <div className="py-12 text-center text-sm text-fg-muted">Loading your requests…</div>;
+  if (query.isError) return <div className="py-12 text-center text-sm text-danger">{portalErrorMessage(query.error)} <Button className="ml-2" variant="secondary" size="sm" onClick={query.refetch}>Try again</Button></div>;
+
+  const tickets = query.data?.data ?? [];
   const visible = tickets.filter((ticket) =>
     filter === "open" ? ticket.status !== "resolved" : true,
   );
@@ -67,9 +94,9 @@ export default function Tickets() {
           {visible.map((ticket) => {
             const status = STATUS[ticket.status]!;
             return (
-              <li key={ticket.number}>
+              <li key={ticket.id}>
                 <Card interactive className="p-0">
-                  <Link to={`/tickets/${ticket.number}`} className="block p-4">
+                  <Link to={`/tickets/${ticket.id}`} className="block p-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-fg">{ticket.title}</p>
@@ -79,12 +106,11 @@ export default function Tickets() {
                     </div>
 
                     <p className="mt-2 line-clamp-1 text-xs text-fg-muted">
-                      {ticket.messages[ticket.messages.length - 1]?.body}
+                      {ticket.description || "No description provided."}
                     </p>
 
                     <p className="mt-2 text-2xs text-fg-disabled">
-                      {ticket.messages.length} message{ticket.messages.length === 1 ? "" : "s"} ·
-                      updated {formatRelativeShort(ticket.updated, NOW)} ago
+                      updated {formatRelativeShort(ticket.updated_at)} ago
                     </p>
                   </Link>
                 </Card>
