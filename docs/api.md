@@ -33,3 +33,7 @@ The checked-in document is generated from
 [`openapi.template.json`](../embedded/openapi.template.json) with
 `node scripts/generate-openapi.mjs`; `make openapi-check` validates the
 published artifact.
+
+The embeddable browser contract is documented separately in
+[`widget-sdk.md`](widget-sdk.md), including the typed `window.Hubchat` API and
+the signed-identity and metadata rules for widget visitors.

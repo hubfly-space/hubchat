@@ -102,6 +102,7 @@ docs/                 architecture and engineering guidelines
 | [Backend guidelines](docs/backend.md) | Module boundaries, database rules, error handling |
 | [API conventions](docs/api-conventions.md) | REST shape, pagination, idempotency, webhooks |
 | [Public API](docs/api.md) | OpenAPI contract, authentication, and generated contract checks |
+| [Widget SDK](docs/widget-sdk.md) | Browser loader commands, identity, events, and TypeScript declarations |
 | [Security](docs/security.md) | Tenant isolation, identity verification, the threat model |
 | [Contributing](CONTRIBUTING.md) | How to propose and land a change |
 | [ADRs](docs/adr/) | Decisions that would otherwise be re-argued |

@@ -579,10 +579,10 @@ func resolveVisitorRequest(r *http.Request, deps Deps, req widgetVisitorRequest)
 
 type widgetIdentifyRequest struct {
 	widgetVisitorRequest
-	Name        *string `json:"name"`
-	Email       *string `json:"email"`
-	ExternalID  *string `json:"external_id"`
-	SignedToken *string `json:"signed_token"`
+	Name        *string        `json:"name"`
+	Email       *string        `json:"email"`
+	ExternalID  *string        `json:"external_id"`
+	SignedToken *string        `json:"signed_token"`
 	Attributes  map[string]any `json:"attributes"`
 }
 
