@@ -40,6 +40,8 @@ export function PortalShell() {
 
   const { portal, viewer } = data;
   const accent = portalAccent(portal);
+  const portalMark = portal.name.trim().charAt(0).toUpperCase() || "H";
+  const currentYear = new Date().getFullYear();
 
   return (
     <div
@@ -62,7 +64,7 @@ export function PortalShell() {
               className="grid size-6 place-items-center rounded-md text-[11px] font-bold text-white"
                 style={{ backgroundColor: accent }}
             >
-              N
+              {portalMark}
             </span>
             <span className="text-sm font-semibold tracking-tight">{portal.name}</span>
           </NavLink>
@@ -150,7 +152,7 @@ export function PortalShell() {
 
       <footer className="border-t border-line bg-surface">
         <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-6 text-xs text-fg-muted sm:flex-row sm:items-center sm:px-6">
-          <p>© 2026 Northwind Cloud</p>
+          <p>© {currentYear} {portal.name}</p>
           <nav aria-label="Footer" className="flex gap-4 sm:ml-auto">
             {Array.isArray(portal.features.footer_links) &&
               portal.features.footer_links.map((link) => {

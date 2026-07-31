@@ -145,7 +145,7 @@ function SecurityForm({ initial }: { initial: Settings["security"] }) {
                 mono
                 value={domains}
                 onChange={(event) => setDomains(event.target.value)}
-                placeholder="northwind.cloud"
+                placeholder="example.com"
               />
             </SettingsRow>
 

@@ -1061,6 +1061,7 @@ export type Job = {
   started_at: Timestamp | null;
   finished_at: Timestamp | null;
   error: string | null;
+  created_at: Timestamp;
 };
 
 export type Notification = {
