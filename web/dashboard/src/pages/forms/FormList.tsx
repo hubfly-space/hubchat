@@ -13,13 +13,15 @@ import {
   Page,
   PageBody,
   PageHeader,
+  Pagination,
   Section,
   api,
   idempotencyKey,
   formatCompact,
   formatRelativeShort,
   useMutation,
-  useQuery,
+  useInfinite,
+  type Paginated,
   ApiError,
 } from "@hubchat/shared";
 import { ClipboardList, Plus, Settings2 } from "lucide-react";
@@ -49,7 +51,14 @@ export default function FormList() {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
-  const query = useQuery<{ data: LiveForm[] }>(["forms"], (signal) => api.get("/forms", { signal }));
+  const query = useInfinite<LiveForm>(
+    ["forms"],
+    (cursor, signal) => {
+      const params = new URLSearchParams({ limit: "50" });
+      if (cursor) params.set("cursor", cursor);
+      return api.get<Paginated<LiveForm>>(`/forms?${params.toString()}`, { signal });
+    },
+  );
   const create = useMutation<CreateForm, LiveForm>(
     (input) => api.post<LiveForm>("/forms", input, { idempotencyKey: idempotencyKey() }),
     {
@@ -57,7 +66,7 @@ export default function FormList() {
       onSuccess: (form) => navigate(`/forms/${form.id}`),
     },
   );
-  const forms = query.data?.data ?? [];
+  const forms = query.items;
 
   return (
     <Page>
@@ -73,7 +82,7 @@ export default function FormList() {
 
       <PageBody>
         <Section>
-          {query.isLoading ? <p className="py-12 text-center text-sm text-fg-muted">Loading forms…</p> : query.isError ? (
+          {query.isLoading ? <p className="py-12 text-center text-sm text-fg-muted">Loading forms…</p> : query.error ? (
             <div className="py-12 text-center text-sm text-danger">{query.error instanceof ApiError ? query.error.message : "Could not load forms."}<div><Button className="mt-4" variant="secondary" size="sm" onClick={query.refetch}>Try again</Button></div></div>
           ) : forms.length === 0 ? (
             <EmptyState
@@ -125,6 +134,13 @@ export default function FormList() {
           )}
         </Section>
       </PageBody>
+      <Pagination
+        hasPrevious={false}
+        hasNext={query.hasMore}
+        onPrevious={() => undefined}
+        onNext={() => void query.fetchNext()}
+        summary={`${forms.length} form${forms.length === 1 ? "" : "s"} loaded`}
+      />
       <Dialog open={creating} onOpenChange={setCreating}>
         <DialogContent title="New form" description="Create the intake shell, then add fields and routing in the builder." footer={<Button variant="primary" size="sm" loading={create.isPending} disabled={!name.trim() || !slug.trim()} onClick={() => void create.mutate({ name: name.trim(), slug: slug.trim().toLowerCase(), purpose: "ticket", access: "public", enabled: true, fields: [] }).catch(() => {})}>Create form</Button>}>
           {Boolean(create.error) && <Callout tone="danger" className="mb-3">{create.error instanceof Error ? create.error.message : "Could not create this form."}</Callout>}

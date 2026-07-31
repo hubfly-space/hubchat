@@ -12,15 +12,15 @@ import {
   SegmentedControl,
   Toolbar,
   Tooltip,
-  QueryBoundary,
   api,
   formatCompact,
   formatRelativeShort,
-  useQuery,
+  useInfinite,
   type Article,
   type ArticleState,
   type BadgeTone,
   type Column,
+  type Paginated,
 } from "@hubchat/shared";
 import { FileText, Plus, ThumbsDown, ThumbsUp } from "lucide-react";
 import { useState } from "react";
@@ -42,11 +42,15 @@ export default function ArticleList() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | ArticleState>("all");
 
-  const articlesQuery = useQuery<{ data: Article[] }>(
+  const articles = useInfinite<Article>(
     ["articles", filter, query],
-    (signal) => api.get(`/articles?state=${encodeURIComponent(filter === "all" ? "" : filter)}&q=${encodeURIComponent(query)}&limit=200`, { signal }),
+    (cursor, signal) => {
+      const params = new URLSearchParams({ state: filter === "all" ? "" : filter, q: query, limit: "50" });
+      if (cursor) params.set("cursor", cursor);
+      return api.get<Paginated<Article>>(`/articles?${params.toString()}`, { signal });
+    },
   );
-  const rows = articlesQuery.data?.data ?? [];
+  const rows = articles.items;
 
   const columns: Column<Article>[] = [
     {
@@ -168,40 +172,15 @@ export default function ArticleList() {
       />
 
       <PageBody>
-        <QueryBoundary query={articlesQuery}>
-          {() => (
-            <div className="min-h-0 flex-1 overflow-auto">
-              <DataTable
-                aria-label="Articles"
-                rows={rows}
-                columns={columns}
-                rowKey={(article) => article.id}
-                onRowClick={(article) => navigate(`/kb/articles/${article.id}`)}
-                empty={
-                  <EmptyState
-                    icon={FileText}
-                    title="No articles here"
-                    description="A good first article answers the question your team types out most often."
-                    action={
-                      <Button variant="primary" size="sm" leading={<Plus />} onClick={() => navigate("/kb/articles/new")}>
-                        Write one
-                      </Button>
-                    }
-                  />
-                }
-              />
-              {articlesQuery.error instanceof ApiError && <p className="mt-3 text-sm text-danger">{articlesQuery.error.message}</p>}
-            </div>
-          )}
-        </QueryBoundary>
+        {articles.isLoading ? <p className="text-sm text-fg-muted">Loading articles…</p> : articles.error ? <EmptyState icon={FileText} title="Articles unavailable" description={articles.error instanceof ApiError ? articles.error.message : "Could not load articles."} action={<Button variant="secondary" onClick={articles.refetch}>Try again</Button>} /> : <div className="min-h-0 flex-1 overflow-auto"><DataTable aria-label="Articles" rows={rows} columns={columns} rowKey={(article) => article.id} onRowClick={(article) => navigate(`/kb/articles/${article.id}`)} empty={<EmptyState icon={FileText} title="No articles here" description="A good first article answers the question your team types out most often." action={<Button variant="primary" size="sm" leading={<Plus />} onClick={() => navigate("/kb/articles/new")}>Write one</Button>} />} /></div>}
       </PageBody>
 
       <Pagination
         hasPrevious={false}
-        hasNext={false}
+        hasNext={articles.hasMore}
         onPrevious={() => undefined}
-        onNext={() => undefined}
-        summary={`${rows.length} article${rows.length === 1 ? "" : "s"}`}
+        onNext={() => void articles.fetchNext()}
+        summary={`${rows.length} article${rows.length === 1 ? "" : "s"} loaded`}
       />
     </Page>
   );
