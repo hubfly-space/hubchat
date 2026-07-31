@@ -4,8 +4,12 @@ import {
   Callout,
   Card,
   CardBody,
+  Dialog,
+  DialogContent,
   DonutChart,
+  Field,
   EmptyState,
+  Input,
   Metric,
   Page,
   PageBody,
@@ -13,14 +17,18 @@ import {
   Section,
   SegmentedControl,
   api,
+  downloadFile,
   formatCompact,
   formatDuration,
   formatPercent,
+  idempotencyKey,
+  useMutation,
   useQuery,
 } from "@hubchat/shared";
 import { CalendarClock, Download, Inbox, Info } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { useWorkspace } from "../../app/workspace-context";
 
 export const RANGES = [
   { value: "7d", label: "7 days" },
@@ -38,7 +46,11 @@ type Summary = { first_response_seconds: number; sla_compliance_percent: number;
 
 /** Reporting overview backed by the durable event rollups. */
 export default function ReportsOverview() {
+  const { workspace } = useWorkspace();
   const [range, setRange] = useState<string>("30d");
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [recipient, setRecipient] = useState("");
+  const [cadence, setCadence] = useState("weekly");
   const days = range === "7d" ? 7 : range === "90d" ? 90 : 30;
   const query = (metric: string) => {
     const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
@@ -53,6 +65,24 @@ export default function ReportsOverview() {
   const channelSplit = splitChannels(conversations.data?.data ?? []);
   const loading = conversations.isLoading || tickets.isLoading || summary.isLoading;
   const failed = conversations.isError || tickets.isError || summary.isError;
+  const schedule = useMutation<void, unknown>(async () => {
+    const report = await api.post<{ id: string }>("/reports", {
+      name: `Support overview (${range})`,
+      definition: { metrics: ["conversations.created", "tickets.created"] },
+      date_range: range === "7d" ? "last_7_days" : range === "90d" ? "last_90_days" : "last_30_days",
+      timezone: "UTC",
+    }, { idempotencyKey: idempotencyKey() });
+    return api.post(`/reports/${encodeURIComponent(report.id)}/schedules`, {
+      cadence,
+      recipients: [recipient.trim()],
+      format: "csv",
+      options: { hour: 9, minute: 0, timezone: "UTC" },
+    }, { idempotencyKey: idempotencyKey() });
+  }, { onSuccess: () => { setScheduleOpen(false); setRecipient(""); } });
+  const exportCSV = () => {
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    void downloadFile(`/analytics/export.csv?metrics=${encodeURIComponent("conversations.created,tickets.created")}&from=${encodeURIComponent(from)}`, `hubchat-reports-${range}.csv`, workspace.id).catch(() => undefined);
+  };
 
   return (
     <Page>
@@ -62,8 +92,8 @@ export default function ReportsOverview() {
         actions={
           <>
             <SegmentedControl aria-label="Date range" value={range} onValueChange={setRange} options={RANGES.map((item) => ({ value: item.value, label: item.label }))} />
-            <Button variant="secondary" size="sm" leading={<CalendarClock />}>Schedule</Button>
-            <Button variant="secondary" size="sm" leading={<Download />}>Export CSV</Button>
+            <Button variant="secondary" size="sm" leading={<CalendarClock />} onClick={() => setScheduleOpen(true)}>Schedule</Button>
+            <Button variant="secondary" size="sm" leading={<Download />} onClick={exportCSV}>Export CSV</Button>
           </>
         }
       />
@@ -103,6 +133,19 @@ export default function ReportsOverview() {
           </>
         )}
       </PageBody>
+      <Dialog open={scheduleOpen} onOpenChange={setScheduleOpen}>
+        <DialogContent
+          title="Schedule this report"
+          description="A CSV snapshot will be queued from the workspace event rollups."
+          footer={<><Button variant="ghost" size="sm" onClick={() => setScheduleOpen(false)}>Cancel</Button><Button variant="primary" size="sm" loading={schedule.isPending} disabled={!recipient.trim()} onClick={() => void schedule.mutate(undefined).catch(() => {})}>Schedule report</Button></>}
+        >
+          <div className="space-y-4 pb-2">
+            <Field label="Recipient" description="Use a single address for this schedule; add more recipients later through the API."><Input type="email" value={recipient} onChange={(event) => setRecipient(event.target.value)} placeholder="ops@example.com" autoFocus /></Field>
+            <Field label="Cadence"><select className="h-9 w-full rounded-md border border-line bg-surface px-3 text-sm text-fg" value={cadence} onChange={(event) => setCadence(event.target.value)}><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></Field>
+            {Boolean(schedule.error) && <p className="text-sm text-danger">Could not schedule this report. Check the recipient and try again.</p>}
+          </div>
+        </DialogContent>
+      </Dialog>
     </Page>
   );
 }

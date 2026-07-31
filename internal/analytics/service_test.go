@@ -3,9 +3,25 @@ package analytics
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/hubchat/hubchat/internal/events"
 )
+
+func TestNextScheduleRunUsesDeterministicUTCBoundaries(t *testing.T) {
+	now := time.Date(2026, time.July, 31, 8, 30, 0, 0, time.UTC)
+	daily, err := nextScheduleRun(now, "daily", map[string]any{"hour": 9, "minute": 0})
+	if err != nil || !daily.Equal(time.Date(2026, time.July, 31, 9, 0, 0, 0, time.UTC)) {
+		t.Fatalf("daily next run = %v, err=%v", daily, err)
+	}
+	weekly, err := nextScheduleRun(now, "weekly", map[string]any{"weekday": 1, "hour": 9})
+	if err != nil || !weekly.Equal(time.Date(2026, time.August, 3, 9, 0, 0, 0, time.UTC)) {
+		t.Fatalf("weekly next run = %v, err=%v", weekly, err)
+	}
+	if _, err := nextScheduleRun(now, "monthly", map[string]any{"day": 29}); err != ErrInvalidScheduleOptions {
+		t.Fatalf("invalid monthly day error = %v", err)
+	}
+}
 
 func TestMetricForEventUsesStableDefinitions(t *testing.T) {
 	data, _ := json.Marshal(map[string]string{"channel": "widget"})
