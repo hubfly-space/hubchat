@@ -5,24 +5,45 @@ import (
 
 	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/httpserver"
+	"github.com/hubchat/hubchat/internal/portability"
 )
 
 func registerPortabilityRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/portability/exports", requireCapability(deps, authorization.WorkspaceManage, handleListExports(deps)))
+	mux.HandleFunc("GET /v1/portability/exports/{id}/manifest", requireCapability(deps, authorization.WorkspaceManage, handleExportManifest(deps)))
 	mux.HandleFunc("POST /v1/portability/exports", requireCapability(deps, authorization.WorkspaceManage, Idempotency(deps)(handleCreateExport(deps))))
 	mux.HandleFunc("GET /v1/portability/imports", requireCapability(deps, authorization.WorkspaceManage, handleListImports(deps)))
 	mux.HandleFunc("POST /v1/portability/imports", requireCapability(deps, authorization.WorkspaceManage, Idempotency(deps)(handleCreateImport(deps))))
 	mux.HandleFunc("POST /v1/portability/imports/{id}/preview", requireCapability(deps, authorization.WorkspaceManage, handlePreviewImport(deps)))
 }
 
-func handleListExports(deps Deps) http.HandlerFunc {
+func handleExportManifest(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := deps.Portability.List(r.Context(), actorFromRequest(r).WorkspaceID, r.URL.Query().Get("state"), 100)
+		manifest, err := deps.Portability.ExportManifest(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"))
 		if err != nil {
 			writePortabilityError(w, r, err)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		httpserver.WriteJSON(w, http.StatusOK, manifest)
+	}
+}
+
+func handleListExports(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		items, err := deps.Portability.ListPage(r.Context(), actorFromRequest(r).WorkspaceID, r.URL.Query().Get("state"), cursor.At, cursor.ID, limit+1)
+		if err != nil {
+			writePortabilityError(w, r, err)
+			return
+		}
+		page := NewPage(items, limit, func(item portability.Request) Cursor {
+			return Cursor{At: item.CreatedAt, ID: item.ID}
+		})
+		httpserver.WriteJSON(w, http.StatusOK, page)
 	}
 }
 
@@ -48,12 +69,20 @@ func handleCreateExport(deps Deps) http.HandlerFunc {
 
 func handleListImports(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := deps.Portability.ListImports(r.Context(), actorFromRequest(r).WorkspaceID, r.URL.Query().Get("state"), 100)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		items, err := deps.Portability.ListImportsPage(r.Context(), actorFromRequest(r).WorkspaceID, r.URL.Query().Get("state"), cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			writePortabilityError(w, r, err)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		page := NewPage(items, limit, func(item portability.Request) Cursor {
+			return Cursor{At: item.CreatedAt, ID: item.ID}
+		})
+		httpserver.WriteJSON(w, http.StatusOK, page)
 	}
 }
 

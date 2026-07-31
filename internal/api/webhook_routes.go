@@ -29,12 +29,20 @@ type webhookRequest struct {
 
 func handleListWebhooks(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		endpoints, err := deps.Webhook.List(r.Context(), actorFromRequest(r).WorkspaceID)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		endpoints, err := deps.Webhook.ListPage(r.Context(), actorFromRequest(r).WorkspaceID, cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			writeWebhookInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": endpoints})
+		page := NewPage(endpoints, limit, func(endpoint webhook.Endpoint) Cursor {
+			return Cursor{At: endpoint.CreatedAt, ID: endpoint.ID}
+		})
+		httpserver.WriteJSON(w, http.StatusOK, page)
 	}
 }
 
