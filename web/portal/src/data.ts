@@ -1,10 +1,10 @@
 /**
- * Portal fixtures.
+ * Explicit portal demo fixtures.
  *
- * Separate from the dashboard's dataset on purpose: the portal only ever sees
- * what a signed-in customer is permitted to see (§6.5 portal permissions). If
- * this file ever needs an agent-only field, that is a design smell worth
- * catching here rather than in production.
+ * These are used only while reviewing the portal shell and in isolated visual
+ * demos. The production portal must load workspace content and customer data
+ * from the API and show a real loading/error state instead of falling back to
+ * these rows.
  */
 
 export const NOW = new Date("2026-07-26T14:20:00Z");

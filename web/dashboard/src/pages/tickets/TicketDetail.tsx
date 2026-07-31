@@ -638,13 +638,12 @@ function LinksSection({ ticket }: { ticket: Ticket }) {
     ["ticket-links", ticket.id],
     (signal) => api.get(`/tickets/${ticket.id}/links`, { signal }),
   );
-  const entries = links.data?.data ?? [];
-  if (entries.length === 0) return null;
-
   const unlink = useMutation<{ targetId: string; relation: string }, unknown>(
     ({ targetId, relation }) => api.delete(`/tickets/${ticket.id}/links/${targetId}?relation=${relation}`),
     { invalidates: [["ticket-links", ticket.id]] },
   );
+  const entries = links.data?.data ?? [];
+  if (entries.length === 0) return null;
 
   return (
     <Card>

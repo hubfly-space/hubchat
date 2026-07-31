@@ -1,4 +1,4 @@
-import { Badge, Card, CardBody, SearchInput, cn, formatRelativeShort } from "@hubchat/shared";
+import { Badge, Card, SearchInput, formatRelativeShort } from "@hubchat/shared";
 import {
   ArrowRight,
   Book,

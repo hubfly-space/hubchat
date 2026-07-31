@@ -1,4 +1,4 @@
-import { Breadcrumbs, Card, CardBody, EmptyState, SearchInput } from "@hubchat/shared";
+import { Breadcrumbs, Card, EmptyState, SearchInput } from "@hubchat/shared";
 import { ArrowRight, Book, FileQuestion } from "lucide-react";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
