@@ -1,5 +1,6 @@
 import {
   Badge,
+  ApiError,
   Button,
   Callout,
   Card,
@@ -8,7 +9,6 @@ import {
   ConfirmDialog,
   DataTable,
   Dialog,
-  DialogClose,
   DialogContent,
   DialogTrigger,
   EmptyState,
@@ -20,15 +20,18 @@ import {
   Section,
   Checkbox,
   Tooltip,
+  api,
+  idempotencyKey,
   formatDate,
   formatRelativeShort,
+  useMutation,
+  useQuery,
   type ApiKey,
   type Column,
 } from "@hubchat/shared";
 import { KeyRound, Plus, ShieldAlert, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useWorkspace } from "../../app/workspace-context";
-import { NOW, apiKeys } from "../../data/fixtures";
 
 const SCOPES = [
   { value: "conversation.read", label: "Read conversations" },
@@ -44,6 +47,21 @@ const SCOPES = [
 export default function ApiKeys() {
   const { memberById } = useWorkspace();
   const [revoking, setRevoking] = useState<ApiKey | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [expiresAt, setExpiresAt] = useState("");
+  const [scopes, setScopes] = useState<string[]>(["conversation.read"]);
+  const [createdToken, setCreatedToken] = useState<string | null>(null);
+  const query = useQuery<{ data: ApiKey[] }>(["api-keys"], (signal) => api.get("/api-keys", { signal }));
+  const create = useMutation<{ name: string; scopes: string[]; expires_at: string }, { token: string }>(
+    (input) => api.post<{ token: string }>("/api-keys", input, { idempotencyKey: idempotencyKey() }),
+    { invalidates: [["api-keys"]], onSuccess: (result) => setCreatedToken(result.token) },
+  );
+  const revoke = useMutation<string, void>(
+    (id) => api.delete(`/api-keys/${id}`),
+    { invalidates: [["api-keys"]], onSuccess: () => setRevoking(null) },
+  );
+  const keys = query.data?.data ?? [];
 
   const columns: Column<ApiKey>[] = [
     {
@@ -92,7 +110,7 @@ export default function ApiKeys() {
       numeric: true,
       cell: (key) =>
         key.last_used_at ? (
-          <span className="text-xs text-fg-muted">{formatRelativeShort(key.last_used_at, NOW)}</span>
+          <span className="text-xs text-fg-muted">{formatRelativeShort(key.last_used_at)}</span>
         ) : (
           <span className="text-xs text-fg-disabled">never</span>
         ),
@@ -120,48 +138,41 @@ export default function ApiKeys() {
         title="API keys"
         description="Workspace-scoped credentials for server-to-server calls. Keys are hashed at rest and shown once."
         actions={
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button variant="primary" size="sm" leading={<Plus />}>
-                New key
-              </Button>
-            </DialogTrigger>
+          <Dialog open={createOpen} onOpenChange={(open) => { setCreateOpen(open); if (!open) { setCreatedToken(null); create.reset(); } }}>
+            <DialogTrigger asChild><Button variant="primary" size="sm" leading={<Plus />}>New key</Button></DialogTrigger>
             <DialogContent
-              title="Create an API key"
+              title={createdToken ? "API key created" : "Create an API key"}
               description="Grant only the scopes this integration actually needs. You can rotate or revoke it at any time."
               size="lg"
               footer={
                 <>
-                  <DialogClose asChild>
-                    <Button variant="ghost" size="sm">
-                      Cancel
-                    </Button>
-                  </DialogClose>
-                  <Button variant="primary" size="sm">
-                    Create key
-                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setCreateOpen(false)}>{createdToken ? "Done" : "Cancel"}</Button>
+                  {!createdToken && <Button variant="primary" size="sm" loading={create.isPending} disabled={!name.trim() || scopes.length === 0} onClick={() => void create.mutate({ name: name.trim(), scopes, expires_at: expiresAt }).catch(() => {})}>Create key</Button>}
                 </>
               }
             >
-              <div className="space-y-4 pb-2">
+              {createdToken ? <div className="space-y-4 pb-2"><Callout tone="success">Copy this token now. It will not be shown again.</Callout><CodeBlock language="text" code={createdToken} /></div> : <div className="space-y-4 pb-2">
+                {Boolean(create.error) && <Callout tone="danger">{create.error instanceof Error ? create.error.message : "Could not create this key."}</Callout>}
                 <Field label="Name" description="Where this key will be used.">
-                  <Input placeholder="Production backend" />
+                  <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Production backend" autoFocus />
                 </Field>
 
                 <Field
                   label="Expiry"
                   description="A key with no expiry never rotates itself. Prefer 90 days for anything you can automate."
                 >
-                  <Input type="date" />
+                  <Input type="date" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} />
                 </Field>
 
                 <Field label="Scopes">
                   <div className="grid gap-2 sm:grid-cols-2">
                     {SCOPES.map((scope) => (
-                      <Checkbox
-                        key={scope.value}
-                        label={scope.label}
-                        description={scope.value}
+                        <Checkbox
+                          key={scope.value}
+                          label={scope.label}
+                          description={scope.value}
+                          checked={scopes.includes(scope.value)}
+                          onCheckedChange={(checked) => setScopes((current) => checked === true ? [...new Set([...current, scope.value])] : current.filter((item) => item !== scope.value))}
                       />
                     ))}
                   </div>
@@ -171,7 +182,7 @@ export default function ApiKeys() {
                   The full key is displayed exactly once, immediately after creation. Hubchat stores
                   only a hash and cannot recover it for you.
                 </Callout>
-              </div>
+              </div>}
             </DialogContent>
           </Dialog>
         }
@@ -183,7 +194,7 @@ export default function ApiKeys() {
             <CardBody className="p-0">
               <DataTable
                 aria-label="API keys"
-                rows={apiKeys}
+                rows={keys}
                 columns={columns}
                 rowKey={(key) => key.id}
                 rowActions={(key) =>
@@ -206,6 +217,8 @@ export default function ApiKeys() {
                   />
                 }
               />
+              {query.isLoading && <p className="p-4 text-sm text-fg-muted">Loading API keys…</p>}
+              {query.isError && <p className="p-4 text-sm text-danger">{query.error instanceof ApiError ? query.error.message : "Could not load API keys."}</p>}
             </CardBody>
           </Card>
         </Section>
@@ -238,7 +251,7 @@ export default function ApiKeys() {
         }
         confirmLabel="Revoke key"
         destructive
-        onConfirm={() => setRevoking(null)}
+        onConfirm={() => revoking && void revoke.mutate(revoking.id).catch(() => {})}
       />
     </Page>
   );

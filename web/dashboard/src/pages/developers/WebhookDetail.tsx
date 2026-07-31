@@ -1,5 +1,6 @@
 import {
   Badge,
+  ApiError,
   Button,
   Callout,
   Card,
@@ -21,16 +22,19 @@ import {
   TabsContent,
   TabsList,
   Tooltip,
+  api,
+  idempotencyKey,
+  useMutation,
+  useQuery,
   formatPercent,
   formatRelativeShort,
   type BadgeTone,
   type Column,
-  type WebhookDelivery,
 } from "@hubchat/shared";
 import { RefreshCw, RotateCcw, Send, Trash2, Webhook } from "lucide-react";
 import { useState } from "react";
 import { useParams } from "react-router-dom";
-import { NOW, webhookDeliveries, webhookEndpoints } from "../../data/fixtures";
+import type { WebhookEndpoint, WebhookDelivery } from "@hubchat/shared";
 
 const EVENTS = [
   "conversation.created",
@@ -49,18 +53,34 @@ const EVENTS = [
 
 const STATUS: Record<WebhookDelivery["status"], { label: string; tone: BadgeTone }> = {
   pending: { label: "Pending", tone: "neutral" },
-  succeeded: { label: "Delivered", tone: "success" },
+  delivered: { label: "Delivered", tone: "success" },
   failed: { label: "Failed", tone: "warning" },
-  dead: { label: "Dead", tone: "danger" },
+  exhausted: { label: "Exhausted", tone: "danger" },
+  cancelled: { label: "Cancelled", tone: "neutral" },
+  succeeded: { label: "Delivered", tone: "success" },
+  dead: { label: "Exhausted", tone: "danger" },
 };
 
 /** Webhook endpoint detail with delivery history and replay (§6.16). */
 export default function WebhookDetail() {
   const { endpointId } = useParams();
   const [tab, setTab] = useState("deliveries");
+  const [rotatedSecret, setRotatedSecret] = useState<string | null>(null);
+  const endpointQuery = useQuery<WebhookEndpoint>(["webhooks", endpointId], (signal) => api.get(`/webhooks/${endpointId}`, { signal }), { enabled: Boolean(endpointId) });
+  const deliveriesQuery = useQuery<{ data: WebhookDelivery[] }>(["webhook-deliveries", endpointId], (signal) => api.get(`/webhooks/${endpointId}/deliveries`, { signal }), { enabled: Boolean(endpointId) });
+  const test = useMutation<void, WebhookDelivery>(() => api.post(`/webhooks/${endpointId}/test`, {}, { idempotencyKey: idempotencyKey() }), { invalidates: [["webhook-deliveries", endpointId]] });
+  const replay = useMutation<string, WebhookDelivery>((deliveryID) => api.post(`/webhooks/${endpointId}/deliveries/${deliveryID}/replay`, {}, { idempotencyKey: idempotencyKey() }), { invalidates: [["webhook-deliveries", endpointId]] });
+  const rotate = useMutation<void, { secret: string }>(() => api.post(`/webhooks/${endpointId}/rotate-secret`, {}, { idempotencyKey: idempotencyKey() }), { onSuccess: (result) => setRotatedSecret(result.secret), invalidates: [["webhooks", endpointId]] });
+  const remove = useMutation<void, unknown>(() => api.delete(`/webhooks/${endpointId}`), { onSuccess: () => { window.location.href = "/developers/webhooks"; } });
 
-  const endpoint = webhookEndpoints.find((item) => item.id === endpointId) ?? webhookEndpoints[0];
+  const endpoint = endpointQuery.data;
 
+  if (endpointQuery.isLoading) {
+    return <Page><PageBody><p className="text-sm text-fg-muted">Loading webhook endpoint…</p></PageBody></Page>;
+  }
+  if (endpointQuery.error) {
+    return <Page><PageBody><Callout tone="danger">{endpointQuery.error instanceof ApiError ? endpointQuery.error.message : "Could not load webhook endpoint."}</Callout></PageBody></Page>;
+  }
   if (!endpoint) {
     return (
       <Page>
@@ -69,7 +89,7 @@ export default function WebhookDetail() {
     );
   }
 
-  const deliveries = webhookDeliveries.filter((item) => item.endpoint_id === endpoint.id);
+  const deliveries = deliveriesQuery.data?.data ?? [];
   const total = endpoint.success_24h + endpoint.failure_24h;
 
   const columns: Column<WebhookDelivery>[] = [
@@ -80,7 +100,7 @@ export default function WebhookDetail() {
       numeric: true,
       cell: (delivery) => (
         <span className="text-xs text-fg-muted">
-          {formatRelativeShort(delivery.created_at, NOW)}
+          {formatRelativeShort(delivery.created_at)}
         </span>
       ),
     },
@@ -157,10 +177,10 @@ export default function WebhookDetail() {
         }
         actions={
           <>
-            <Button variant="secondary" size="sm" leading={<Send />}>
+            <Button variant="secondary" size="sm" leading={<Send />} onClick={() => void test.mutate(undefined).catch(() => {})} loading={test.isPending}>
               Send test event
             </Button>
-            <Button variant="secondary" size="sm" leading={<RotateCcw />}>
+            <Button variant="secondary" size="sm" leading={<RotateCcw />} onClick={() => void Promise.all(deliveries.filter((delivery) => delivery.status === "failed" || delivery.status === "exhausted").map((delivery) => replay.mutate(delivery.id))).catch(() => {})} loading={replay.isPending}>
               Replay failed
             </Button>
           </>
@@ -227,7 +247,7 @@ export default function WebhookDetail() {
                     columns={columns}
                     rowKey={(delivery) => delivery.id}
                     rowActions={(delivery) =>
-                      delivery.status === "failed" || delivery.status === "dead" ? (
+                      delivery.status === "failed" || delivery.status === "exhausted" ? (
                         <Tooltip content="Replay this delivery">
                           <Button
                             variant="ghost"
@@ -235,6 +255,7 @@ export default function WebhookDetail() {
                             iconOnly
                             aria-label="Replay"
                             leading={<RefreshCw />}
+                            onClick={() => void replay.mutate(delivery.id).catch(() => {})}
                           />
                         </Tooltip>
                       ) : null
@@ -276,12 +297,12 @@ export default function WebhookDetail() {
           <TabsContent value="security">
             <Section title="Signing secret">
               <div className="space-y-2">
-                <CopyField label="Secret" value={`whsec_${"•".repeat(24)}4f2a`} masked />
+                {rotatedSecret ? <Callout tone="success"><code className="break-all font-mono text-xs">{rotatedSecret}</code></Callout> : <CopyField label="Secret" value={`whsec_••••••••••••••••••••••••${endpoint.secret_hint}`} masked />}
                 <Callout tone="warning">
                   Rotating issues a new secret and keeps the old one valid for 24 hours, so you can
                   deploy the change without dropping events.
                 </Callout>
-                <Button variant="secondary" size="sm" leading={<RotateCcw />}>
+                <Button variant="secondary" size="sm" leading={<RotateCcw />} onClick={() => void rotate.mutate(undefined).catch(() => {})} loading={rotate.isPending}>
                   Rotate secret
                 </Button>
               </div>
@@ -349,7 +370,7 @@ export default function WebhookDetail() {
                 title="Delete this endpoint"
                 description="Delivery history is retained for 30 days and then purged."
                 actions={
-                  <Button variant="danger" size="sm" leading={<Trash2 />}>
+                    <Button variant="danger" size="sm" leading={<Trash2 />} onClick={() => { if (window.confirm("Delete this webhook endpoint?")) void remove.mutate(undefined).catch(() => {}); }} loading={remove.isPending}>
                     Delete
                   </Button>
                 }

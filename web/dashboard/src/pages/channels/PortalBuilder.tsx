@@ -12,6 +12,8 @@ import {
   Field,
   Input,
   Page,
+  PageBody,
+  PageHeader,
   Section,
   SegmentedControl,
   SettingsRow,
@@ -21,21 +23,33 @@ import {
   TabsList,
   Textarea,
   Toolbar,
+  ApiError,
+  api,
+  idempotencyKey,
+  useMutation,
+  useQuery,
   cn,
 } from "@hubchat/shared";
 import { Book, Globe, GripVertical, Lightbulb, Megaphone, Plus, Ticket, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { portals } from "../../data/fixtures";
 import type { Portal } from "@hubchat/shared";
 
 /** Portal builder (§6.5). */
 export default function PortalBuilder() {
   const { portalId } = useParams();
-  const source = portals.find((item) => item.id === portalId) ?? portals[0];
-  const [draft, setDraft] = useState<Portal | undefined>(source);
+  const query = useQuery<Record<string, unknown>>(["portal", portalId], (signal) => api.get(`/portals/${encodeURIComponent(portalId ?? "")}`, { signal }), { enabled: Boolean(portalId) });
+  const [draft, setDraft] = useState<Portal | undefined>();
   const [tab, setTab] = useState("branding");
   const [previewTheme, setPreviewTheme] = useState<"light" | "dark">("light");
+  const save = useMutation<Partial<Portal>, Portal>((input) => api.patch(`/portals/${encodeURIComponent(portalId ?? "")}`, input, { idempotencyKey: idempotencyKey() }), { onSuccess: (value) => setDraft(normalizePortal(value)) });
+
+  useEffect(() => {
+    if (query.data) setDraft(normalizePortal(query.data));
+  }, [query.data]);
+
+  if (query.isLoading) return <Page><PageHeader title="Portal builder" description="Loading portal configuration…" /><PageBody><p className="text-sm text-fg-muted">Loading live configuration…</p></PageBody></Page>;
+  if (query.isError) return <Page><EmptyState icon={Globe} size="lg" title="Portal unavailable" description={query.error instanceof ApiError ? query.error.message : "Try again in a moment."} action={<Button variant="secondary" size="sm" onClick={query.refetch}>Try again</Button>} /></Page>;
 
   if (!draft) {
     return (
@@ -67,7 +81,7 @@ export default function PortalBuilder() {
             <Button variant="secondary" size="sm">
               Discard
             </Button>
-            <Button variant="primary" size="sm">
+            <Button variant="primary" size="sm" loading={save.isPending} onClick={() => void save.mutate({ theme: draft.theme, features: draft.features, auth_methods: draft.auth_methods, permissions: draft.permissions })}>
               Publish
             </Button>
           </>
@@ -381,4 +395,19 @@ export default function PortalBuilder() {
       </div>
     </Page>
   );
+}
+
+function normalizePortal(raw: Record<string, unknown>): Portal {
+  const theme = (raw.theme as Record<string, unknown> | undefined) ?? {};
+  const features = (raw.features as Record<string, unknown> | undefined) ?? {};
+  const permissions = (raw.permissions as Record<string, unknown> | undefined) ?? {};
+  return {
+    id: String(raw.id ?? ""), workspace_id: String(raw.workspace_id ?? ""), name: String(raw.name ?? "Portal"), subdomain: String(raw.subdomain ?? ""),
+    custom_domain: null, domain_status: "unverified", enabled: raw.enabled !== false, updated_at: String(raw.updated_at ?? new Date().toISOString()),
+    theme: { accent: String(theme.accent ?? "#3B6EF6"), mode: (theme.mode as Portal["theme"]["mode"]) ?? "light", logo_url: (theme.logo_url as string | null) ?? null, favicon_url: (theme.favicon_url as string | null) ?? null, headline: String(theme.headline ?? "How can we help?"), subheadline: String(theme.subheadline ?? "Search our guides, track your requests, or start a conversation with the team."), footer_links: Array.isArray(theme.footer_links) ? theme.footer_links as Portal["theme"]["footer_links"] : [], custom_css_vars: (theme.custom_css_vars as Record<string, string>) ?? {} },
+    features: { tickets: features.tickets !== false, knowledge_base: features.knowledge_base !== false, feedback: features.feedback !== false, changelog: features.changelog !== false, announcements: features.announcements === true },
+    auth_methods: Array.isArray(raw.auth_methods) ? raw.auth_methods as Portal["auth_methods"] : ["magic_link"],
+    permissions: { view_tickets_by_email: permissions.view_tickets_by_email === true, view_company_tickets: permissions.view_company_tickets === true, reopen_resolved: permissions.reopen_resolved === true, edit_fields: permissions.edit_fields === true, add_participants: permissions.add_participants === true, download_transcript: permissions.download_transcript === true },
+    navigation: Array.isArray(raw.navigation) ? raw.navigation as Portal["navigation"] : [],
+  };
 }

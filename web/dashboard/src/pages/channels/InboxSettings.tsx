@@ -15,12 +15,15 @@ import {
 } from "@hubchat/shared";
 import { Inbox, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { inboxes, slaPolicies, teams } from "../../data/fixtures";
+import { useWorkspace } from "../../app/workspace-context";
 
 /** Inbox configuration (§6.1, §6.12). */
 export default function InboxSettings() {
-  const [activeId, setActiveId] = useState(inboxes[0]!.id);
-  const active = inboxes.find((inbox) => inbox.id === activeId)!;
+  const { inboxes, teams } = useWorkspace();
+  const [activeId, setActiveId] = useState(inboxes[0]?.id ?? "");
+  const active = inboxes.find((inbox) => inbox.id === activeId) ?? inboxes[0];
+
+  if (!active) return <Page><PageHeader title="Inboxes" description="Destinations for conversations and tickets." /><PageBody><Card><CardBody><p className="text-sm text-fg-muted">No inboxes are configured for this workspace.</p></CardBody></Card></PageBody></Page>;
 
   return (
     <Page>
@@ -119,13 +122,8 @@ export default function InboxSettings() {
                     />
                   </SettingsRow>
 
-                  <SettingsRow label="SLA policy">
-                    <Select
-                      size="sm"
-                      defaultValue={active.sla_policy_id ?? undefined}
-                      aria-label="SLA policy"
-                      options={slaPolicies.map((policy) => ({ value: policy.id, label: policy.name }))}
-                    />
+                  <SettingsRow label="SLA policy" description="Configure response targets from the SLA settings area.">
+                    <span className="text-sm text-fg-secondary">{active.sla_policy_id ?? "Not configured"}</span>
                   </SettingsRow>
 
                   <SettingsRow label="Channels" description="Which sources can deliver into this inbox.">
