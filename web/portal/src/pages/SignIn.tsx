@@ -17,6 +17,7 @@ export default function SignIn() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const { data, isLoading, error } = usePortal();
+  const deleted = params.get("deleted") === "1";
   const requestLink = useMutation(({ email: value, portal }: { email: string; portal?: string }) =>
     api.post("/portal/auth/magic-link", { email: value, portal }),
   );
@@ -76,6 +77,7 @@ export default function SignIn() {
                 To view your requests and follow feedback.
               </p>
             </header>
+            {deleted && <Callout tone="info" className="mb-4">Your profile has been anonymised and all portal sessions were revoked.</Callout>}
 
             <form
               className="flex flex-col gap-4"
