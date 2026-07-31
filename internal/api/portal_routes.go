@@ -3,12 +3,16 @@ package api
 import (
 	"errors"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/hubchat/hubchat/internal/conversation"
+	"github.com/hubchat/hubchat/internal/file"
 	"github.com/hubchat/hubchat/internal/httpserver"
 	"github.com/hubchat/hubchat/internal/mailer"
 	"github.com/hubchat/hubchat/internal/portal"
@@ -24,7 +28,9 @@ func registerPortalRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/portal/tickets", handlePortalTickets(deps))
 	mux.HandleFunc("POST /v1/portal/tickets", Idempotency(deps)(handlePortalCreateTicket(deps)))
 	mux.HandleFunc("GET /v1/portal/tickets/{id}", handlePortalTicket(deps))
+	mux.HandleFunc("POST /v1/portal/tickets/{id}/files", Idempotency(deps)(handlePortalTicketFileUpload(deps)))
 	mux.HandleFunc("POST /v1/portal/tickets/{id}/replies", handlePortalTicketReply(deps))
+	mux.HandleFunc("GET /v1/portal/files/{id}", handlePortalFileDownload(deps))
 }
 
 type portalBootstrapResponse struct {
@@ -235,7 +241,7 @@ func handlePortalTicket(deps Deps) http.HandlerFunc {
 			}
 			for _, message := range all {
 				if message.Kind == "reply" {
-					messages = append(messages, portalMessageJSON(message))
+					messages = append(messages, portalMessageJSONWithAttachments(r, deps, session.WorkspaceID, message))
 				}
 			}
 		}
@@ -253,17 +259,31 @@ func portalTicketJSON(t ticket.Ticket) map[string]any {
 }
 
 func portalMessageJSON(m conversation.Message) map[string]any {
+	return portalMessageJSONWithAttachments(nil, Deps{}, "", m)
+}
+
+func portalMessageJSONWithAttachments(r *http.Request, deps Deps, workspaceID string, m conversation.Message) map[string]any {
+	attachments := []map[string]any{}
+	if r != nil && deps.File != nil {
+		if records, err := deps.File.MessageAttachments(r.Context(), workspaceID, m.ID); err == nil {
+			for _, record := range records {
+				attachments = append(attachments, portalFileJSON(record))
+			}
+		}
+	}
 	return map[string]any{
 		"id": m.ID, "conversation_id": m.ConversationID, "kind": m.Kind,
 		"author_type": m.AuthorType, "author_id": m.AuthorID, "author_name": m.AuthorName,
 		"body": m.Body, "delivery": m.Delivery, "sequence": m.Sequence,
 		"edited_at": m.EditedAt, "created_at": m.CreatedAt,
+		"attachments": attachments,
 	}
 }
 
 type portalReplyRequest struct {
-	Body     string  `json:"body"`
-	ClientID *string `json:"client_id"`
+	Body     string   `json:"body"`
+	ClientID *string  `json:"client_id"`
+	FileIDs  []string `json:"file_ids"`
 }
 
 func handlePortalTicketReply(deps Deps) http.HandlerFunc {
@@ -299,13 +319,99 @@ func handlePortalTicketReply(deps Deps) http.HandlerFunc {
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not send your reply.")
 			return
 		}
+		if deps.File != nil && len(req.FileIDs) > 0 {
+			if attachErr := deps.File.AttachToMessage(r.Context(), session.WorkspaceID, message.ID, req.FileIDs); attachErr != nil {
+				if errors.Is(attachErr, file.ErrInvalidAttachment) {
+					httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, "One or more attachments are not available.")
+				} else {
+					httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "The reply was sent, but its attachments could not be linked.")
+				}
+				return
+			}
+		}
 		if deps.Notification != nil {
 			if notifyErr := deps.Notification.NotifyConversationMessage(r.Context(), session.WorkspaceID, *ticket.ConversationID,
 				message.ID, message.AuthorType, "", message.Body); notifyErr != nil && deps.Logger != nil {
 				deps.Logger.Warn("could not create portal reply notification", "ticket_id", id, "error", notifyErr)
 			}
 		}
-		httpserver.WriteJSON(w, http.StatusCreated, portalMessageJSON(*message))
+		httpserver.WriteJSON(w, http.StatusCreated, portalMessageJSONWithAttachments(r, deps, session.WorkspaceID, *message))
+	}
+}
+
+func handlePortalTicketFileUpload(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, ok := requirePortalSession(deps, w, r)
+		if !ok {
+			return
+		}
+		ticketID := r.PathValue("id")
+		allowed, err := deps.Portal.CanAccessTicket(r.Context(), session, ticketID)
+		if err != nil || !allowed {
+			writePortalNotFound(w, r)
+			return
+		}
+		if err := r.ParseMultipartForm(2 << 20); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "The upload could not be read.")
+			return
+		}
+		parts := r.MultipartForm.File["file"]
+		if len(parts) != 1 {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Upload exactly one file.")
+			return
+		}
+		part := parts[0]
+		opened, err := part.Open()
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "The upload could not be opened.")
+			return
+		}
+		defer opened.Close()
+		mimeType := part.Header.Get("Content-Type")
+		if mimeType == "" {
+			mimeType = mime.TypeByExtension(filepath.Ext(part.Filename))
+		}
+		created, err := deps.File.Create(r.Context(), session.WorkspaceID, file.UploadInput{
+			Name: filepath.Base(part.Filename), MIMEType: mimeType, SizeBytes: part.Size, Body: opened,
+			OwnerType: "ticket", OwnerID: ticketID, UploadedByType: "customer", UploadedByID: session.CustomerID,
+		})
+		if err != nil {
+			writeFileError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, portalFileJSON(*created))
+	}
+}
+
+func handlePortalFileDownload(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, ok := requirePortalSession(deps, w, r)
+		if !ok {
+			return
+		}
+		record, opened, err := deps.File.Open(r.Context(), session.WorkspaceID, r.PathValue("id"))
+		if err != nil || record.OwnerType != "ticket" {
+			writePortalNotFound(w, r)
+			return
+		}
+		allowed, accessErr := deps.Portal.CanAccessTicket(r.Context(), session, record.OwnerID)
+		if accessErr != nil || !allowed {
+			opened.Close()
+			writePortalNotFound(w, r)
+			return
+		}
+		defer opened.Close()
+		w.Header().Set("Content-Type", record.MIMEType)
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", record.SizeBytes))
+		w.Header().Set("Content-Disposition", contentDisposition(record.Name))
+		_, _ = io.Copy(w, opened)
+	}
+}
+
+func portalFileJSON(record file.Record) map[string]any {
+	return map[string]any{
+		"id": record.ID, "name": record.Name, "mime_type": record.MIMEType, "size_bytes": record.SizeBytes,
+		"url": "/api/v1/portal/files/" + record.ID,
 	}
 }
 
