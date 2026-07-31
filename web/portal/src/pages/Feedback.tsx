@@ -1,199 +1,34 @@
-import {
-  Badge,
-  Button,
-  Card,
-  CardBody,
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogTrigger,
-  Field,
-  Input,
-  SegmentedControl,
-  Textarea,
-  cn,
-  type BadgeTone,
-} from "@hubchat/shared";
-import { ChevronUp, MessageSquare, Plus } from "lucide-react";
+import { ApiError, Badge, Button, Card, CardBody, Dialog, DialogClose, DialogContent, DialogTrigger, EmptyState, Field, Input, SearchInput, SegmentedControl, Textarea, cn, idempotencyKey, api, useMutation, useQuery, type FeedbackBoard, type FeedbackItem } from "@hubchat/shared";
+import { ChevronUp, FileQuestion, MessageSquare, Plus } from "lucide-react";
 import { useState } from "react";
-import { feedback } from "../data";
+import { usePortal } from "../portal-context";
 
-const STATUS: Record<string, { label: string; tone: BadgeTone }> = {
-  open: { label: "Open", tone: "neutral" },
-  reviewing: { label: "Reviewing", tone: "info" },
-  planned: { label: "Planned", tone: "accent" },
-  in_progress: { label: "In progress", tone: "warning" },
-  completed: { label: "Shipped", tone: "success" },
+const STATUS: Record<string, { label: string; tone: "neutral" | "info" | "accent" | "warning" | "success" | "danger" }> = {
+  open: { label: "Open", tone: "neutral" }, reviewing: { label: "Reviewing", tone: "info" }, planned: { label: "Planned", tone: "accent" }, in_progress: { label: "In progress", tone: "warning" }, completed: { label: "Shipped", tone: "success" }, declined: { label: "Declined", tone: "danger" }, held: { label: "Under review", tone: "warning" },
 };
 
-/**
- * Public roadmap and feedback board.
- *
- * Voting is optimistic and local here; against the real API it posts and
- * reconciles. Vote counts are the whole point of the page, so they must respond
- * instantly — a spinner on a vote button reads as a broken button.
- */
 export default function Feedback() {
+  const { data: portal } = usePortal();
+  const workspaceID = portal?.portal.workspace_id ?? "";
   const [view, setView] = useState<"top" | "roadmap">("top");
-  const [votes, setVotes] = useState<Record<string, boolean>>(
-    Object.fromEntries(feedback.map((item) => [item.id, item.voted])),
-  );
+  const [query, setQuery] = useState("");
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const boards = useQuery<{ data: FeedbackBoard[] }>(["portal-feedback-boards", workspaceID], (signal) => api.get(`/public/feedback/${encodeURIComponent(workspaceID)}/boards`, { signal }), { enabled: Boolean(workspaceID) });
+  const board = boards.data?.data?.[0];
+  const items = useQuery<{ data: FeedbackItem[] }>(["portal-feedback-items", workspaceID, board?.slug ?? "", query], (signal) => api.get(`/public/feedback/${encodeURIComponent(workspaceID)}/boards/${encodeURIComponent(board?.slug ?? "")}/items?q=${encodeURIComponent(query)}&sort=`, { signal }), { enabled: Boolean(workspaceID && board?.slug) });
+  const vote = useMutation<{ itemID: string }, unknown>(({ itemID }) => api.post(`/public/feedback/${encodeURIComponent(workspaceID)}/items/${encodeURIComponent(itemID)}/votes`, {}, { idempotencyKey: idempotencyKey() }), { invalidates: [["portal-feedback-items", workspaceID, board?.slug ?? "", query]] });
+  const submit = useMutation<{ title: string; description: string }, FeedbackItem>((input) => api.post(`/public/feedback/${encodeURIComponent(workspaceID)}/boards/${encodeURIComponent(board?.slug ?? "")}/items`, input, { idempotencyKey: idempotencyKey() }), { invalidates: [["portal-feedback-items", workspaceID, board?.slug ?? "", query], ["portal-feedback-boards", workspaceID]], onSuccess: () => { setTitle(""); setDescription(""); } });
+  const visible = items.data?.data ?? [];
+  const columns = ["planned", "in_progress", "completed"];
 
-  const toggleVote = (id: string) =>
-    setVotes((current) => ({ ...current, [id]: !current[id] }));
+  if (boards.isLoading) return <p className="text-sm text-fg-muted">Loading feedback…</p>;
+  if (boards.error) return <EmptyState icon={FileQuestion} title="Feedback is unavailable" description={boards.error instanceof ApiError ? boards.error.message : "Try again in a moment."} />;
+  if (!board) return <EmptyState icon={FileQuestion} title="No feedback board yet" description="There is not a public feedback board configured for this portal." />;
 
-  const countFor = (item: (typeof feedback)[number]) =>
-    item.votes + (votes[item.id] ? 1 : 0) - (item.voted ? 1 : 0);
-
-  const columns = ["planned", "in_progress", "completed"] as const;
-
-  return (
-    <div>
-      <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tighter text-fg">Roadmap & ideas</h1>
-          <p className="mt-1.5 max-w-xl text-sm leading-normal text-fg-muted">
-            Vote on what matters to you. We read every submission, and subscribers hear directly
-            when something moves.
-          </p>
-        </div>
-
-        <Dialog>
-          <DialogTrigger asChild>
-            <Button variant="primary" size="sm" leading={<Plus />}>
-              Suggest something
-            </Button>
-          </DialogTrigger>
-          <DialogContent
-            title="Suggest an improvement"
-            description="Describe the problem you are hitting rather than the solution you have in mind — it usually leads somewhere better."
-            footer={
-              <>
-                <DialogClose asChild>
-                  <Button variant="ghost" size="sm">
-                    Cancel
-                  </Button>
-                </DialogClose>
-                <Button variant="primary" size="sm">
-                  Submit
-                </Button>
-              </>
-            }
-          >
-            <div className="space-y-4 pb-2">
-              <Field label="Title" required>
-                <Input placeholder="Bulk reassign conversations" />
-              </Field>
-              <Field label="What are you trying to do?" required>
-                <Textarea rows={4} placeholder="During handover I have to reassign twenty threads one at a time…" />
-              </Field>
-            </div>
-          </DialogContent>
-        </Dialog>
-      </header>
-
-      <div className="mb-5">
-        <SegmentedControl
-          aria-label="View"
-          value={view}
-          onValueChange={setView}
-          options={[
-            { value: "top", label: "Top voted" },
-            { value: "roadmap", label: "Roadmap" },
-          ]}
-        />
-      </div>
-
-      {view === "top" ? (
-        <ul className="space-y-2">
-          {[...feedback]
-            .sort((a, b) => countFor(b) - countFor(a))
-            .map((item) => {
-              const status = STATUS[item.status]!;
-              const voted = votes[item.id] ?? false;
-
-              return (
-                <li key={item.id}>
-                  <Card>
-                    <CardBody className="flex items-start gap-4">
-                      <button
-                        type="button"
-                        onClick={() => toggleVote(item.id)}
-                        aria-pressed={voted}
-                        aria-label={`${voted ? "Remove vote from" : "Vote for"} ${item.title}`}
-                        className={cn(
-                          "flex w-14 shrink-0 flex-col items-center gap-0.5 rounded-md border px-2 py-2",
-                          "transition-colors",
-                          voted
-                            ? "border-accent-border bg-accent-subtle text-accent-text"
-                            : "border-line text-fg-secondary hover:border-line-strong hover:bg-fill",
-                        )}
-                      >
-                        <ChevronUp aria-hidden="true" className="size-4" />
-                        <span className="text-sm font-semibold tabular">{countFor(item)}</span>
-                      </button>
-
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <p className="text-sm font-medium text-fg">{item.title}</p>
-                          <Badge tone={status.tone}>{status.label}</Badge>
-                        </div>
-                        <p className="mt-1 text-xs leading-normal text-fg-muted">
-                          {item.description}
-                        </p>
-                        <p className="mt-2 flex items-center gap-1.5 text-2xs text-fg-disabled">
-                          <MessageSquare aria-hidden="true" className="size-3" />
-                          {item.comments} comments
-                        </p>
-                      </div>
-                    </CardBody>
-                  </Card>
-                </li>
-              );
-            })}
-        </ul>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-3">
-          {columns.map((column) => {
-            const items = feedback.filter((item) => item.status === column);
-            const status = STATUS[column]!;
-
-            return (
-              <section key={column}>
-                <header className="mb-3 flex items-center gap-2">
-                  <Badge tone={status.tone} dot>
-                    {status.label}
-                  </Badge>
-                  <span className="text-xs tabular text-fg-muted">{items.length}</span>
-                </header>
-
-                <div className="space-y-2">
-                  {items.map((item) => (
-                    <Card key={item.id} className="p-0">
-                      <CardBody className="p-3">
-                        <p className="text-sm font-medium leading-snug text-fg">{item.title}</p>
-                        <p className="mt-1 line-clamp-2 text-xs leading-normal text-fg-muted">
-                          {item.description}
-                        </p>
-                        <p className="mt-2 flex items-center gap-1 text-2xs tabular text-fg-disabled">
-                          <ChevronUp aria-hidden="true" className="size-3" />
-                          {countFor(item)}
-                        </p>
-                      </CardBody>
-                    </Card>
-                  ))}
-
-                  {items.length === 0 && (
-                    <p className="rounded-lg border border-dashed border-line px-3 py-6 text-center text-xs text-fg-muted">
-                      Nothing here yet
-                    </p>
-                  )}
-                </div>
-              </section>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
+  return <div>
+    <header className="mb-6 flex flex-wrap items-end justify-between gap-4"><div><h1 className="text-2xl font-semibold tracking-tighter text-fg">{board.name}</h1><p className="mt-1.5 max-w-xl text-sm leading-normal text-fg-muted">{board.description || "Vote on what matters to you. Subscribers hear directly when something moves."}</p></div><Dialog><DialogTrigger asChild><Button variant="primary" size="sm" leading={<Plus />}>Suggest something</Button></DialogTrigger><DialogContent title="Suggest an improvement" description="Describe the problem you are hitting so the team can understand it." footer={<><DialogClose asChild><Button variant="ghost" size="sm">Cancel</Button></DialogClose><Button variant="primary" size="sm" loading={submit.isPending} disabled={!title.trim() || !description.trim()} onClick={() => void submit.mutate({ title: title.trim(), description: description.trim() }).catch(() => {})}>Submit</Button></>}><div className="space-y-4 pb-2"><Field label="Title" required><Input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Bulk reassign conversations" /></Field><Field label="What are you trying to do?" required><Textarea rows={4} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="During handover I have to reassign twenty threads one at a time…" /></Field>{Boolean(submit.error) && <p className="text-sm text-danger">Could not submit this suggestion. Please try again.</p>}</div></DialogContent></Dialog></header>
+    <div className="mb-5 flex flex-wrap items-center justify-between gap-3"><SegmentedControl aria-label="View" value={view} onValueChange={(value) => setView(value as "top" | "roadmap")} options={[{ value: "top", label: "Top voted" }, { value: "roadmap", label: "Roadmap" }]} /><div className="w-64"><SearchInput inputSize="sm" value={query} onChange={(event) => setQuery(event.target.value)} onClear={() => setQuery("")} placeholder="Search feedback" /></div></div>
+    {items.isLoading ? <p className="text-sm text-fg-muted">Loading ideas…</p> : items.error ? <EmptyState icon={FileQuestion} title="Could not load ideas" description={items.error instanceof ApiError ? items.error.message : "Try again in a moment."} /> : view === "top" ? <ul className="space-y-2">{visible.map((item) => { const status = STATUS[item.status] ?? STATUS.open!; return <li key={item.id}><Card><CardBody className="flex items-start gap-4"><button type="button" onClick={() => void vote.mutate({ itemID: item.id }).catch(() => {})} disabled={item.viewer_has_voted || vote.isPending} aria-pressed={item.viewer_has_voted} aria-label={`${item.viewer_has_voted ? "Already voted for" : "Vote for"} ${item.title}`} className={cn("flex w-14 shrink-0 flex-col items-center gap-0.5 rounded-md border px-2 py-2 transition-colors", item.viewer_has_voted ? "border-accent-border bg-accent-subtle text-accent-text" : "border-line text-fg-secondary hover:border-line-strong hover:bg-fill")}><ChevronUp aria-hidden="true" className="size-4" /><span className="text-sm font-semibold tabular">{item.vote_count}</span></button><div className="min-w-0 flex-1"><div className="flex flex-wrap items-start justify-between gap-2"><p className="text-sm font-medium text-fg">{item.title}</p><Badge tone={status.tone}>{status.label}</Badge></div>{item.description && <p className="mt-1 text-xs leading-normal text-fg-muted">{item.description}</p>}<p className="mt-2 flex items-center gap-1.5 text-2xs text-fg-disabled"><MessageSquare aria-hidden="true" className="size-3" />{item.comment_count} comments</p></div></CardBody></Card></li>; })}{visible.length === 0 && <EmptyState icon={FileQuestion} title="No ideas match" description="Try a different search or suggest the first idea." />}</ul> : <div className="grid gap-4 md:grid-cols-3">{columns.map((column) => { const columnItems = visible.filter((item) => item.status === column); const status = STATUS[column]!; return <section key={column}><header className="mb-3 flex items-center gap-2"><Badge tone={status.tone} dot>{status.label}</Badge><span className="text-xs tabular text-fg-muted">{columnItems.length}</span></header><div className="space-y-2">{columnItems.map((item) => <Card key={item.id} className="p-0"><CardBody className="p-3"><p className="text-sm font-medium leading-snug text-fg">{item.title}</p><p className="mt-1 line-clamp-2 text-xs leading-normal text-fg-muted">{item.description}</p><p className="mt-2 flex items-center gap-1 text-2xs tabular text-fg-disabled"><ChevronUp aria-hidden="true" className="size-3" />{item.vote_count}</p></CardBody></Card>)}{columnItems.length === 0 && <p className="rounded-lg border border-dashed border-line px-3 py-6 text-center text-xs text-fg-muted">Nothing here yet</p>}</div></section>; })}</div>}
+  </div>;
 }

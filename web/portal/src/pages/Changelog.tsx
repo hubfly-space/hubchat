@@ -1,6 +1,6 @@
-import { Badge, Button, cn, formatDate, type BadgeTone } from "@hubchat/shared";
+import { ApiError, Badge, Button, EmptyState, cn, formatDate, api, useQuery, type BadgeTone } from "@hubchat/shared";
 import { Rss } from "lucide-react";
-import { changelog } from "../data";
+import { usePortal } from "../portal-context";
 
 const TAG_TONE: Record<string, BadgeTone> = {
   New: "accent",
@@ -9,6 +9,13 @@ const TAG_TONE: Record<string, BadgeTone> = {
 };
 
 export default function Changelog() {
+  const { data: portalData } = usePortal();
+  const query = useQuery<{ data: Array<{ id: string; title: string; body: string; kind: string; published_at: string }> }>(
+    ["portal-changelog", portalData?.portal.workspace_id ?? ""],
+    (signal) => api.get(`/public/changelog/${encodeURIComponent(portalData?.portal.workspace_id ?? "")}`, { signal }),
+    { enabled: Boolean(portalData?.portal.workspace_id) },
+  );
+  const changelog = query.data?.data ?? [];
   return (
     <div className="mx-auto max-w-2xl">
       <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
@@ -26,8 +33,8 @@ export default function Changelog() {
       <ol className="relative">
         <span aria-hidden="true" className="absolute bottom-2 left-[5px] top-2 w-px bg-line" />
 
-        {changelog.map((entry) => (
-          <li key={entry.version} className="relative pb-10 pl-7 last:pb-0">
+        {query.isLoading ? <p className="pl-7 text-sm text-fg-muted">Loading updates…</p> : query.isError ? <EmptyState icon={Rss} title="Changelog unavailable" description={query.error instanceof ApiError ? query.error.message : "Try again in a moment."} /> : changelog.length === 0 ? <EmptyState icon={Rss} title="No published updates yet" description="Check back here for product updates." /> : changelog.map((entry) => (
+          <li key={entry.id} className="relative pb-10 pl-7 last:pb-0">
             <span
               aria-hidden="true"
               className={cn(
@@ -37,17 +44,10 @@ export default function Changelog() {
             />
 
             <div className="flex flex-wrap items-center gap-2">
-              <time className="font-mono text-xs text-fg-muted" dateTime={entry.date}>
-                {formatDate(entry.date)}
+              <time className="font-mono text-xs text-fg-muted" dateTime={entry.published_at}>
+                {formatDate(entry.published_at)}
               </time>
-              <Badge tone="neutral" variant="outline">
-                v{entry.version}
-              </Badge>
-              {entry.tags.map((tag) => (
-                <Badge key={tag} tone={TAG_TONE[tag] ?? "neutral"}>
-                  {tag}
-                </Badge>
-              ))}
+              <Badge tone={TAG_TONE[entry.kind] ?? "neutral"}>{entry.kind}</Badge>
             </div>
 
             <h2 className="mt-2 text-lg font-semibold tracking-tight text-fg">{entry.title}</h2>
