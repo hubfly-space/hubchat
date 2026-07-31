@@ -135,8 +135,8 @@ One envelope for realtime frames and webhook bodies alike:
 Deliveries carry:
 
 ```http
-Hubchat-Signature: v1=5257a869e7ecebeda32affa62cdca3fa
-Hubchat-Timestamp: 1774526400
+X-Hubchat-Signature: v1=5257a869e7ecebeda32affa62cdca3fa
+X-Hubchat-Timestamp: 1774526400
 ```
 
 Verify **both**. Signed payload is `timestamp + "." + raw body` — the exact
