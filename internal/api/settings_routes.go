@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/hubchat/hubchat/internal/analytics"
 	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/httpserver"
 	"github.com/hubchat/hubchat/internal/workspace"
@@ -15,6 +16,8 @@ import (
 func registerSettingsRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/workspace/settings",
 		requireActor(deps, handleGetSettings(deps)))
+	mux.HandleFunc("GET /v1/workspace/usage",
+		requireCapability(deps, authorization.WorkspaceManage, handleGetUsage(deps)))
 
 	mux.HandleFunc("PATCH /v1/workspace/general",
 		requireCapability(deps, authorization.WorkspaceManage, Idempotency(deps)(handleUpdateGeneral(deps))))
@@ -29,6 +32,25 @@ func registerSettingsRoutes(mux *http.ServeMux, deps Deps) {
 		requireCapability(deps, authorization.WorkspaceManageSecurity, Idempotency(deps)(handleUpdateSecurity(deps))))
 	mux.HandleFunc("PATCH /v1/workspace/privacy",
 		requireCapability(deps, authorization.WorkspaceManageSecurity, Idempotency(deps)(handleUpdatePrivacy(deps))))
+}
+
+func handleGetUsage(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		usage, err := deps.Analytics.Usage(r.Context(), actor.WorkspaceID, time.Now().UTC())
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load workspace usage.")
+			return
+		}
+		usage.RequestLimits = append(usage.RequestLimits,
+			analytics.UsageLimit{Key: "max_file_bytes", Label: "Maximum file size", Value: deps.Config.Storage.MaxFileBytes, Unit: "bytes"},
+			analytics.UsageLimit{Key: "max_event_bytes", Label: "Maximum event payload", Value: deps.Config.Limits.MaxEventBytes, Unit: "bytes"},
+			analytics.UsageLimit{Key: "max_request_bytes", Label: "Maximum request body", Value: deps.Config.Server.MaxRequestBytes, Unit: "bytes"},
+			analytics.UsageLimit{Key: "max_attributes_per_customer", Label: "Maximum custom attributes per customer", Value: int64(deps.Config.Limits.MaxAttributesPerCustomer), Unit: "count"},
+			analytics.UsageLimit{Key: "max_actions_per_rule", Label: "Maximum actions per rule execution", Value: int64(deps.Config.Limits.MaxActionsPerRule), Unit: "count"},
+		)
+		httpserver.WriteJSON(w, http.StatusOK, usage)
+	}
 }
 
 func handleGetSettings(deps Deps) http.HandlerFunc {

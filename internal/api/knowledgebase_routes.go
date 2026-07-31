@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"net/http"
-	"strconv"
 
 	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/httpserver"
@@ -174,18 +173,18 @@ func handleCreateCollection(deps Deps) http.HandlerFunc {
 
 func handleListArticles(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		limit := 100
-		if raw := r.URL.Query().Get("limit"); raw != "" {
-			if parsed, err := strconv.Atoi(raw); err == nil {
-				limit = parsed
-			}
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed pagination parameters.")
+			return
 		}
-		items, err := deps.Knowledgebase.ListArticles(r.Context(), actorFromRequest(r).WorkspaceID, r.URL.Query().Get("state"), r.URL.Query().Get("q"), limit)
+		items, err := deps.Knowledgebase.ListArticlesPage(r.Context(), actorFromRequest(r).WorkspaceID, r.URL.Query().Get("state"), r.URL.Query().Get("q"), cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			writeKnowledgebaseInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		page := NewPage(items, limit, func(item knowledgebase.Article) Cursor { return Cursor{At: item.UpdatedAt, ID: item.ID} })
+		httpserver.WriteJSON(w, http.StatusOK, page)
 	}
 }
 

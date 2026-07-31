@@ -60,6 +60,9 @@ func NewPage[T any](rows []T, limit int, cursorFor func(T) Cursor) Page[T] {
 type Cursor struct {
 	// At is the sort timestamp of the last row on the previous page.
 	At time.Time `json:"at"`
+	// Value carries a non-time primary sort value for resources such as the
+	// company directory, which is ordered by name then id.
+	Value string `json:"value,omitempty"`
 	// ID breaks ties at the same timestamp.
 	ID string `json:"id"`
 }
@@ -96,7 +99,7 @@ func DecodeCursor(encoded string) (Cursor, error) {
 }
 
 // IsZero reports whether this is the first page.
-func (c Cursor) IsZero() bool { return c.ID == "" && c.At.IsZero() }
+func (c Cursor) IsZero() bool { return c.ID == "" && c.At.IsZero() && c.Value == "" }
 
 const (
 	defaultPageLimit = 50
