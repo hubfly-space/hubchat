@@ -52,39 +52,39 @@ func registerConversationRoutes(mux *http.ServeMux, deps Deps) {
 			idempotent(handlePostMessage(deps))))
 
 	mux.HandleFunc("PATCH /v1/conversations/{id}/assignee",
-		requireCapability(deps, authorization.ConversationAssign, handleSetAssignee(deps)))
+		requireCapability(deps, authorization.ConversationAssign, idempotent(handleSetAssignee(deps))))
 	mux.HandleFunc("PATCH /v1/conversations/{id}/team",
-		requireCapability(deps, authorization.ConversationAssign, handleSetTeam(deps)))
+		requireCapability(deps, authorization.ConversationAssign, idempotent(handleSetTeam(deps))))
 	mux.HandleFunc("PATCH /v1/conversations/{id}/inbox",
-		requireCapability(deps, authorization.ConversationAssign, handleSetInbox(deps)))
+		requireCapability(deps, authorization.ConversationAssign, idempotent(handleSetInbox(deps))))
 	mux.HandleFunc("PATCH /v1/conversations/{id}/priority",
-		requireCapability(deps, authorization.ConversationAssign, handleSetPriority(deps)))
+		requireCapability(deps, authorization.ConversationAssign, idempotent(handleSetPriority(deps))))
 	mux.HandleFunc("PATCH /v1/conversations/{id}/state",
-		requireCapability(deps, authorization.ConversationAssign, handleSetState(deps)))
+		requireCapability(deps, authorization.ConversationAssign, idempotent(handleSetState(deps))))
 	mux.HandleFunc("POST /v1/conversations/{id}/snooze",
-		requireCapability(deps, authorization.ConversationAssign, handleSnooze(deps)))
+		requireCapability(deps, authorization.ConversationAssign, idempotent(handleSnooze(deps))))
 
 	mux.HandleFunc("POST /v1/conversations/{id}/tags",
-		requireCapability(deps, authorization.ConversationReply, handleAddConversationTag(deps)))
+		requireCapability(deps, authorization.ConversationReply, idempotent(handleAddConversationTag(deps))))
 	mux.HandleFunc("DELETE /v1/conversations/{id}/tags/{tagID}",
-		requireCapability(deps, authorization.ConversationReply, handleRemoveConversationTag(deps)))
+		requireCapability(deps, authorization.ConversationReply, idempotent(handleRemoveConversationTag(deps))))
 
 	mux.HandleFunc("GET /v1/conversations/{id}/followers",
 		requireCapability(deps, authorization.ConversationRead, handleListFollowers(deps)))
 	mux.HandleFunc("PUT /v1/conversations/{id}/followers/me",
-		requireCapability(deps, authorization.ConversationRead, handleFollow(deps)))
+		requireCapability(deps, authorization.ConversationRead, idempotent(handleFollow(deps))))
 	mux.HandleFunc("DELETE /v1/conversations/{id}/followers/me",
-		requireCapability(deps, authorization.ConversationRead, handleUnfollow(deps)))
+		requireCapability(deps, authorization.ConversationRead, idempotent(handleUnfollow(deps))))
 
 	mux.HandleFunc("POST /v1/conversations/{id}/read",
-		requireCapability(deps, authorization.ConversationRead, handleMarkRead(deps)))
+		requireCapability(deps, authorization.ConversationRead, idempotent(handleMarkRead(deps))))
 
 	mux.HandleFunc("PATCH /v1/conversations/{id}/messages/{messageID}",
-		requireCapability(deps, authorization.ConversationReply, handleEditMessage(deps)))
+		requireCapability(deps, authorization.ConversationReply, idempotent(handleEditMessage(deps))))
 	mux.HandleFunc("POST /v1/conversations/{id}/messages/{messageID}/redact",
-		requireCapability(deps, authorization.ConversationDelete, handleRedactMessage(deps)))
+		requireCapability(deps, authorization.ConversationDelete, idempotent(handleRedactMessage(deps))))
 	mux.HandleFunc("POST /v1/conversations/{id}/merge",
-		requireCapability(deps, authorization.ConversationAssign, handleMergeConversation(deps)))
+		requireCapability(deps, authorization.ConversationAssign, idempotent(handleMergeConversation(deps))))
 	mux.HandleFunc("GET /v1/conversations/{id}/transcript",
 		requireCapability(deps, authorization.ConversationRead, handleTranscript(deps)))
 }

@@ -21,22 +21,22 @@ func registerCompanyRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/companies/{id}",
 		requireCapability(deps, authorization.CustomerRead, handleGetCompany(deps)))
 	mux.HandleFunc("PATCH /v1/companies/{id}",
-		requireCapability(deps, authorization.CompanyManage, handleUpdateCompany(deps)))
+		requireCapability(deps, authorization.CompanyManage, idempotent(handleUpdateCompany(deps))))
 
 	mux.HandleFunc("POST /v1/companies/{id}/tags",
-		requireCapability(deps, authorization.CompanyManage, handleAddCompanyTag(deps)))
+		requireCapability(deps, authorization.CompanyManage, idempotent(handleAddCompanyTag(deps))))
 	mux.HandleFunc("DELETE /v1/companies/{id}/tags/{tagID}",
-		requireCapability(deps, authorization.CompanyManage, handleRemoveCompanyTag(deps)))
+		requireCapability(deps, authorization.CompanyManage, idempotent(handleRemoveCompanyTag(deps))))
 
 	mux.HandleFunc("PATCH /v1/companies/{id}/attributes",
-		requireCapability(deps, authorization.CompanyManage, handleSetCompanyAttributes(deps)))
+		requireCapability(deps, authorization.CompanyManage, idempotent(handleSetCompanyAttributes(deps))))
 
 	mux.HandleFunc("GET /v1/companies/{id}/customers",
 		requireCapability(deps, authorization.CustomerRead, handleListCompanyCustomers(deps)))
 	mux.HandleFunc("PUT /v1/companies/{id}/customers/{customerID}",
 		requireCapability(deps, authorization.CompanyManage, idempotent(handleLinkCompanyCustomer(deps))))
 	mux.HandleFunc("DELETE /v1/companies/{id}/customers/{customerID}",
-		requireCapability(deps, authorization.CompanyManage, handleUnlinkCompanyCustomer(deps)))
+		requireCapability(deps, authorization.CompanyManage, idempotent(handleUnlinkCompanyCustomer(deps))))
 }
 
 func companyJSON(c customer.Company, tagIDs []string) map[string]any {

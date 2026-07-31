@@ -23,21 +23,21 @@ func registerCustomerRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/customers/{id}",
 		requireCapability(deps, authorization.CustomerRead, handleGetCustomer(deps)))
 	mux.HandleFunc("PATCH /v1/customers/{id}",
-		requireCapability(deps, authorization.CustomerRead, handleUpdateCustomer(deps)))
+		requireCapability(deps, authorization.CustomerRead, idempotent(handleUpdateCustomer(deps))))
 	mux.HandleFunc("PATCH /v1/customers/{id}/owner",
-		requireCapability(deps, authorization.CustomerRead, handleSetCustomerOwner(deps)))
+		requireCapability(deps, authorization.CustomerRead, idempotent(handleSetCustomerOwner(deps))))
 	mux.HandleFunc("DELETE /v1/customers/{id}",
-		requireCapability(deps, authorization.CustomerReadSensitive, handleDeleteCustomer(deps)))
+		requireCapability(deps, authorization.CustomerReadSensitive, idempotent(handleDeleteCustomer(deps))))
 
 	mux.HandleFunc("POST /v1/customers/{id}/tags",
-		requireCapability(deps, authorization.CustomerRead, handleAddCustomerTag(deps)))
+		requireCapability(deps, authorization.CustomerRead, idempotent(handleAddCustomerTag(deps))))
 	mux.HandleFunc("DELETE /v1/customers/{id}/tags/{tagID}",
-		requireCapability(deps, authorization.CustomerRead, handleRemoveCustomerTag(deps)))
+		requireCapability(deps, authorization.CustomerRead, idempotent(handleRemoveCustomerTag(deps))))
 
 	mux.HandleFunc("PATCH /v1/customers/{id}/attributes",
-		requireCapability(deps, authorization.CustomerRead, handleSetCustomerAttributes(deps)))
+		requireCapability(deps, authorization.CustomerRead, idempotent(handleSetCustomerAttributes(deps))))
 	mux.HandleFunc("POST /v1/customers/{id}/attributes/{key}/reveal",
-		requireCapability(deps, authorization.CustomerReadSensitive, handleRevealCustomerAttribute(deps)))
+		requireCapability(deps, authorization.CustomerReadSensitive, idempotent(handleRevealCustomerAttribute(deps))))
 
 	mux.HandleFunc("GET /v1/customers/{id}/timeline",
 		requireCapability(deps, authorization.CustomerRead, handleCustomerTimeline(deps)))
@@ -66,9 +66,9 @@ func registerCustomerRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /v1/attribute-definitions",
 		requireCapability(deps, authorization.WorkspaceManage, idempotent(handleCreateAttributeDefinition(deps))))
 	mux.HandleFunc("PATCH /v1/attribute-definitions/{id}",
-		requireCapability(deps, authorization.WorkspaceManage, handleUpdateAttributeDefinition(deps)))
+		requireCapability(deps, authorization.WorkspaceManage, idempotent(handleUpdateAttributeDefinition(deps))))
 	mux.HandleFunc("DELETE /v1/attribute-definitions/{id}",
-		requireCapability(deps, authorization.WorkspaceManage, handleArchiveAttributeDefinition(deps)))
+		requireCapability(deps, authorization.WorkspaceManage, idempotent(handleArchiveAttributeDefinition(deps))))
 }
 
 // customerJSON masks sensitive attribute values (per their attribute

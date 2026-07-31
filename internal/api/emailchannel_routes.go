@@ -11,14 +11,15 @@ import (
 )
 
 func registerEmailChannelRoutes(mux *http.ServeMux, deps Deps) {
+	idempotent := Idempotency(deps)
 	mux.HandleFunc("GET /v1/email/status", requireCapability(deps, authorization.IntegrationManage, handleEmailStatus(deps)))
 	mux.HandleFunc("GET /v1/email/mailboxes", requireCapability(deps, authorization.IntegrationManage, handleListMailboxes(deps)))
 	mux.HandleFunc("POST /v1/email/mailboxes", requireCapability(deps, authorization.IntegrationManage, Idempotency(deps)(handleCreateMailbox(deps))))
-	mux.HandleFunc("PATCH /v1/email/mailboxes/{id}", requireCapability(deps, authorization.IntegrationManage, handleUpdateMailbox(deps)))
-	mux.HandleFunc("DELETE /v1/email/mailboxes/{id}", requireCapability(deps, authorization.IntegrationManage, handleDeleteMailbox(deps)))
+	mux.HandleFunc("PATCH /v1/email/mailboxes/{id}", requireCapability(deps, authorization.IntegrationManage, idempotent(handleUpdateMailbox(deps))))
+	mux.HandleFunc("DELETE /v1/email/mailboxes/{id}", requireCapability(deps, authorization.IntegrationManage, idempotent(handleDeleteMailbox(deps))))
 	mux.HandleFunc("GET /v1/email/mailboxes/{id}/delivery-events", requireCapability(deps, authorization.IntegrationManage, handleListEmailDeliveryEvents(deps)))
 	mux.HandleFunc("GET /v1/email/mailboxes/{id}/suppressions", requireCapability(deps, authorization.IntegrationManage, handleListEmailSuppressions(deps)))
-	mux.HandleFunc("DELETE /v1/email/mailboxes/{id}/suppressions/{address}", requireCapability(deps, authorization.IntegrationManage, handleRemoveEmailSuppression(deps)))
+	mux.HandleFunc("DELETE /v1/email/mailboxes/{id}/suppressions/{address}", requireCapability(deps, authorization.IntegrationManage, idempotent(handleRemoveEmailSuppression(deps))))
 	mux.HandleFunc("GET /v1/email/suppressions", requireCapability(deps, authorization.IntegrationManage, handleListEmailSuppressions(deps)))
 
 	// Providers post their normalized JSON payload here. Authentication is the
