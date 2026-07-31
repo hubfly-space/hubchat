@@ -13,10 +13,11 @@ import (
 // registerCompanyRoutes mounts company (account) CRUD, tags, roster
 // management, and attributes (§6.9).
 func registerCompanyRoutes(mux *http.ServeMux, deps Deps) {
+	idempotent := Idempotency(deps)
 	mux.HandleFunc("GET /v1/companies",
 		requireCapability(deps, authorization.CustomerRead, handleListCompanies(deps)))
 	mux.HandleFunc("POST /v1/companies",
-		requireCapability(deps, authorization.CompanyManage, handleCreateCompany(deps)))
+		requireCapability(deps, authorization.CompanyManage, idempotent(handleCreateCompany(deps))))
 	mux.HandleFunc("GET /v1/companies/{id}",
 		requireCapability(deps, authorization.CustomerRead, handleGetCompany(deps)))
 	mux.HandleFunc("PATCH /v1/companies/{id}",
@@ -33,7 +34,7 @@ func registerCompanyRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/companies/{id}/customers",
 		requireCapability(deps, authorization.CustomerRead, handleListCompanyCustomers(deps)))
 	mux.HandleFunc("PUT /v1/companies/{id}/customers/{customerID}",
-		requireCapability(deps, authorization.CompanyManage, handleLinkCompanyCustomer(deps)))
+		requireCapability(deps, authorization.CompanyManage, idempotent(handleLinkCompanyCustomer(deps))))
 	mux.HandleFunc("DELETE /v1/companies/{id}/customers/{customerID}",
 		requireCapability(deps, authorization.CompanyManage, handleUnlinkCompanyCustomer(deps)))
 }

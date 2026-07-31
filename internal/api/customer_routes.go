@@ -17,6 +17,7 @@ import (
 // ingestion and timeline, contact sessions, export/delete, and identity
 // merge (§6.9, §6.10, §26.3, §26.4).
 func registerCustomerRoutes(mux *http.ServeMux, deps Deps) {
+	idempotent := Idempotency(deps)
 	mux.HandleFunc("GET /v1/customers",
 		requireCapability(deps, authorization.CustomerRead, handleSearchCustomers(deps)))
 	mux.HandleFunc("GET /v1/customers/{id}",
@@ -46,24 +47,24 @@ func registerCustomerRoutes(mux *http.ServeMux, deps Deps) {
 		requireCapability(deps, authorization.CustomerReadSensitive, handleExportCustomer(deps)))
 
 	mux.HandleFunc("POST /v1/customers/merge/preview",
-		requireCapability(deps, authorization.CustomerMerge, handlePreviewMerge(deps)))
+		requireCapability(deps, authorization.CustomerMerge, idempotent(handlePreviewMerge(deps))))
 	mux.HandleFunc("POST /v1/customers/merge",
-		requireCapability(deps, authorization.CustomerMerge, handleMergeCustomers(deps)))
+		requireCapability(deps, authorization.CustomerMerge, idempotent(handleMergeCustomers(deps))))
 	mux.HandleFunc("POST /v1/customers/merges/{id}/reverse",
-		requireCapability(deps, authorization.CustomerMerge, handleReverseMerge(deps)))
+		requireCapability(deps, authorization.CustomerMerge, idempotent(handleReverseMerge(deps))))
 
 	mux.HandleFunc("POST /v1/blocked-contacts",
-		requireCapability(deps, authorization.ConversationDelete, handleBlockContact(deps)))
+		requireCapability(deps, authorization.ConversationDelete, idempotent(handleBlockContact(deps))))
 
 	mux.HandleFunc("POST /v1/events",
-		requireCapability(deps, authorization.CustomerRead, handleIngestEvents(deps)))
+		requireCapability(deps, authorization.CustomerRead, idempotent(handleIngestEvents(deps))))
 	mux.HandleFunc("GET /v1/events",
 		requireCapability(deps, authorization.CustomerRead, handleListEvents(deps)))
 
 	mux.HandleFunc("GET /v1/attribute-definitions",
 		requireCapability(deps, authorization.CustomerRead, handleListAttributeDefinitions(deps)))
 	mux.HandleFunc("POST /v1/attribute-definitions",
-		requireCapability(deps, authorization.WorkspaceManage, handleCreateAttributeDefinition(deps)))
+		requireCapability(deps, authorization.WorkspaceManage, idempotent(handleCreateAttributeDefinition(deps))))
 	mux.HandleFunc("PATCH /v1/attribute-definitions/{id}",
 		requireCapability(deps, authorization.WorkspaceManage, handleUpdateAttributeDefinition(deps)))
 	mux.HandleFunc("DELETE /v1/attribute-definitions/{id}",

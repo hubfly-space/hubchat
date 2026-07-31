@@ -11,6 +11,7 @@ import (
 )
 
 func registerFeedbackRoutes(mux *http.ServeMux, deps Deps) {
+	idempotent := Idempotency(deps)
 	mux.HandleFunc("GET /v1/feedback/boards", requireCapability(deps, authorization.FeedbackModerate, handleListFeedbackBoards(deps)))
 	mux.HandleFunc("POST /v1/feedback/boards", requireCapability(deps, authorization.FeedbackModerate, Idempotency(deps)(handleCreateFeedbackBoard(deps))))
 	mux.HandleFunc("GET /v1/feedback/boards/{id}", requireCapability(deps, authorization.FeedbackModerate, handleGetFeedbackBoard(deps)))
@@ -19,9 +20,9 @@ func registerFeedbackRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/feedback/items/{id}", requireCapability(deps, authorization.FeedbackModerate, handleGetFeedbackItem(deps)))
 	mux.HandleFunc("GET /v1/feedback/roadmap", requireCapability(deps, authorization.FeedbackModerate, handleListFeedbackRoadmap(deps)))
 	mux.HandleFunc("GET /v1/feedback/items/{id}/comments", requireCapability(deps, authorization.FeedbackModerate, handleListFeedbackComments(deps)))
-	mux.HandleFunc("PATCH /v1/feedback/items/{id}/status", requireCapability(deps, authorization.FeedbackModerate, handleSetFeedbackStatus(deps)))
-	mux.HandleFunc("POST /v1/feedback/items/{id}/votes", requireCapability(deps, authorization.FeedbackModerate, handleVoteFeedbackItem(deps)))
-	mux.HandleFunc("POST /v1/feedback/items/{id}/comments", requireCapability(deps, authorization.FeedbackModerate, handleAddFeedbackComment(deps)))
+	mux.HandleFunc("PATCH /v1/feedback/items/{id}/status", requireCapability(deps, authorization.FeedbackModerate, idempotent(handleSetFeedbackStatus(deps))))
+	mux.HandleFunc("POST /v1/feedback/items/{id}/votes", requireCapability(deps, authorization.FeedbackModerate, idempotent(handleVoteFeedbackItem(deps))))
+	mux.HandleFunc("POST /v1/feedback/items/{id}/comments", requireCapability(deps, authorization.FeedbackModerate, idempotent(handleAddFeedbackComment(deps))))
 
 	mux.HandleFunc("GET /v1/public/feedback/{workspaceID}/boards", handlePublicFeedbackBoards(deps))
 	mux.HandleFunc("GET /v1/public/feedback/{workspaceID}/boards/{slug}/items", handlePublicFeedbackItems(deps))
