@@ -1,5 +1,4 @@
 import {
-  Badge,
   Button,
   Callout,
   Card,
@@ -9,17 +8,13 @@ import {
   Page,
   PageBody,
   PageHeader,
-  Progress,
   Section,
   Tabs,
   TabsContent,
   TabsList,
-  formatBytes,
-  formatRelativeShort,
 } from "@hubchat/shared";
 import { Download, Upload } from "lucide-react";
 import { useState } from "react";
-import { NOW } from "../../data/fixtures";
 
 const IMPORTERS = [
   { key: "customers", label: "Customers", detail: "CSV with email, name, external ID, and any declared attributes." },
@@ -71,17 +66,8 @@ export default function ImportExport() {
             <Section title="In progress">
               <Card>
                 <CardBody>
-                  <div className="mb-2 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm text-fg">Full workspace archive</p>
-                      <p className="text-xs text-fg-muted">
-                        Started {formatRelativeShort("2026-07-26T13:22:00Z", NOW)} ago ·{" "}
-                        {formatBytes(184_320_000)} so far
-                      </p>
-                    </div>
-                    <Badge tone="warning">Running</Badge>
-                  </div>
-                  <Progress value={0.62} label="Export progress" />
+                  <p className="text-sm text-fg">No export jobs are currently running.</p>
+                  <p className="mt-1 text-xs text-fg-muted">New exports will appear here with their verified row counts, attachment manifest, checksums, and expiry.</p>
                 </CardBody>
               </Card>
             </Section>

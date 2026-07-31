@@ -1,5 +1,6 @@
 import {
   Badge,
+  ApiError,
   Button,
   Callout,
   Card,
@@ -15,13 +16,15 @@ import {
   Toolbar,
   Tooltip,
   formatRelativeShort,
+  api,
+  useMutation,
+  useQuery,
   type BadgeTone,
   type Column,
   type Job,
 } from "@hubchat/shared";
 import { Activity, RotateCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { NOW, jobs } from "../../data/fixtures";
 
 const STATE: Record<Job["state"], { label: string; tone: BadgeTone }> = {
   pending: { label: "Queued", tone: "neutral" },
@@ -34,9 +37,11 @@ const STATE: Record<Job["state"], { label: string; tone: BadgeTone }> = {
 /** Background job inspection (§8.7). */
 export default function Jobs() {
   const [filter, setFilter] = useState<"all" | Job["state"]>("all");
-
-  const rows = jobs.filter((job) => filter === "all" || job.state === filter);
-  const dead = jobs.filter((job) => job.state === "dead").length;
+  const query = useQuery<{ data: Job[] }>(["jobs", "all"], (signal) => api.get("/jobs", { signal }));
+  const retry = useMutation<string, unknown>((id) => api.post(`/jobs/${encodeURIComponent(id)}/retry`), { invalidates: [["jobs", filter], ["jobs", "all"]] });
+  const allRows = query.data?.data ?? [];
+  const rows = allRows.filter((job) => filter === "all" || job.state === filter);
+  const dead = allRows.filter((job) => job.state === "dead").length;
 
   const columns: Column<Job>[] = [
     {
@@ -80,7 +85,7 @@ export default function Jobs() {
       width: "100px",
       numeric: true,
       cell: (job) => (
-        <span className="text-xs text-fg-muted">{formatRelativeShort(job.scheduled_at, NOW)}</span>
+        <span className="text-xs text-fg-muted">{formatRelativeShort(job.scheduled_at)}</span>
       ),
       sortable: true,
     },
@@ -116,23 +121,23 @@ export default function Jobs() {
           </Callout>
         )}
 
-        <Section>
+        {query.isError ? <EmptyState icon={Activity} title="Job queue unavailable" description={query.error instanceof ApiError ? query.error.message : "Try again in a moment."} action={<Button variant="secondary" size="sm" onClick={query.refetch}>Try again</Button>} /> : <Section>
           <Card>
             <CardBody className="grid gap-6 sm:grid-cols-4">
               <Metric
                 label="Queue depth"
-                value={jobs.filter((job) => job.state === "pending").length}
+                value={allRows.filter((job) => job.state === "pending").length}
                 higherIsBetter={false}
                 definition="Jobs waiting to be leased by a worker. A steadily rising depth means the worker cannot keep up."
               />
               <Metric
                 label="Running"
-                value={jobs.filter((job) => job.state === "running").length}
+                value={allRows.filter((job) => job.state === "running").length}
                 definition="Jobs currently leased and executing."
               />
               <Metric
                 label="Failed (24h)"
-                value={jobs.filter((job) => job.state === "failed").length}
+                value={allRows.filter((job) => job.state === "failed").length}
                 higherIsBetter={false}
                 definition="Jobs that errored and are awaiting a retry."
               />
@@ -144,7 +149,7 @@ export default function Jobs() {
               />
             </CardBody>
           </Card>
-        </Section>
+        </Section>}
 
         <Toolbar
           className="rounded-t-lg border border-b-0 border-line"
@@ -163,8 +168,8 @@ export default function Jobs() {
             />
           }
           trailing={
-            <Button variant="secondary" size="sm" leading={<RotateCcw />}>
-              Retry all dead
+            <Button variant="secondary" size="sm" leading={<RotateCcw />} disabled={retry.isPending} onClick={() => { rows.filter((job) => job.state === "dead").forEach((job) => void retry.mutate(job.id)); }}>
+              Retry dead jobs
             </Button>
           }
         />
@@ -179,8 +184,8 @@ export default function Jobs() {
               rowActions={(job) =>
                 job.state === "failed" || job.state === "dead" ? (
                   <div className="flex gap-0.5">
-                    <Tooltip content="Retry now">
-                      <Button variant="ghost" size="xs" iconOnly aria-label="Retry" leading={<RotateCcw />} />
+                      <Tooltip content="Retry now">
+                      <Button variant="ghost" size="xs" iconOnly aria-label="Retry" leading={<RotateCcw />} onClick={() => void retry.mutate(job.id)} />
                     </Tooltip>
                     <Tooltip content="Discard">
                       <Button variant="ghost" size="xs" iconOnly aria-label="Discard" leading={<Trash2 />} />
