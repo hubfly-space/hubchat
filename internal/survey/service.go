@@ -8,13 +8,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/hubchat/hubchat/internal/auth"
 	"github.com/hubchat/hubchat/internal/database"
 	"github.com/hubchat/hubchat/internal/ids"
+	"github.com/hubchat/hubchat/internal/jobs"
 )
 
 var (
@@ -29,7 +32,16 @@ var (
 var surveyTypes = map[string]bool{"csat": true, "ces": true, "nps": true, "custom": true}
 var questionTypes = map[string]bool{"star": true, "stars": true, "number": true, "emoji": true, "choice": true, "multi_choice": true, "text": true, "boolean": true}
 
-type Service struct{ pool *database.Pool }
+type Options struct {
+	Jobs      *jobs.Client
+	PublicURL *url.URL
+}
+
+type Service struct {
+	pool      *database.Pool
+	jobs      *jobs.Client
+	publicURL *url.URL
+}
 
 type Question struct {
 	ID        string         `json:"id"`
@@ -117,7 +129,14 @@ type Summary struct {
 	Distribution  map[string]int64 `json:"distribution"`
 }
 
-func New(pool *database.Pool) *Service { return &Service{pool: pool} }
+func New(pool *database.Pool, options ...Options) *Service {
+	service := &Service{pool: pool}
+	if len(options) > 0 {
+		service.jobs = options[0].Jobs
+		service.publicURL = options[0].PublicURL
+	}
+	return service
+}
 
 func (s *Service) Create(ctx context.Context, workspaceID string, input Input) (*Survey, error) {
 	name := strings.TrimSpace(input.Name)
@@ -205,6 +224,157 @@ func (s *Service) SetEnabled(ctx context.Context, workspaceID, id string, enable
 	return s.Get(ctx, workspaceID, id)
 }
 
+// NotifyTicketResolution creates one durable, one-time invitation for every
+// enabled email survey that matches the ticket lifecycle event. The pending
+// response and email job are committed together, so a worker retry cannot
+// send a link for a response that was not recorded.
+func (s *Service) NotifyTicketResolution(ctx context.Context, workspaceID, ticketID, sourceEventID, status string) error {
+	if s.jobs == nil || strings.TrimSpace(sourceEventID) == "" {
+		return nil
+	}
+	var customerID, email, name, number, title, agentID string
+	err := s.pool.QueryRow(ctx, `
+		SELECT c.id, NULLIF(c.email::text,''), coalesce(c.name,''),
+		       t.prefix || '-' || t.number::text, t.title, coalesce(t.assignee_id,'')
+		FROM tickets t
+		JOIN customers c ON c.id=t.customer_id AND c.workspace_id=t.workspace_id
+		LEFT JOIN customer_notification_preferences preferences
+		  ON preferences.customer_id=c.id AND preferences.workspace_id=c.workspace_id
+		WHERE t.workspace_id=$1 AND t.id=$2
+		  AND NULLIF(c.email::text,'') IS NOT NULL
+		  AND coalesce(preferences.surveys,true)
+	`, workspaceID, ticketID).Scan(&customerID, &email, &name, &number, &title, &agentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("survey: resolve ticket customer: %w", err)
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT id,name,delivery,trigger,anonymous
+		FROM surveys
+		WHERE workspace_id=$1 AND enabled
+		  AND (expires_at IS NULL OR expires_at > now())
+		  AND delivery @> ARRAY['email']::text[]
+		ORDER BY created_at,id
+	`, workspaceID)
+	if err != nil {
+		return fmt.Errorf("survey: list delivery rules: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item struct {
+			ID        string
+			Name      string
+			Delivery  []string
+			Trigger   []byte
+			Anonymous bool
+		}
+		if err := rows.Scan(&item.ID, &item.Name, &item.Delivery, &item.Trigger, &item.Anonymous); err != nil {
+			return err
+		}
+		var trigger map[string]any
+		if err := json.Unmarshal(item.Trigger, &trigger); err != nil {
+			return fmt.Errorf("survey: decode trigger: %w", err)
+		}
+		if !triggerMatchesResolution(trigger, status) {
+			continue
+		}
+		if err := s.issueInvitation(ctx, workspaceID, ticketID, sourceEventID, status, item.ID, item.Name, item.Anonymous, customerID, email, name, number, title, agentID); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+func triggerMatchesResolution(trigger map[string]any, status string) bool {
+	event, _ := trigger["event"].(string)
+	if event == "" {
+		event, _ = trigger["on"].(string)
+	}
+	if event == "" {
+		event = "ticket.resolved"
+	}
+	switch event {
+	case "ticket.resolved":
+		return status == "resolved"
+	case "ticket.closed":
+		return status == "closed"
+	case "ticket.status_changed", "ticket.state_changed":
+		return status == "resolved" || status == "closed"
+	default:
+		return false
+	}
+}
+
+type surveyEmailPayload struct {
+	To          string `json:"to"`
+	Subject     string `json:"subject"`
+	Body        string `json:"body"`
+	WorkspaceID string `json:"workspace_id"`
+}
+
+func (s *Service) issueInvitation(ctx context.Context, workspaceID, ticketID, sourceEventID, status, surveyID, surveyName string, anonymous bool, customerID, email, name, number, title, agentID string) error {
+	token, err := auth.NewToken()
+	if err != nil {
+		return fmt.Errorf("survey: create invitation token: %w", err)
+	}
+	link := s.surveyLink(workspaceID, surveyID, token)
+	subject := "How was your support experience?"
+	if strings.TrimSpace(surveyName) != "" {
+		subject = surveyName
+	}
+	body := fmt.Sprintf("Hi %s,\n\nWe recently marked ticket %s (%s) as %s. Would you take a moment to tell us how the support experience went?\n\nShare your feedback: %s\n\nThank you,\nHubchat", strings.TrimSpace(name), number, title, strings.ReplaceAll(status, "_", " "), link)
+	storedCustomerID := customerID
+	if anonymous {
+		storedCustomerID = ""
+	}
+
+	return database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		var responseID string
+		err := tx.QueryRow(ctx, `
+			INSERT INTO survey_responses
+				(id,workspace_id,survey_id,customer_id,ticket_id,agent_id,token_hash,sent_at,source_event_id)
+			VALUES($1,$2,$3,$4,$5,NULLIF($6,''),$7,now(),$8)
+			ON CONFLICT (workspace_id,survey_id,source_event_id) DO NOTHING
+			RETURNING id
+		`, ids.New(ids.PrefixSurveyResponse), workspaceID, surveyID, storedCustomerID, ticketID, agentID, auth.HashToken(token), sourceEventID).Scan(&responseID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("survey: create invitation: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE surveys SET sent_count=sent_count+1,updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, surveyID); err != nil {
+			return fmt.Errorf("survey: count invitation: %w", err)
+		}
+		if _, err := jobs.EnqueueTx(ctx, tx, jobs.Spec{
+			WorkspaceID: workspaceID,
+			Queue:       "email",
+			Type:        "email.send",
+			Payload:     surveyEmailPayload{To: email, Subject: subject, Body: body, WorkspaceID: workspaceID},
+			DedupeKey:   "survey-email:" + sourceEventID + ":" + surveyID + ":" + customerID,
+		}); err != nil && !errors.Is(err, jobs.ErrDuplicate) {
+			return fmt.Errorf("survey: queue invitation: %w", err)
+		}
+		return nil
+	})
+}
+
+func (s *Service) surveyLink(workspaceID, surveyID, token string) string {
+	path := "/portal/survey/" + url.PathEscape(workspaceID) + "/" + url.PathEscape(surveyID)
+	if s.publicURL == nil {
+		return path + "?token=" + url.QueryEscape(token)
+	}
+	base := *s.publicURL
+	base.Path = strings.TrimRight(base.Path, "/") + path
+	query := base.Query()
+	query.Set("token", token)
+	base.RawQuery = query.Encode()
+	return base.String()
+}
+
 func (s *Service) Submit(ctx context.Context, workspaceID, id, customerID string, input ResponseInput) (*Response, error) {
 	survey, err := s.Get(ctx, workspaceID, id)
 	if err != nil {
@@ -222,24 +392,36 @@ func (s *Service) Submit(ctx context.Context, workspaceID, id, customerID string
 	}
 	var response Response
 	response.ID = ids.New(ids.PrefixSurveyResponse)
+	storedCustomerID := customerID
+	if survey.Anonymous {
+		storedCustomerID = ""
+	}
 	err = database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if customerID != "" {
-			var exists bool
-			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM survey_responses WHERE workspace_id=$1 AND survey_id=$2 AND customer_id=$3 AND submitted_at IS NOT NULL)`, workspaceID, id, customerID).Scan(&exists); err != nil {
-				return err
-			}
-			if exists {
-				return ErrAlreadyResponded
-			}
-		}
 		var tokenHash []byte
 		if strings.TrimSpace(input.Token) != "" {
-			sum := sha256.Sum256([]byte(input.Token))
-			tokenHash = sum[:]
+			tokenHash = auth.HashToken(input.Token)
 		}
+		responseCustomerID := storedCustomerID
+		pending := false
 		if len(tokenHash) > 0 {
+			var pendingCustomerID string
+			err := tx.QueryRow(ctx, `
+				SELECT id,coalesce(customer_id,'')
+				FROM survey_responses
+				WHERE workspace_id=$1 AND survey_id=$2 AND token_hash=$3 AND submitted_at IS NULL
+				FOR UPDATE
+			`, workspaceID, id, tokenHash).Scan(&response.ID, &pendingCustomerID)
+			if err == nil {
+				pending = true
+				responseCustomerID = pendingCustomerID
+			} else if !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+		}
+		storedCustomerID = responseCustomerID
+		if !pending && responseCustomerID != "" {
 			var exists bool
-			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM survey_responses WHERE token_hash=$1)`, tokenHash).Scan(&exists); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM survey_responses WHERE workspace_id=$1 AND survey_id=$2 AND customer_id=$3 AND submitted_at IS NOT NULL)`, workspaceID, id, responseCustomerID).Scan(&exists); err != nil {
 				return err
 			}
 			if exists {
@@ -247,8 +429,8 @@ func (s *Service) Submit(ctx context.Context, workspaceID, id, customerID string
 			}
 		}
 		var customer any
-		if customerID != "" {
-			customer = customerID
+		if responseCustomerID != "" {
+			customer = responseCustomerID
 		}
 		var conversation any
 		if input.ConversationID != "" {
@@ -262,7 +444,11 @@ func (s *Service) Submit(ctx context.Context, workspaceID, id, customerID string
 		if input.AgentID != "" {
 			agent = input.AgentID
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO survey_responses(id,workspace_id,survey_id,customer_id,conversation_id,ticket_id,agent_id,score,comment,token_hash,submitted_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10,now())`, response.ID, workspaceID, id, customer, conversation, ticket, agent, score, strings.TrimSpace(input.Comment), tokenHash); err != nil {
+		if pending {
+			if _, err := tx.Exec(ctx, `UPDATE survey_responses SET score=$2,comment=NULLIF($3,''),submitted_at=now() WHERE workspace_id=$1 AND id=$4`, workspaceID, score, strings.TrimSpace(input.Comment), response.ID); err != nil {
+				return err
+			}
+		} else if _, err := tx.Exec(ctx, `INSERT INTO survey_responses(id,workspace_id,survey_id,customer_id,conversation_id,ticket_id,agent_id,score,comment,token_hash,submitted_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10,now())`, response.ID, workspaceID, id, customer, conversation, ticket, agent, score, strings.TrimSpace(input.Comment), tokenHash); err != nil {
 			return err
 		}
 		for _, question := range survey.Questions {
@@ -283,8 +469,8 @@ func (s *Service) Submit(ctx context.Context, workspaceID, id, customerID string
 	}
 	response.SurveyID, response.Score, response.Comment, response.Answers = id, score, strings.TrimSpace(input.Comment), input.Answers
 	response.SubmittedAt = timePtr(time.Now())
-	if customerID != "" {
-		response.CustomerID = &customerID
+	if storedCustomerID != "" {
+		response.CustomerID = &storedCustomerID
 	}
 	return &response, nil
 }

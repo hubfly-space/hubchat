@@ -66,6 +66,7 @@ const appRoutes: RouteObject[] = [
   { path: "kb/collections", element: page(() => import("../pages/kb/CollectionList")) },
   { path: "kb/articles/:articleId", element: page(() => import("../pages/kb/ArticleEditor")) },
   { path: "kb/search-analytics", element: page(() => import("../pages/kb/SearchAnalytics")) },
+  { path: "kb/changelog", element: page(() => import("../pages/content/ChangelogList")) },
 
   // ----------------------------------------------------------------- surveys
   { path: "surveys", element: page(() => import("../pages/surveys/SurveyList")) },
