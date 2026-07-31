@@ -1,128 +1,14 @@
-import {
-  Badge,
-  Button,
-  Card,
-  CardBody,
-  EmptyState,
-  Page,
-  PageBody,
-  PageHeader,
-  Section,
-  formatCompact,
-  formatRelativeShort,
-} from "@hubchat/shared";
-import { Eye, EyeOff, Lightbulb, Lock, MessageSquare, Plus, ThumbsUp } from "lucide-react";
+import { ApiError, Badge, Button, Card, CardBody, Dialog, DialogContent, DialogTrigger, EmptyState, Field, Input, Page, PageBody, PageHeader, QueryBoundary, Section, api, idempotencyKey, useMutation, useQuery, type FeedbackBoard } from "@hubchat/shared";
+import { Eye, EyeOff, Lightbulb, Lock, Plus } from "lucide-react";
 import { Link } from "react-router-dom";
-import { NOW, feedbackBoards, feedbackItems } from "../../data/fixtures";
+import { useState } from "react";
 
-const VISIBILITY = {
-  public: { label: "Public", tone: "success", icon: Eye },
-  private: { label: "Private", tone: "neutral", icon: Lock },
-  invite_only: { label: "Invite only", tone: "warning", icon: EyeOff },
-} as const;
+const VISIBILITY = { public: { label: "Public", tone: "success" as const, icon: Eye }, private: { label: "Private", tone: "neutral" as const, icon: Lock }, invite_only: { label: "Invite only", tone: "warning" as const, icon: EyeOff } };
 
-/** Feedback boards (§6.6). */
 export default function BoardList() {
-  return (
-    <Page>
-      <PageHeader
-        title="Feedback boards"
-        description="Structured product feedback with voting, moderation, and status updates — not a second inbox."
-        actions={
-          <Button variant="primary" size="sm" leading={<Plus />}>
-            New board
-          </Button>
-        }
-      />
-
-      <PageBody>
-        <Section>
-          {feedbackBoards.length === 0 ? (
-            <EmptyState
-              icon={Lightbulb}
-              title="No boards yet"
-              description="A board collects requests on one theme. Most teams start with a single public board and split it once volume justifies it."
-              action={
-                <Button variant="primary" size="sm" leading={<Plus />}>
-                  Create a board
-                </Button>
-              }
-            />
-          ) : (
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {feedbackBoards.map((board) => {
-                const visibility = VISIBILITY[board.visibility];
-                const VisibilityIcon = visibility.icon;
-                const topItems = feedbackItems
-                  .filter((item) => item.board_id === board.id)
-                  .sort((a, b) => b.vote_count - a.vote_count)
-                  .slice(0, 3);
-
-                return (
-                  <Card key={board.id} interactive className="p-0">
-                    <Link to={`/feedback/boards/${board.id}`} className="block">
-                      <CardBody>
-                        <div className="flex items-start justify-between gap-2">
-                          <h3 className="text-sm font-semibold text-fg">{board.name}</h3>
-                          <Badge tone={visibility.tone} leading={<VisibilityIcon />}>
-                            {visibility.label}
-                          </Badge>
-                        </div>
-
-                        <p className="mt-1 line-clamp-2 text-xs leading-normal text-fg-muted">
-                          {board.description}
-                        </p>
-
-                        <div className="mt-3 flex items-center gap-3 text-2xs tabular text-fg-muted">
-                          <span className="flex items-center gap-1">
-                            <Lightbulb aria-hidden="true" className="size-3" />
-                            {formatCompact(board.item_count)} items
-                          </span>
-                          {board.allow_voting && (
-                            <span className="flex items-center gap-1">
-                              <ThumbsUp aria-hidden="true" className="size-3" />
-                              voting
-                            </span>
-                          )}
-                          {board.allow_comments && (
-                            <span className="flex items-center gap-1">
-                              <MessageSquare aria-hidden="true" className="size-3" />
-                              comments
-                            </span>
-                          )}
-                        </div>
-
-                        {topItems.length > 0 && (
-                          <ul className="mt-3 space-y-1 border-t border-line-subtle pt-3">
-                            {topItems.map((item) => (
-                              <li
-                                key={item.id}
-                                className="flex items-center gap-2 text-xs text-fg-secondary"
-                              >
-                                <span className="w-8 shrink-0 text-right tabular text-fg-muted">
-                                  {item.vote_count}
-                                </span>
-                                <span className="min-w-0 flex-1 truncate">{item.title}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-
-                        <p className="mt-3 text-2xs text-fg-disabled">
-                          Created {formatRelativeShort(board.created_at, NOW)} ago ·{" "}
-                          {board.moderation === "none"
-                            ? "no moderation"
-                            : `${board.moderation}-moderation`}
-                        </p>
-                      </CardBody>
-                    </Link>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
-        </Section>
-      </PageBody>
-    </Page>
-  );
+  const query = useQuery<{ data: FeedbackBoard[] }>(["feedback-boards"], (signal) => api.get("/feedback/boards", { signal }));
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState(""); const [slug, setSlug] = useState(""); const [description, setDescription] = useState("");
+  const create = useMutation<{ name: string; slug: string; description: string }, FeedbackBoard>((input) => api.post("/feedback/boards", input, { idempotencyKey: idempotencyKey() }), { invalidates: [["feedback-boards"]], onSuccess: () => { setOpen(false); setName(""); setSlug(""); setDescription(""); } });
+  return <Page><PageHeader title="Feedback boards" description="Structured product feedback with voting, moderation, and status updates." actions={<Dialog open={open} onOpenChange={setOpen}><DialogTrigger asChild><Button variant="primary" size="sm" leading={<Plus />}>New board</Button></DialogTrigger><DialogContent title="Create feedback board" footer={<><Button variant="ghost" size="sm" onClick={() => setOpen(false)}>Cancel</Button><Button variant="primary" size="sm" loading={create.isPending} disabled={!name.trim() || !slug.trim()} onClick={() => void create.mutate({ name: name.trim(), slug: slug.trim().toLowerCase(), description }).catch(() => {})}>Create board</Button></>}><div className="space-y-4"><Field label="Name"><Input autoFocus value={name} onChange={(event) => { setName(event.target.value); if (!slug) setSlug(event.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")); }} /></Field><Field label="Slug"><Input mono value={slug} onChange={(event) => setSlug(event.target.value)} /></Field><Field label="Description"><Input value={description} onChange={(event) => setDescription(event.target.value)} /></Field>{Boolean(create.error) && <p className="text-sm text-danger">Could not create board.</p>}</div></DialogContent></Dialog>} /><PageBody><QueryBoundary query={query}>{() => <Section>{(query.data?.data ?? []).length === 0 ? <EmptyState icon={Lightbulb} title="No boards yet" description="Create a board to collect requests on one theme." /> : <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{(query.data?.data ?? []).map((board) => { const visibility = VISIBILITY[board.visibility]; const Icon = visibility.icon; return <Card key={board.id} interactive className="p-0"><Link to={`/feedback/boards/${board.id}`} className="block"><CardBody><div className="flex items-start justify-between gap-2"><h3 className="text-sm font-semibold text-fg">{board.name}</h3><Badge tone={visibility.tone} leading={<Icon />}>{visibility.label}</Badge></div><p className="mt-1 line-clamp-2 text-xs leading-normal text-fg-muted">{board.description || "No description"}</p><div className="mt-3 flex items-center gap-3 text-2xs tabular text-fg-muted"><span>{board.item_count} items</span>{board.allow_voting && <span>voting</span>}{board.allow_comments && <span>comments</span>}</div></CardBody></Link></Card>; })}</div>}{query.error instanceof ApiError && <p className="mt-3 text-sm text-danger">{query.error.message}</p>}</Section>}</QueryBoundary></PageBody></Page>;
 }

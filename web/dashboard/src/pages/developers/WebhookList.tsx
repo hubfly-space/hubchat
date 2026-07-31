@@ -1,131 +1,100 @@
 import {
+  ApiError,
   Badge,
   Button,
   Callout,
   Card,
   CardBody,
+  Checkbox,
+  Dialog,
+  DialogContent,
+  DialogTrigger,
   EmptyState,
+  Field,
+  Input,
   Page,
   PageBody,
   PageHeader,
+  QueryBoundary,
   Section,
-  Sparkline,
   Switch,
-  Tooltip,
   formatCompact,
-  formatRelativeShort,
+  idempotencyKey,
+  api,
+  useMutation,
+  useQuery,
+  type WebhookEndpoint,
 } from "@hubchat/shared";
 import { AlertTriangle, Plus, Webhook } from "lucide-react";
 import { Link } from "react-router-dom";
-import { NOW, analytics, webhookEndpoints } from "../../data/fixtures";
+import { useState } from "react";
 
-/** Webhook endpoints (§6.16). */
+const EVENTS = [
+  "conversation.created", "conversation.assigned", "conversation.resolved", "message.created",
+  "ticket.created", "ticket.updated", "ticket.sla_breached", "customer.created", "customer.updated",
+  "feedback.created", "feedback.status_changed", "survey.response_created",
+];
+
 export default function WebhookList() {
-  const disabled = webhookEndpoints.filter((endpoint) => endpoint.auto_disabled_at);
+  const query = useQuery<{ data: WebhookEndpoint[] }>(["webhooks"], (signal) => api.get("/webhooks", { signal }));
+  const update = useMutation<{ id: string; enabled: boolean }, WebhookEndpoint>(
+    ({ id, enabled }) => { const endpoint = query.data?.data.find((item) => item.id === id); return api.patch(`/webhooks/${id}`, { url: endpoint?.url, description: endpoint?.description ?? "", events: endpoint?.events ?? [], enabled }); },
+    { invalidates: [["webhooks"]] },
+  );
+  const disabled = (query.data?.data ?? []).filter((endpoint) => endpoint.auto_disabled_at);
 
   return (
     <Page>
-      <PageHeader
-        title="Webhooks"
-        description="Signed, timestamped HTTP callbacks with retry, replay, and delivery history."
-        actions={
-          <Button variant="primary" size="sm" leading={<Plus />}>
-            New endpoint
-          </Button>
-        }
-      />
-
+      <PageHeader title="Webhooks" description="Signed, timestamped HTTP callbacks with retry, replay, and delivery history." actions={<CreateWebhook />} />
       <PageBody>
-        {disabled.length > 0 && (
-          <Callout
-            tone="danger"
-            className="mb-5"
-            icon={<AlertTriangle />}
-            title={`${disabled.length} endpoint disabled automatically`}
-          >
-            Hubchat stops delivering to an endpoint after six consecutive failures so a dead URL
-            does not clog the queue. Fix the endpoint, then re-enable and replay the missed window.
-          </Callout>
-        )}
-
-        <Section>
-          {webhookEndpoints.length === 0 ? (
-            <EmptyState
-              icon={Webhook}
-              title="No webhook endpoints"
-              description="Webhooks are how Hubchat tells your systems something happened, without them polling."
-            />
-          ) : (
-            <div className="space-y-3">
-              {webhookEndpoints.map((endpoint) => {
-                const total = endpoint.success_24h + endpoint.failure_24h;
-                const failureRate = total > 0 ? endpoint.failure_24h / total : 0;
-
-                return (
-                  <Card key={endpoint.id}>
-                    <CardBody>
-                      <div className="flex flex-wrap items-start gap-4">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Link
-                              to={`/developers/webhooks/${endpoint.id}`}
-                              className="truncate font-mono text-sm text-fg hover:underline"
-                            >
-                              {endpoint.url}
-                            </Link>
-                            {endpoint.auto_disabled_at && (
-                              <Tooltip
-                                content={`Disabled ${formatRelativeShort(endpoint.auto_disabled_at, NOW)} ago after repeated failures`}
-                              >
-                                <span>
-                                  <Badge tone="danger">Auto-disabled</Badge>
-                                </span>
-                              </Tooltip>
-                            )}
-                            {failureRate > 0.02 && !endpoint.auto_disabled_at && (
-                              <Badge tone="warning">
-                                {Math.round(failureRate * 100)}% failing
-                              </Badge>
-                            )}
-                          </div>
-
-                          {endpoint.description && (
-                            <p className="mt-1 text-xs text-fg-muted">{endpoint.description}</p>
-                          )}
-
-                          <div className="mt-2 flex flex-wrap gap-1">
-                            {endpoint.events.map((event) => (
-                              <Badge key={event} tone="neutral" variant="outline">
-                                {event}
-                              </Badge>
-                            ))}
-                          </div>
-
-                          <p className="mt-2 text-2xs tabular text-fg-disabled">
-                            {formatCompact(endpoint.success_24h)} delivered ·{" "}
-                            {endpoint.failure_24h} failed in 24h · secret {endpoint.secret_hint}
-                          </p>
+        <QueryBoundary query={query}>
+          {() => (
+            <>
+              {disabled.length > 0 && <Callout tone="danger" className="mb-5" icon={<AlertTriangle />} title={`${disabled.length} endpoint disabled automatically`}>
+                Hubchat paused delivery after six consecutive failures. Fix the receiving service, re-enable the endpoint, then replay the failed deliveries.
+              </Callout>}
+              <Section>
+                {(query.data?.data ?? []).length === 0 ? <EmptyState icon={Webhook} title="No webhook endpoints" description="Webhooks tell your systems when something happens in Hubchat." /> : <div className="space-y-3">
+                  {(query.data?.data ?? []).map((endpoint) => {
+                    const total = endpoint.success_24h + endpoint.failure_24h;
+                    const failureRate = total > 0 ? endpoint.failure_24h / total : 0;
+                    return <Card key={endpoint.id}><CardBody><div className="flex flex-wrap items-start gap-4">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2"><Link to={`/developers/webhooks/${endpoint.id}`} className="truncate font-mono text-sm text-fg hover:underline">{endpoint.url}</Link>
+                          {endpoint.auto_disabled_at ? <Badge tone="danger">Auto-disabled</Badge> : !endpoint.enabled ? <Badge tone="neutral">Paused</Badge> : failureRate > 0.02 ? <Badge tone="warning">{Math.round(failureRate * 100)}% failing</Badge> : null}
                         </div>
-
-                        <div className="flex shrink-0 items-center gap-3">
-                          <Sparkline
-                            points={analytics.conversations.slice(-14)}
-                            tone={endpoint.failure_24h > 0 ? 6 : 4}
-                          />
-                          <Switch
-                            defaultChecked={endpoint.enabled}
-                            aria-label={`Enable ${endpoint.url}`}
-                          />
-                        </div>
+                        {endpoint.description && <p className="mt-1 text-xs text-fg-muted">{endpoint.description}</p>}
+                        <div className="mt-2 flex flex-wrap gap-1">{endpoint.events.length === 0 ? <Badge tone="neutral" variant="outline">All events</Badge> : endpoint.events.map((event) => <Badge key={event} tone="neutral" variant="outline">{event}</Badge>)}</div>
+                        <p className="mt-2 text-2xs tabular text-fg-disabled">{formatCompact(endpoint.success_24h)} delivered · {endpoint.failure_24h} failed in 24h · secret {endpoint.secret_hint}</p>
                       </div>
-                    </CardBody>
-                  </Card>
-                );
-              })}
-            </div>
+                      <Switch checked={endpoint.enabled} onCheckedChange={(checked) => void update.mutate({ id: endpoint.id, enabled: checked }).catch(() => {})} aria-label={`Enable ${endpoint.url}`} />
+                    </div></CardBody></Card>;
+                  })}
+                </div>}
+              </Section>
+              {query.isError && <p className="mt-3 text-sm text-danger">{query.error instanceof ApiError ? query.error.message : "Could not load webhooks."}</p>}
+            </>
           )}
-        </Section>
+        </QueryBoundary>
       </PageBody>
     </Page>
   );
+}
+
+function CreateWebhook() {
+  const [open, setOpen] = useState(false);
+  const [url, setURL] = useState("");
+  const [description, setDescription] = useState("");
+  const [events, setEvents] = useState<string[]>(["message.created"]);
+  const [secret, setSecret] = useState<string | null>(null);
+  const create = useMutation<{ url: string; description: string; events: string[] }, { secret: string }>(
+    (input) => api.post("/webhooks", input, { idempotencyKey: idempotencyKey() }),
+    { invalidates: [["webhooks"]], onSuccess: (result) => setSecret(result.secret) },
+  );
+  return <Dialog open={open} onOpenChange={(value) => { setOpen(value); if (!value) { setSecret(null); create.reset(); } }}>
+    <DialogTrigger asChild><Button variant="primary" size="sm" leading={<Plus />}>New endpoint</Button></DialogTrigger>
+    <DialogContent title={secret ? "Webhook endpoint created" : "New webhook endpoint"} description={secret ? "Copy the signing secret now. It will not be shown again." : "Choose the events this endpoint should receive."} size="lg" footer={<><Button variant="ghost" size="sm" onClick={() => setOpen(false)}>{secret ? "Done" : "Cancel"}</Button>{!secret && <Button variant="primary" size="sm" loading={create.isPending} disabled={!url.trim()} onClick={() => void create.mutate({ url, description, events }).catch(() => {})}>Create endpoint</Button>}</>}>
+      {secret ? <Callout tone="success"><code className="break-all font-mono text-xs">{secret}</code></Callout> : <div className="space-y-4"><Field label="Endpoint URL" description="HTTPS is recommended for production."><Input value={url} onChange={(event) => setURL(event.target.value)} placeholder="https://example.com/hubchat" autoFocus /></Field><Field label="Description"><Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Production events" /></Field><Field label="Events"><div className="grid gap-2 sm:grid-cols-2">{EVENTS.map((event) => <Checkbox key={event} label={<span className="font-mono text-xs">{event}</span>} checked={events.includes(event)} onCheckedChange={(checked) => setEvents((current) => checked === true ? [...new Set([...current, event])] : current.filter((item) => item !== event))} />)}</div></Field>{Boolean(create.error) && <Callout tone="danger">{create.error instanceof Error ? create.error.message : "Could not create endpoint."}</Callout>}</div>}
+    </DialogContent>
+  </Dialog>;
 }
