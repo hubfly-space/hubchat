@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/automation"
@@ -26,12 +27,29 @@ func registerAutomationRoutes(mux *http.ServeMux, deps Deps) {
 }
 func handleListAutomationRules(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := deps.Automation.List(r.Context(), actorFromRequest(r).WorkspaceID)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed automation cursor.")
+			return
+		}
+		var beforePosition *int
+		if !cursor.IsZero() {
+			position, parseErr := strconv.Atoi(cursor.Value)
+			if parseErr != nil || cursor.At.IsZero() {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed automation cursor.")
+				return
+			}
+			beforePosition = &position
+		}
+		items, err := deps.Automation.ListPage(r.Context(), actorFromRequest(r).WorkspaceID, beforePosition, cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			writeAutomationInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		page := NewPage(items, limit, func(item automation.Rule) Cursor {
+			return Cursor{Value: strconv.Itoa(item.Position), At: item.CreatedAt, ID: item.ID}
+		})
+		httpserver.WriteJSON(w, http.StatusOK, page)
 	}
 }
 func handleCreateAutomationRule(deps Deps) http.HandlerFunc {

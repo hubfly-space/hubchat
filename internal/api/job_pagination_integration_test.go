@@ -23,7 +23,7 @@ func TestJobListAndSummaryAreWorkspaceScoped(t *testing.T) {
 			('wrk_jobs_b','Jobs B','jobs-b');
 		INSERT INTO jobs (id,workspace_id,queue,type,state,scheduled_at,created_at) VALUES
 			('job_a1','wrk_jobs_a','default','a.newest','pending',now(), '2026-07-31T12:00:00Z'),
-			('job_a2','wrk_jobs_a','default','a.failed','failed',now(), '2026-07-30T12:00:00Z'),
+			('job_a2','wrk_jobs_a','default','a.failed','failed',now(), now() - interval '1 hour'),
 			('job_a3','wrk_jobs_a','default','a.running','running',now(), '2026-07-29T12:00:00Z'),
 			('job_b1','wrk_jobs_b','default','b.dead','dead',now(), '2026-07-31T13:00:00Z')
 	`); err != nil {
