@@ -200,6 +200,33 @@ func (s *Service) GetPublic(ctx context.Context, workspaceID, slug string) (*For
 	return item, err
 }
 
+// ListPublic returns only enabled public forms for an embeddable surface. It
+// intentionally does not expose authenticated forms or internal routing data.
+func (s *Service) ListPublic(ctx context.Context, workspaceID string) ([]Form, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, workspace_id, name, slug, description, purpose, routing, confirmation,
+		       access, spam_protection, max_submissions, submission_count, enabled, created_at, updated_at
+		FROM forms WHERE workspace_id=$1 AND enabled AND access='public' ORDER BY name, id
+	`, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("form: list public: %w", err)
+	}
+	defer rows.Close()
+	items := make([]Form, 0)
+	for rows.Next() {
+		item, scanErr := scanForm(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		item.Fields, scanErr = s.fields(ctx, workspaceID, item.ID)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
+}
+
 func (s *Service) Create(ctx context.Context, workspaceID string, input CreateInput) (*Form, error) {
 	if err := validateDefinition(input); err != nil {
 		return nil, err

@@ -130,6 +130,7 @@ type Record struct {
 	EntityID    string          `json:"entity_id,omitempty"`
 	ActorType   ActorType       `json:"-"`
 	ActorID     string          `json:"-"`
+	CausationID string          `json:"causation_id,omitempty"`
 	OccurredAt  time.Time       `json:"occurred_at"`
 	Data        json.RawMessage `json:"data"`
 }
@@ -194,6 +195,7 @@ func (l *Log) Append(ctx context.Context, tx pgx.Tx, event Event) (*Record, erro
 		EntityID:    event.EntityID,
 		ActorType:   event.ActorType,
 		ActorID:     event.ActorID,
+		CausationID: event.CausationID,
 		Data:        payload,
 	}
 
@@ -264,7 +266,7 @@ func (l *Log) Since(ctx context.Context, workspaceID string, afterSequence int64
 	rows, err := l.pool.Query(ctx, `
 		SELECT id, workspace_id, sequence, type,
 		       coalesce(entity_type, ''), coalesce(entity_id, ''),
-		       actor_type, coalesce(actor_id, ''), data, occurred_at
+		       actor_type, coalesce(actor_id, ''), data, coalesce(causation_id, ''), occurred_at
 		FROM workspace_events
 		WHERE workspace_id = $1 AND sequence > $2
 		ORDER BY sequence
@@ -313,7 +315,7 @@ func (l *Log) ForEntity(ctx context.Context, workspaceID, entityType, entityID s
 	rows, err := l.pool.Query(ctx, `
 		SELECT id, workspace_id, sequence, type,
 		       coalesce(entity_type, ''), coalesce(entity_id, ''),
-		       actor_type, coalesce(actor_id, ''), data, occurred_at
+		       actor_type, coalesce(actor_id, ''), data, coalesce(causation_id, ''), occurred_at
 		FROM workspace_events
 		WHERE workspace_id = $1 AND entity_type = $2 AND entity_id = $3
 		ORDER BY sequence DESC
@@ -336,7 +338,7 @@ func (l *Log) Get(ctx context.Context, workspaceID, id string) (*Record, error) 
 	rows, err := l.pool.Query(ctx, `
 		SELECT id, workspace_id, sequence, type,
 		       coalesce(entity_type, ''), coalesce(entity_id, ''),
-		       actor_type, coalesce(actor_id, ''), data, occurred_at
+		       actor_type, coalesce(actor_id, ''), data, coalesce(causation_id, ''), occurred_at
 		FROM workspace_events
 		WHERE workspace_id = $1 AND id = $2
 	`, workspaceID, id)
@@ -362,7 +364,7 @@ func scanRecords(rows pgx.Rows) ([]Record, error) {
 		if err := rows.Scan(
 			&r.ID, &r.WorkspaceID, &r.Sequence, &r.Type,
 			&r.EntityType, &r.EntityID, &r.ActorType, &r.ActorID,
-			&r.Data, &r.OccurredAt,
+			&r.Data, &r.CausationID, &r.OccurredAt,
 		); err != nil {
 			return nil, fmt.Errorf("events: scan: %w", err)
 		}

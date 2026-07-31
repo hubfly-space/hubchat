@@ -2,11 +2,18 @@ package api
 
 import (
 	"errors"
+	"fmt"
+	"io"
+	"mime"
 	"net/http"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/conversation"
+	"github.com/hubchat/hubchat/internal/file"
+	formmodule "github.com/hubchat/hubchat/internal/form"
 	"github.com/hubchat/hubchat/internal/httpserver"
 	"github.com/hubchat/hubchat/internal/widget"
 )
@@ -64,6 +71,12 @@ func registerWidgetRoutes(mux *http.ServeMux, deps Deps) {
 
 	mux.HandleFunc("POST /v1/widget/events", withPublicCORS(handleWidgetTrack(deps)))
 	mux.HandleFunc("OPTIONS /v1/widget/events", corsPreflight)
+	mux.HandleFunc("GET /v1/widget/forms", withPublicCORS(handleWidgetListForms(deps)))
+	mux.HandleFunc("OPTIONS /v1/widget/forms", corsPreflight)
+	mux.HandleFunc("GET /v1/widget/forms/{slug}", withPublicCORS(handleWidgetGetForm(deps)))
+	mux.HandleFunc("OPTIONS /v1/widget/forms/{slug}", corsPreflight)
+	mux.HandleFunc("POST /v1/widget/forms/{slug}/submissions", withPublicCORS(handleWidgetSubmitForm(deps)))
+	mux.HandleFunc("OPTIONS /v1/widget/forms/{slug}/submissions", corsPreflight)
 
 	mux.HandleFunc("POST /v1/widget/conversations", withPublicCORS(handleWidgetStartConversation(deps)))
 	mux.HandleFunc("OPTIONS /v1/widget/conversations", corsPreflight)
@@ -71,6 +84,9 @@ func registerWidgetRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/widget/conversations/{id}/messages", withPublicCORS(handleWidgetListMessages(deps)))
 	mux.HandleFunc("POST /v1/widget/conversations/{id}/messages", withPublicCORS(handleWidgetPostMessage(deps)))
 	mux.HandleFunc("OPTIONS /v1/widget/conversations/{id}/messages", corsPreflight)
+	mux.HandleFunc("POST /v1/widget/conversations/{id}/files", withPublicCORS(handleWidgetFileUpload(deps)))
+	mux.HandleFunc("OPTIONS /v1/widget/conversations/{id}/files", corsPreflight)
+	mux.HandleFunc("GET /v1/widget/conversations/{id}/files/{fileID}", withPublicCORS(handleWidgetFileDownload(deps)))
 }
 
 /* --------------------------------------------------------------- CORS */
@@ -485,6 +501,88 @@ func handleWidgetTrack(deps Deps) http.HandlerFunc {
 	}
 }
 
+func widgetFormRequest(r *http.Request) widgetVisitorRequest {
+	return widgetVisitorRequest{PublicKey: r.URL.Query().Get("key"), URL: r.URL.Query().Get("url"), Token: r.URL.Query().Get("token")}
+}
+
+func handleWidgetListForms(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		widgetRecord, err := deps.Widget.WidgetForOrigin(r.Context(), r.URL.Query().Get("key"), r.URL.Query().Get("url"), r.Header.Get("Origin"))
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		items, err := deps.Form.ListPublic(r.Context(), widgetRecord.WorkspaceID)
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		out := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			out = append(out, formJSON(item, false))
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+	}
+}
+
+func handleWidgetGetForm(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		widgetRecord, err := deps.Widget.WidgetForOrigin(r.Context(), r.URL.Query().Get("key"), r.URL.Query().Get("url"), r.Header.Get("Origin"))
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		item, err := deps.Form.GetPublic(r.Context(), widgetRecord.WorkspaceID, r.PathValue("slug"))
+		if err != nil {
+			writeWidgetError(w, r, formmodule.ErrNotFound)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, formJSON(*item, false))
+	}
+}
+
+type widgetFormSubmissionRequest struct {
+	widgetVisitorRequest
+	Values map[string]any `json:"values"`
+}
+
+func handleWidgetSubmitForm(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req widgetFormSubmissionRequest
+		if err := httpserver.DecodeJSON(r, &req); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed form submission.")
+			return
+		}
+		widgetRecord, err := deps.Widget.WidgetForOrigin(r.Context(), req.PublicKey, req.URL, r.Header.Get("Origin"))
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		var visitor *widget.Visitor
+		var issuedToken string
+		if strings.TrimSpace(req.Token) != "" {
+			visitor, err = deps.Widget.ResolveVisitor(r.Context(), widgetRecord.WorkspaceID, req.Token)
+		}
+		if visitor == nil || err != nil {
+			issuedToken, visitor, err = deps.Widget.IssueVisitor(r.Context(), widgetRecord.WorkspaceID)
+		}
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		input := formmodule.SubmissionInput{Values: req.Values, VisitorID: visitor.ID, SourceURL: req.URL, IP: clientIP(r), UserAgent: r.UserAgent()}
+		if visitor.CustomerID != nil {
+			input.CustomerID = *visitor.CustomerID
+		}
+		id, err := deps.Form.Submit(r.Context(), widgetRecord.WorkspaceID, r.PathValue("slug"), input)
+		if err != nil {
+			writeFormError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, map[string]any{"id": id, "status": "accepted", "token": issuedToken})
+	}
+}
+
 type widgetStartConversationRequest struct {
 	widgetVisitorRequest
 	Body string `json:"body"`
@@ -495,6 +593,24 @@ func widgetMessageJSON(m conversation.Message) map[string]any {
 		"id": m.ID, "kind": m.Kind, "author_type": m.AuthorType, "author_name": m.AuthorName,
 		"body": m.Body, "sequence": m.Sequence, "created_at": m.CreatedAt,
 	}
+}
+
+func widgetMessageJSONWithAttachments(r *http.Request, deps Deps, workspaceID string, m conversation.Message) map[string]any {
+	out := widgetMessageJSON(m)
+	attachments := []map[string]any{}
+	if deps.File != nil {
+		if records, err := deps.File.MessageAttachments(r.Context(), workspaceID, m.ID); err == nil {
+			for _, record := range records {
+				attachments = append(attachments, map[string]any{
+					"id": record.ID, "name": record.Name, "mime_type": record.MIMEType,
+					"size_bytes": record.SizeBytes,
+					"url":        "/api/v1/widget/conversations/" + m.ConversationID + "/files/" + record.ID,
+				})
+			}
+		}
+	}
+	out["attachments"] = attachments
+	return out
 }
 
 func handleWidgetStartConversation(deps Deps) http.HandlerFunc {
@@ -532,14 +648,15 @@ func handleWidgetStartConversation(deps Deps) http.HandlerFunc {
 			return
 		}
 		httpserver.WriteJSON(w, http.StatusCreated, map[string]any{
-			"conversation_id": conv.ID, "token": issuedToken, "message": widgetMessageJSON(*msg),
+			"conversation_id": conv.ID, "token": issuedToken, "message": widgetMessageJSONWithAttachments(r, deps, widgetRecord.WorkspaceID, *msg),
 		})
 	}
 }
 
 type widgetPostMessageRequest struct {
 	widgetVisitorRequest
-	Body string `json:"body"`
+	Body    string   `json:"body"`
+	FileIDs []string `json:"file_ids"`
 }
 
 func handleWidgetPostMessage(deps Deps) http.HandlerFunc {
@@ -560,7 +677,129 @@ func handleWidgetPostMessage(deps Deps) http.HandlerFunc {
 			writeWidgetError(w, r, err)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusCreated, widgetMessageJSON(*msg))
+		if deps.File != nil && len(req.FileIDs) > 0 {
+			if !widgetMessageBelongsToConversation(r, deps, workspaceID, msg.ID, r.PathValue("id")) {
+				httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, "The message attachment target is invalid.")
+				return
+			}
+			if err := deps.File.AttachToMessage(r.Context(), workspaceID, msg.ID, req.FileIDs); err != nil {
+				httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, "One or more attachments are not available.")
+				return
+			}
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, widgetMessageJSONWithAttachments(r, deps, workspaceID, *msg))
+	}
+}
+
+func handleWidgetFileUpload(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(2 << 20); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "The upload could not be read.")
+			return
+		}
+		req := widgetVisitorRequest{PublicKey: r.FormValue("public_key"), URL: r.FormValue("url"), Token: r.FormValue("token")}
+		workspaceID, visitor, err := resolveVisitorRequest(r, deps, req)
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		conversationID := r.PathValue("id")
+		if _, err := deps.Widget.Conversation(r.Context(), workspaceID, conversationID, visitor); err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		messageID := strings.TrimSpace(r.FormValue("message_id"))
+		if messageID == "" {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeValidationError, "The message attachment target is required.")
+			return
+		}
+		if !widgetMessageBelongsToConversation(r, deps, workspaceID, messageID, conversationID) {
+			httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, "The message attachment target is invalid.")
+			return
+		}
+		parts := r.MultipartForm.File["file"]
+		if len(parts) != 1 {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Upload exactly one file.")
+			return
+		}
+		part := parts[0]
+		opened, err := part.Open()
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "The upload could not be opened.")
+			return
+		}
+		defer opened.Close()
+		mimeType := part.Header.Get("Content-Type")
+		if mimeType == "" {
+			mimeType = mime.TypeByExtension(filepath.Ext(part.Filename))
+		}
+		created, err := deps.File.Create(r.Context(), workspaceID, file.UploadInput{Name: filepath.Base(part.Filename), MIMEType: mimeType, SizeBytes: part.Size, Body: opened, OwnerType: "conversation", OwnerID: conversationID, UploadedByType: "visitor", UploadedByID: visitor.ID})
+		if err != nil {
+			writeFileError(w, r, err)
+			return
+		}
+		if err := deps.File.AttachToMessage(r.Context(), workspaceID, messageID, []string{created.ID}); err != nil {
+			_ = deps.File.Delete(r.Context(), workspaceID, created.ID)
+			httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, "The attachment could not be linked.")
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, map[string]any{
+			"id": created.ID, "name": created.Name, "mime_type": created.MIMEType,
+			"size_bytes": created.SizeBytes,
+			"url":        "/api/v1/widget/conversations/" + conversationID + "/files/" + created.ID,
+		})
+	}
+}
+
+func widgetMessageBelongsToConversation(r *http.Request, deps Deps, workspaceID, messageID, conversationID string) bool {
+	var belongs bool
+	return deps.Pool.QueryRow(r.Context(), `
+		SELECT EXISTS(
+			SELECT 1 FROM messages
+			WHERE workspace_id=$1 AND id=$2 AND conversation_id=$3
+		)
+	`, workspaceID, messageID, conversationID).Scan(&belongs) == nil && belongs
+}
+
+func handleWidgetFileDownload(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		req := widgetVisitorRequest{PublicKey: query.Get("key"), URL: query.Get("url"), Token: query.Get("token")}
+		workspaceID, visitor, err := resolveVisitorRequest(r, deps, req)
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		conversationID := r.PathValue("id")
+		if _, err := deps.Widget.Conversation(r.Context(), workspaceID, conversationID, visitor); err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		fileID := r.PathValue("fileID")
+		var attached bool
+		if err := deps.Pool.QueryRow(r.Context(), `
+			SELECT EXISTS(
+				SELECT 1 FROM message_attachments ma
+				JOIN messages m ON m.id=ma.message_id AND m.workspace_id=$1 AND m.conversation_id=$2
+				WHERE ma.file_id=$3
+			)
+		`, workspaceID, conversationID, fileID).Scan(&attached); err != nil || !attached {
+			writeWidgetError(w, r, conversation.ErrNotFound)
+			return
+		}
+		record, opened, err := deps.File.Open(r.Context(), workspaceID, fileID)
+		if err != nil || record.OwnerType != "conversation" || record.OwnerID != conversationID {
+			if opened != nil {
+				_ = opened.Close()
+			}
+			writeWidgetError(w, r, conversation.ErrNotFound)
+			return
+		}
+		defer opened.Close()
+		w.Header().Set("Content-Type", record.MIMEType)
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", record.SizeBytes))
+		w.Header().Set("Content-Disposition", contentDisposition(record.Name))
+		_, _ = io.Copy(w, opened)
 	}
 }
 
@@ -586,7 +825,7 @@ func handleWidgetListMessages(deps Deps) http.HandlerFunc {
 		}
 		out := make([]map[string]any, len(messages))
 		for i, m := range messages {
-			out[i] = widgetMessageJSON(m)
+			out[i] = widgetMessageJSONWithAttachments(r, deps, workspaceID, m)
 		}
 		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
 	}
@@ -606,6 +845,8 @@ func writeWidgetError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusForbidden, httpserver.CodeForbidden, "This widget is currently disabled.")
 	case errors.Is(err, widget.ErrDuplicateDomain):
 		httpserver.WriteError(w, r, http.StatusConflict, httpserver.CodeConflict, err.Error())
+	case errors.Is(err, formmodule.ErrNotFound):
+		httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Form not found.")
 	case errors.Is(err, widget.ErrInvalidInbox), errors.Is(err, widget.ErrInvalidName),
 		errors.Is(err, widget.ErrWildcardDomain), errors.Is(err, widget.ErrNoInbox),
 		errors.Is(err, conversation.ErrEmptyBody):

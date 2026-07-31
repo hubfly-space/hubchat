@@ -15,7 +15,9 @@ import (
 	"github.com/hubchat/hubchat/internal/events"
 	"github.com/hubchat/hubchat/internal/ids"
 	"github.com/hubchat/hubchat/internal/jobs"
+	"github.com/hubchat/hubchat/internal/sla"
 	"github.com/hubchat/hubchat/internal/ticket"
+	"github.com/hubchat/hubchat/internal/webhook"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -38,6 +40,8 @@ type Service struct {
 	conversation *conversation.Service
 	ticket       *ticket.Service
 	jobs         *jobs.Client
+	sla          *sla.Service
+	webhook      *webhook.Service
 	maxDepth     int
 	seenMu       sync.Mutex
 	seen         map[string]int64
@@ -50,6 +54,8 @@ type Options struct {
 	Conversation *conversation.Service
 	Ticket       *ticket.Service
 	Jobs         *jobs.Client
+	SLA          *sla.Service
+	Webhook      *webhook.Service
 }
 type Action struct {
 	ID     string         `json:"id"`
@@ -107,7 +113,7 @@ func New(pool *database.Pool, options ...Options) *Service {
 	if len(options) > 0 {
 		opts = options[0]
 	}
-	return &Service{pool: pool, conversation: opts.Conversation, ticket: opts.Ticket, jobs: opts.Jobs, maxDepth: 8, seen: make(map[string]int64)}
+	return &Service{pool: pool, conversation: opts.Conversation, ticket: opts.Ticket, jobs: opts.Jobs, sla: opts.SLA, webhook: opts.Webhook, maxDepth: 8, seen: make(map[string]int64)}
 }
 func (s *Service) Create(ctx context.Context, workspaceID, memberID string, input Input) (*Rule, error) {
 	if strings.TrimSpace(input.Name) == "" {
@@ -288,7 +294,11 @@ func (s *Service) processEvent(ctx context.Context, record events.Record) error 
 		if !rule.Enabled || rule.Trigger != trigger {
 			continue
 		}
-		if _, err := s.executeWithActor(ctx, record.WorkspaceID, rule.ID, record.ID, record.EntityType, record.EntityID, record.ID, 0, false, subject, record.ActorID); err != nil {
+		depth := 0
+		if record.CausationID != "" {
+			depth = 1
+		}
+		if _, err := s.executeWithActor(ctx, record.WorkspaceID, rule.ID, record.ID, record.EntityType, record.EntityID, record.CausationID, depth, false, subject, record.ActorID); err != nil {
 			return err
 		}
 	}
@@ -402,8 +412,16 @@ func (s *Service) applyActions(ctx context.Context, workspaceID, subjectType, su
 			}
 		case "send_email":
 			err = s.queueEmail(ctx, workspaceID, params)
+		case "invoke_webhook":
+			err = s.invokeWebhook(ctx, workspaceID, params)
+		case "start_sla":
+			err = s.startSLA(ctx, workspaceID, subjectType, subjectID)
+		case "pause_sla":
+			err = s.pauseSLA(ctx, workspaceID, subjectType, subjectID, params)
 		case "close_after_inactivity":
 			err = s.scheduleClose(ctx, workspaceID, subjectType, subjectID, actorID, params)
+		case "create_task":
+			err = s.createTask(ctx, workspaceID, subjectType, subjectID, actorID, params)
 		default:
 			err = fmt.Errorf("automation: action %q is not executable", action.Type)
 		}
@@ -508,6 +526,74 @@ func (s *Service) queueEmail(ctx context.Context, workspaceID string, params map
 		return err
 	}
 	_, err = s.jobs.Enqueue(ctx, jobs.Spec{WorkspaceID: workspaceID, Queue: "email", Type: "email.send", Payload: automationEmailPayload{WorkspaceID: workspaceID, To: to, Subject: subject, Body: body}})
+	return err
+}
+
+func (s *Service) invokeWebhook(ctx context.Context, workspaceID string, params map[string]any) error {
+	if s.webhook == nil {
+		return errors.New("automation: webhook service is unavailable")
+	}
+	endpointID, err := requiredString(params, "endpoint_id")
+	if err != nil {
+		return err
+	}
+	payload, ok := params["payload"].(map[string]any)
+	if !ok {
+		if encoded, isString := params["payload"].(string); isString && strings.TrimSpace(encoded) != "" {
+			if err := json.Unmarshal([]byte(encoded), &payload); err != nil {
+				return errors.New("automation: webhook payload must be valid JSON")
+			}
+		} else {
+			payload = map[string]any{"source": "automation", "parameters": params}
+		}
+	}
+	return s.webhook.EnqueueAction(ctx, workspaceID, endpointID, payload)
+}
+
+func (s *Service) startSLA(ctx context.Context, workspaceID, subjectType, subjectID string) error {
+	if s.sla == nil {
+		return errors.New("automation: SLA service is unavailable")
+	}
+	now := time.Now().UTC()
+	switch subjectType {
+	case "conversation":
+		return s.sla.EnsureConversation(ctx, workspaceID, subjectID, now)
+	case "ticket":
+		return s.sla.EnsureTicket(ctx, workspaceID, subjectID, now)
+	default:
+		return errors.New("automation: start_sla requires a conversation or ticket subject")
+	}
+}
+
+func (s *Service) pauseSLA(ctx context.Context, workspaceID, subjectType, subjectID string, params map[string]any) error {
+	if s.sla == nil {
+		return errors.New("automation: SLA service is unavailable")
+	}
+	reason, _ := params["reason"].(string)
+	return s.sla.PauseSubject(ctx, workspaceID, subjectType, subjectID, strings.TrimSpace(reason), time.Now().UTC())
+}
+
+func (s *Service) createTask(ctx context.Context, workspaceID, subjectType, subjectID, actorID string, params map[string]any) error {
+	title, err := requiredString(params, "title", "name")
+	if err != nil {
+		return err
+	}
+	description, _ := params["description"].(string)
+	assignee, _ := params["assignee_id"].(string)
+	if assignee != "" {
+		var exists bool
+		if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workspace_members WHERE workspace_id=$1 AND id=$2)`, workspaceID, assignee).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return errors.New("automation: task assignee is not a workspace member")
+		}
+	}
+	dueAfter := intParam(params, "due_after_minutes", 0)
+	if dueAfter < 0 {
+		return errors.New("automation: task due_after_minutes cannot be negative")
+	}
+	_, err = s.pool.Exec(ctx, `INSERT INTO tasks(id,workspace_id,title,description,subject_type,subject_id,assignee_id,due_at,created_by) VALUES($1,$2,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),CASE WHEN $8>0 THEN now()+make_interval(mins=>$8) ELSE NULL END,NULLIF($9,''))`, ids.New(ids.PrefixTask), workspaceID, title, description, subjectType, subjectID, assignee, dueAfter, actorID)
 	return err
 }
 
