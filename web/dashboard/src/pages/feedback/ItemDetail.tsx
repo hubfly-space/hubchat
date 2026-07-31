@@ -75,7 +75,7 @@ function FeedbackLinkDialog({ item, onClose, onLinked }: { item: FeedbackItem; o
   const [query, setQuery] = useState("");
   const conversations = useQuery<{ data: Conversation[] }>(["feedback-link-conversations"], (signal) => api.get("/conversations?state=new,open,pending,waiting_for_customer,waiting_for_support&limit=100", { signal }), { enabled: kind === "conversation" });
   const tickets = useQuery<{ data: Ticket[] }>(["feedback-link-tickets"], (signal) => api.get("/tickets?status=new,open,pending,on_hold&limit=100", { signal }), { enabled: kind === "ticket" });
-  const link = useMutation<FeedbackLink, { conversation_id: string; ticket_id: string }>((input) => api.post(`/feedback/items/${item.id}/links`, input, { idempotencyKey: idempotencyKey() }), { onSuccess: onLinked });
+  const link = useMutation<{ conversation_id: string; ticket_id: string }, FeedbackLink>((input) => api.post(`/feedback/items/${item.id}/links`, input, { idempotencyKey: idempotencyKey() }), { onSuccess: onLinked });
   const normalized = query.trim().toLowerCase();
   const conversationCandidates = (conversations.data?.data ?? []).filter((candidate) => !normalized || `${candidate.subject ?? ""} ${candidate.id}`.toLowerCase().includes(normalized));
   const ticketCandidates = (tickets.data?.data ?? []).filter((candidate) => !normalized || `${candidate.title} ${candidate.prefix}-${candidate.number}`.toLowerCase().includes(normalized));
@@ -86,7 +86,7 @@ function FeedbackLinkDialog({ item, onClose, onLinked }: { item: FeedbackItem; o
 function FeedbackMergeDialog({ item, onClose }: { item: FeedbackItem; onClose: () => void }) {
   const [query, setQuery] = useState("");
   const items = useQuery<{ data: FeedbackItem[] }>(["feedback-merge-candidates", item.board_id], (signal) => api.get(`/feedback/boards/${item.board_id}/items?sort=recent&limit=100`, { signal }));
-  const merge = useMutation<FeedbackItem, { target_id: string }>((input) => api.post(`/feedback/items/${item.id}/merge`, input, { idempotencyKey: idempotencyKey() }), { onSuccess: onClose });
+  const merge = useMutation<{ target_id: string }, FeedbackItem>((input) => api.post(`/feedback/items/${item.id}/merge`, input, { idempotencyKey: idempotencyKey() }), { onSuccess: onClose });
   const candidates = (items.data?.data ?? []).filter((candidate) => candidate.id !== item.id && (!query.trim() || `${candidate.title} ${candidate.description}`.toLowerCase().includes(query.trim().toLowerCase())));
   return <Dialog open onOpenChange={(open) => !open && onClose()}><DialogContent title="Merge duplicate feedback" description="Votes, comments, subscribers, and support links move to the selected item. The current item remains as a redirect."><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search feedback items…" autoFocus /><ul className="mt-3 flex max-h-64 flex-col gap-1 overflow-y-auto">{candidates.map((candidate) => <li key={candidate.id}><button type="button" className="w-full rounded-md px-2 py-2 text-left hover:bg-inset" onClick={() => void merge.mutate({ target_id: candidate.id }).catch(() => {})}><span className="block truncate text-sm text-fg">{candidate.title}</span><span className="block truncate text-2xs text-fg-muted">{candidate.description || "No description"}</span></button></li>)}{candidates.length === 0 && <EmptyState size="sm" title="No duplicate candidates" />}</ul>{Boolean(merge.error) && <p className="mt-3 text-sm text-danger">Could not merge this item.</p>}</DialogContent></Dialog>;
 }

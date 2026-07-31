@@ -40,6 +40,7 @@ const router = createBrowserRouter(
         { path: "tickets/new", element: page(() => import("./pages/NewTicket")) },
         { path: "tickets/:number", element: page(() => import("./pages/TicketDetail")) },
         { path: "feedback", element: page(() => import("./pages/Feedback")) },
+        { path: "feedback/:itemId", element: page(() => import("./pages/FeedbackItem")) },
         { path: "changelog", element: page(() => import("./pages/Changelog")) },
         { path: "survey/:workspaceID/:surveyID", element: page(() => import("./pages/Survey")) },
         { path: "account", element: page(() => import("./pages/Account")) },
