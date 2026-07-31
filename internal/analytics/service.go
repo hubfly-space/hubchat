@@ -122,19 +122,20 @@ func (s *Service) Summary(ctx context.Context, workspaceID string, from, to time
 	queries := []struct {
 		dest  *int64
 		query string
+		args  []any
 	}{
-		{&result.ConversationsCreated, `SELECT count(*) FROM conversations WHERE workspace_id=$1 AND created_at >= $2 AND created_at < $3`},
-		{&result.TicketsCreated, `SELECT count(*) FROM tickets WHERE workspace_id=$1 AND created_at >= $2 AND created_at < $3`},
-		{&result.MessagesReceived, `SELECT count(*) FROM messages WHERE workspace_id=$1 AND kind='reply' AND author_type='customer' AND created_at >= $2 AND created_at < $3`},
-		{&result.MessagesSent, `SELECT count(*) FROM messages WHERE workspace_id=$1 AND kind='reply' AND author_type IN ('agent','automation') AND created_at >= $2 AND created_at < $3`},
-		{&result.ConversationsResolved, `SELECT count(*) FROM conversation_status_history h JOIN conversations c ON c.id=h.conversation_id AND c.workspace_id=$1 WHERE h.to_state='resolved' AND h.occurred_at >= $2 AND h.occurred_at < $3`},
-		{&result.TicketsResolved, `SELECT count(*) FROM ticket_status_history h JOIN tickets t ON t.id=h.ticket_id AND t.workspace_id=$1 WHERE h.to_status IN ('resolved','closed') AND h.occurred_at >= $2 AND h.occurred_at < $3`},
-		{&result.TicketsReopened, `SELECT count(*) FROM ticket_status_history h JOIN tickets t ON t.id=h.ticket_id AND t.workspace_id=$1 WHERE h.from_status IN ('resolved','closed') AND h.to_status NOT IN ('resolved','closed') AND h.occurred_at >= $2 AND h.occurred_at < $3`},
-		{&result.BacklogConversations, `SELECT count(*) FROM conversations WHERE workspace_id=$1 AND created_at < $3 AND state NOT IN ('resolved','closed','spam')`},
-		{&result.BacklogTickets, `SELECT count(*) FROM tickets WHERE workspace_id=$1 AND created_at < $3 AND status NOT IN ('resolved','closed')`},
+		{&result.ConversationsCreated, `SELECT count(*) FROM conversations WHERE workspace_id=$1 AND created_at >= $2 AND created_at < $3`, []any{workspaceID, from, to}},
+		{&result.TicketsCreated, `SELECT count(*) FROM tickets WHERE workspace_id=$1 AND created_at >= $2 AND created_at < $3`, []any{workspaceID, from, to}},
+		{&result.MessagesReceived, `SELECT count(*) FROM messages WHERE workspace_id=$1 AND kind='reply' AND author_type='customer' AND created_at >= $2 AND created_at < $3`, []any{workspaceID, from, to}},
+		{&result.MessagesSent, `SELECT count(*) FROM messages WHERE workspace_id=$1 AND kind='reply' AND author_type IN ('agent','automation') AND created_at >= $2 AND created_at < $3`, []any{workspaceID, from, to}},
+		{&result.ConversationsResolved, `SELECT count(*) FROM conversation_status_history h JOIN conversations c ON c.id=h.conversation_id AND c.workspace_id=$1 WHERE h.to_state='resolved' AND h.occurred_at >= $2 AND h.occurred_at < $3`, []any{workspaceID, from, to}},
+		{&result.TicketsResolved, `SELECT count(*) FROM ticket_status_history h JOIN tickets t ON t.id=h.ticket_id AND t.workspace_id=$1 WHERE h.to_status IN ('resolved','closed') AND h.occurred_at >= $2 AND h.occurred_at < $3`, []any{workspaceID, from, to}},
+		{&result.TicketsReopened, `SELECT count(*) FROM ticket_status_history h JOIN tickets t ON t.id=h.ticket_id AND t.workspace_id=$1 WHERE h.from_status IN ('resolved','closed') AND h.to_status NOT IN ('resolved','closed') AND h.occurred_at >= $2 AND h.occurred_at < $3`, []any{workspaceID, from, to}},
+		{&result.BacklogConversations, `SELECT count(*) FROM conversations WHERE workspace_id=$1 AND created_at < $2 AND state NOT IN ('resolved','closed','spam')`, []any{workspaceID, to}},
+		{&result.BacklogTickets, `SELECT count(*) FROM tickets WHERE workspace_id=$1 AND created_at < $2 AND status NOT IN ('resolved','closed')`, []any{workspaceID, to}},
 	}
 	for _, item := range queries {
-		if err := s.pool.QueryRow(ctx, item.query, workspaceID, from, to).Scan(item.dest); err != nil {
+		if err := s.pool.QueryRow(ctx, item.query, item.args...).Scan(item.dest); err != nil {
 			return nil, fmt.Errorf("analytics: summary count: %w", err)
 		}
 	}

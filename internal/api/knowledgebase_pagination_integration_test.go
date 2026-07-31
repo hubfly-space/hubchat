@@ -58,3 +58,29 @@ func TestArticleListUsesDeterministicWorkspaceCursor(t *testing.T) {
 		t.Fatal("article pagination crossed the workspace boundary")
 	}
 }
+
+func TestPublicArticleSearchScopesCollection(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspaces (id,name,slug) VALUES ('wrk_kb_public','KB public','kb-public');
+		INSERT INTO knowledge_bases (id,workspace_id,name,slug) VALUES ('kb_public','wrk_kb_public','Public Help','public-help');
+		INSERT INTO article_collections (id,workspace_id,knowledge_base_id,name,slug) VALUES
+			('col_release','wrk_kb_public','kb_public','Release notes','release-notes'),
+			('col_billing','wrk_kb_public','kb_public','Billing','billing');
+		INSERT INTO articles (id,workspace_id,knowledge_base_id,collection_id,title,slug,state,published_at) VALUES
+			('art_release','wrk_kb_public','kb_public','col_release','Release notes','release','published',now()),
+			('art_billing','wrk_kb_public','kb_public','col_billing','Billing guide','billing','published',now())
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := knowledgebase.New(pool).SearchPublished(ctx, "wrk_kb_public", "public-help", "release-notes", "", "", "portal", 20)
+	if err != nil {
+		t.Fatalf("search published articles: %v", err)
+	}
+	if len(results) != 1 || results[0].Article.ID != "art_release" {
+		t.Fatalf("collection search results = %#v", results)
+	}
+}

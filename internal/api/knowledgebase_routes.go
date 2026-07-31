@@ -237,7 +237,7 @@ func handlePublishArticle(deps Deps) http.HandlerFunc {
 
 func handlePublicArticleSearch(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := deps.Knowledgebase.SearchPublished(r.Context(), r.PathValue("workspaceID"), r.URL.Query().Get("knowledge_base"), r.URL.Query().Get("q"), r.URL.Query().Get("language"), r.URL.Query().Get("surface"), 20)
+		items, err := deps.Knowledgebase.SearchPublished(r.Context(), r.PathValue("workspaceID"), r.URL.Query().Get("knowledge_base"), r.URL.Query().Get("collection"), r.URL.Query().Get("q"), r.URL.Query().Get("language"), r.URL.Query().Get("surface"), 20)
 		if err != nil {
 			writeKnowledgebaseInternal(w, r)
 			return

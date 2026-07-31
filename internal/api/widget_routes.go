@@ -459,7 +459,7 @@ func handleWidgetArticleSearch(deps Deps) http.HandlerFunc {
 			writeKnowledgebaseInternal(w, r)
 			return
 		}
-		items, err := deps.Knowledgebase.SearchPublished(r.Context(), item.WorkspaceID, "", r.URL.Query().Get("q"), r.URL.Query().Get("language"), "widget", 20)
+		items, err := deps.Knowledgebase.SearchPublished(r.Context(), item.WorkspaceID, "", "", r.URL.Query().Get("q"), r.URL.Query().Get("language"), "widget", 20)
 		if err != nil {
 			writeKnowledgebaseInternal(w, r)
 			return
