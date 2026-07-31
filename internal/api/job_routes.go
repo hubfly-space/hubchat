@@ -11,19 +11,37 @@ import (
 
 func registerJobRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/jobs", requireCapability(deps, authorization.WorkspaceManage, handleListJobs(deps)))
+	mux.HandleFunc("GET /v1/jobs/summary", requireCapability(deps, authorization.WorkspaceManage, handleJobSummary(deps)))
 	mux.HandleFunc("POST /v1/jobs/{id}/cancel", requireCapability(deps, authorization.WorkspaceManage, Idempotency(deps)(handleCancelJob(deps))))
 	mux.HandleFunc("POST /v1/jobs/{id}/retry", requireCapability(deps, authorization.WorkspaceManage, Idempotency(deps)(handleRetryJob(deps))))
 }
 
 func handleListJobs(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed pagination parameters.")
+			return
+		}
 		query := r.URL.Query()
-		items, err := deps.Jobs.List(r.Context(), jobs.ListFilter{WorkspaceID: actorFromRequest(r).WorkspaceID, State: jobs.State(query.Get("state")), Queue: query.Get("queue"), Limit: 200})
+		items, err := deps.Jobs.List(r.Context(), jobs.ListFilter{WorkspaceID: actorFromRequest(r).WorkspaceID, State: jobs.State(query.Get("state")), Queue: query.Get("queue"), Limit: limit + 1, Before: cursor.At, BeforeID: cursor.ID})
 		if err != nil {
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load background jobs.")
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		page := NewPage(items, limit, func(item jobs.Job) Cursor { return Cursor{At: item.CreatedAt, ID: item.ID} })
+		httpserver.WriteJSON(w, http.StatusOK, page)
+	}
+}
+
+func handleJobSummary(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		item, err := deps.Jobs.Summary(r.Context(), actorFromRequest(r).WorkspaceID)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load background job summary.")
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, item)
 	}
 }
 

@@ -28,16 +28,24 @@ func registerFormRoutes(mux *http.ServeMux, deps Deps) {
 func handleListForms(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
-		items, err := deps.Form.List(r.Context(), actor.WorkspaceID)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		items, err := deps.Form.ListPage(r.Context(), actor.WorkspaceID, cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			writeFormInternalError(w, r)
 			return
 		}
-		out := make([]map[string]any, 0, len(items))
-		for _, item := range items {
+		page := NewPage(items, limit, func(item form.Form) Cursor {
+			return Cursor{At: item.CreatedAt, ID: item.ID}
+		})
+		out := make([]map[string]any, 0, len(page.Data))
+		for _, item := range page.Data {
 			out = append(out, formJSON(item, true))
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+		httpserver.WriteJSON(w, http.StatusOK, Page[map[string]any]{Data: out, NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
 }
 
