@@ -1,0 +1,414 @@
+// Package knowledgebase owns deterministic, searchable self-service content.
+// Articles are stored as Markdown, revisions are append-only, and only
+// published rows are visible through the public search surface.
+package knowledgebase
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/hubchat/hubchat/internal/database"
+	"github.com/hubchat/hubchat/internal/ids"
+)
+
+var (
+	ErrNotFound                = errors.New("knowledgebase: not found")
+	ErrInvalidName             = errors.New("knowledgebase: name is required")
+	ErrInvalidSlug             = errors.New("knowledgebase: slug must contain lowercase letters, numbers, and hyphens")
+	ErrInvalidState            = errors.New("knowledgebase: invalid article state")
+	ErrInvalidLanguage         = errors.New("knowledgebase: language is required")
+	ErrInvalidArticle          = errors.New("knowledgebase: article title and knowledge base are required")
+	ErrFeedbackAlreadyRecorded = errors.New("knowledgebase: article feedback already recorded")
+)
+
+var slugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+
+type Service struct{ pool *database.Pool }
+
+type KnowledgeBase struct {
+	ID              string    `json:"id"`
+	WorkspaceID     string    `json:"workspace_id"`
+	Name            string    `json:"name"`
+	Slug            string    `json:"slug"`
+	DefaultLanguage string    `json:"default_language"`
+	Languages       []string  `json:"languages"`
+	Visibility      string    `json:"visibility"`
+	ArticleCount    int       `json:"article_count"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+type Collection struct {
+	ID              string    `json:"id"`
+	WorkspaceID     string    `json:"workspace_id"`
+	KnowledgeBaseID string    `json:"knowledge_base_id"`
+	ParentID        *string   `json:"parent_id,omitempty"`
+	Name            string    `json:"name"`
+	Slug            string    `json:"slug"`
+	Description     string    `json:"description,omitempty"`
+	Icon            string    `json:"icon,omitempty"`
+	ArticleCount    int       `json:"article_count"`
+	Position        int       `json:"position"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+type Article struct {
+	ID              string         `json:"id"`
+	WorkspaceID     string         `json:"workspace_id"`
+	KnowledgeBaseID string         `json:"knowledge_base_id"`
+	CollectionID    *string        `json:"collection_id,omitempty"`
+	Title           string         `json:"title"`
+	Slug            string         `json:"slug"`
+	Excerpt         string         `json:"excerpt"`
+	Body            string         `json:"body"`
+	State           string         `json:"state"`
+	Language        string         `json:"language"`
+	AuthorID        *string        `json:"author_id,omitempty"`
+	SEO             map[string]any `json:"seo"`
+	ViewCount       int            `json:"view_count"`
+	HelpfulCount    int            `json:"helpful_count"`
+	UnhelpfulCount  int            `json:"unhelpful_count"`
+	Version         int            `json:"version"`
+	ScheduledAt     *time.Time     `json:"scheduled_at,omitempty"`
+	PublishedAt     *time.Time     `json:"published_at,omitempty"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+}
+
+type KnowledgeBaseInput struct {
+	Name            string   `json:"name"`
+	Slug            string   `json:"slug"`
+	DefaultLanguage string   `json:"default_language"`
+	Languages       []string `json:"languages"`
+	Visibility      string   `json:"visibility"`
+}
+type CollectionInput struct {
+	Name        string  `json:"name"`
+	Slug        string  `json:"slug"`
+	ParentID    *string `json:"parent_id"`
+	Description string  `json:"description"`
+	Icon        string  `json:"icon"`
+	Position    int     `json:"position"`
+}
+type ArticleInput struct {
+	KnowledgeBaseID string         `json:"knowledge_base_id"`
+	CollectionID    *string        `json:"collection_id"`
+	Title           string         `json:"title"`
+	Slug            string         `json:"slug"`
+	Excerpt         string         `json:"excerpt"`
+	Body            string         `json:"body"`
+	State           string         `json:"state"`
+	Language        string         `json:"language"`
+	SEO             map[string]any `json:"seo"`
+	ScheduledAt     *time.Time     `json:"scheduled_at"`
+}
+
+type SearchResult struct {
+	Article Article `json:"article"`
+	Rank    float32 `json:"rank"`
+}
+
+func New(pool *database.Pool) *Service { return &Service{pool: pool} }
+
+func (s *Service) CreateKnowledgeBase(ctx context.Context, workspaceID string, input KnowledgeBaseInput) (*KnowledgeBase, error) {
+	name, slug := strings.TrimSpace(input.Name), strings.ToLower(strings.TrimSpace(input.Slug))
+	if name == "" {
+		return nil, ErrInvalidName
+	}
+	if !slugPattern.MatchString(slug) {
+		return nil, ErrInvalidSlug
+	}
+	language := strings.TrimSpace(input.DefaultLanguage)
+	if language == "" {
+		language = "en"
+	}
+	languages := uniqueLanguages(input.Languages)
+	if len(languages) == 0 {
+		languages = []string{language}
+	}
+	visibility := input.Visibility
+	if visibility == "" {
+		visibility = "public"
+	}
+	if visibility != "public" && visibility != "private" {
+		return nil, errors.New("knowledgebase: invalid visibility")
+	}
+	id := ids.New(ids.PrefixKnowledgeBase)
+	_, err := s.pool.Exec(ctx, `INSERT INTO knowledge_bases(id,workspace_id,name,slug,default_language,languages,visibility) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, workspaceID, name, slug, language, languages, visibility)
+	if err != nil {
+		return nil, fmt.Errorf("knowledgebase: create: %w", err)
+	}
+	return s.GetKnowledgeBase(ctx, workspaceID, id)
+}
+
+func (s *Service) ListKnowledgeBases(ctx context.Context, workspaceID string) ([]KnowledgeBase, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id,workspace_id,name,slug,default_language,languages,visibility,article_count,created_at,updated_at FROM knowledge_bases WHERE workspace_id=$1 ORDER BY created_at DESC,id DESC`, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]KnowledgeBase, 0)
+	for rows.Next() {
+		var item KnowledgeBase
+		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.Slug, &item.DefaultLanguage, &item.Languages, &item.Visibility, &item.ArticleCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+func (s *Service) GetKnowledgeBase(ctx context.Context, workspaceID, id string) (*KnowledgeBase, error) {
+	var item KnowledgeBase
+	err := s.pool.QueryRow(ctx, `SELECT id,workspace_id,name,slug,default_language,languages,visibility,article_count,created_at,updated_at FROM knowledge_bases WHERE workspace_id=$1 AND id=$2`, workspaceID, id).Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.Slug, &item.DefaultLanguage, &item.Languages, &item.Visibility, &item.ArticleCount, &item.CreatedAt, &item.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (s *Service) CreateCollection(ctx context.Context, workspaceID, kbID string, input CollectionInput) (*Collection, error) {
+	if strings.TrimSpace(input.Name) == "" || !slugPattern.MatchString(strings.ToLower(strings.TrimSpace(input.Slug))) {
+		return nil, ErrInvalidSlug
+	}
+	if _, err := s.GetKnowledgeBase(ctx, workspaceID, kbID); err != nil {
+		return nil, err
+	}
+	id := ids.New(ids.PrefixCollection)
+	var item Collection
+	err := s.pool.QueryRow(ctx, `INSERT INTO article_collections(id,workspace_id,knowledge_base_id,parent_id,name,slug,description,icon,position) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''),$9) RETURNING id,workspace_id,knowledge_base_id,parent_id,name,slug,coalesce(description,''),coalesce(icon,''),article_count,position,created_at`, id, workspaceID, kbID, input.ParentID, strings.TrimSpace(input.Name), strings.ToLower(strings.TrimSpace(input.Slug)), strings.TrimSpace(input.Description), input.Icon, input.Position).Scan(&item.ID, &item.WorkspaceID, &item.KnowledgeBaseID, &item.ParentID, &item.Name, &item.Slug, &item.Description, &item.Icon, &item.ArticleCount, &item.Position, &item.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("knowledgebase: create collection: %w", err)
+	}
+	return &item, nil
+}
+
+func (s *Service) ListCollections(ctx context.Context, workspaceID, kbID string) ([]Collection, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id,workspace_id,knowledge_base_id,parent_id,name,slug,coalesce(description,''),coalesce(icon,''),article_count,position,created_at FROM article_collections WHERE workspace_id=$1 AND knowledge_base_id=$2 ORDER BY position,id`, workspaceID, kbID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]Collection, 0)
+	for rows.Next() {
+		var item Collection
+		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.KnowledgeBaseID, &item.ParentID, &item.Name, &item.Slug, &item.Description, &item.Icon, &item.ArticleCount, &item.Position, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+func (s *Service) ListArticles(ctx context.Context, workspaceID, state, query string, limit int) ([]Article, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, `SELECT id,workspace_id,knowledge_base_id,collection_id,title,slug,excerpt,body,state,language,author_id,seo,view_count,helpful_count,unhelpful_count,version,scheduled_at,published_at,created_at,updated_at FROM articles WHERE workspace_id=$1 AND ($2='' OR state=$2) AND ($3='' OR title ILIKE '%'||$3||'%' OR excerpt ILIKE '%'||$3||'%') ORDER BY updated_at DESC,id DESC LIMIT $4`, workspaceID, state, strings.TrimSpace(query), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanArticles(rows)
+}
+
+func (s *Service) GetArticle(ctx context.Context, workspaceID, id string) (*Article, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id,workspace_id,knowledge_base_id,collection_id,title,slug,excerpt,body,state,language,author_id,seo,view_count,helpful_count,unhelpful_count,version,scheduled_at,published_at,created_at,updated_at FROM articles WHERE workspace_id=$1 AND id=$2`, workspaceID, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items, err := scanArticles(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, ErrNotFound
+	}
+	return &items[0], nil
+}
+
+func (s *Service) GetPublishedBySlug(ctx context.Context, workspaceID, slug string) (*Article, error) {
+	var id string
+	err := s.pool.QueryRow(ctx, `UPDATE articles SET view_count=view_count+1 WHERE workspace_id=$1 AND slug=$2 AND state='published' RETURNING id`, workspaceID, strings.ToLower(strings.TrimSpace(slug))).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.GetArticle(ctx, workspaceID, id)
+}
+
+func (s *Service) RecordArticleFeedback(ctx context.Context, workspaceID, articleID string, helpful bool, comment, customerID string, fingerprint []byte) error {
+	return database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM articles WHERE workspace_id=$1 AND id=$2 AND state='published')`, workspaceID, articleID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return ErrNotFound
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO article_feedback(id,workspace_id,article_id,helpful,comment,customer_id,fingerprint) VALUES($1,$2,$3,$4,NULLIF($5,''),NULLIF($6,''),$7)`, ids.New(ids.PrefixArticleFeedback), workspaceID, articleID, helpful, strings.TrimSpace(comment), customerID, fingerprint)
+		if err != nil {
+			if strings.Contains(err.Error(), "article_feedback_one_per_fingerprint") || strings.Contains(err.Error(), "duplicate key") {
+				return ErrFeedbackAlreadyRecorded
+			}
+			return err
+		}
+		column := "unhelpful_count"
+		if helpful {
+			column = "helpful_count"
+		}
+		_, err = tx.Exec(ctx, `UPDATE articles SET `+column+`=`+column+`+1,updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, articleID)
+		return err
+	})
+}
+
+func (s *Service) SaveArticle(ctx context.Context, workspaceID, authorID, id string, input ArticleInput) (*Article, error) {
+	if strings.TrimSpace(input.Title) == "" || input.KnowledgeBaseID == "" {
+		return nil, ErrInvalidArticle
+	}
+	if !slugPattern.MatchString(strings.ToLower(strings.TrimSpace(input.Slug))) {
+		return nil, ErrInvalidSlug
+	}
+	if input.Language == "" {
+		input.Language = "en"
+	}
+	if input.State == "" {
+		input.State = "draft"
+	}
+	if !validState(input.State) {
+		return nil, ErrInvalidState
+	}
+	if _, err := s.GetKnowledgeBase(ctx, workspaceID, input.KnowledgeBaseID); err != nil {
+		return nil, err
+	}
+	seo := input.SEO
+	if seo == nil {
+		seo = map[string]any{}
+	}
+	seoJSON, _ := json.Marshal(seo)
+	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		if id == "" {
+			id = ids.New(ids.PrefixArticle)
+			if _, err := tx.Exec(ctx, `INSERT INTO articles(id,workspace_id,knowledge_base_id,collection_id,title,slug,excerpt,body,state,language,author_id,seo,scheduled_at,published_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11,''),$12,$13,CASE WHEN $9='published' THEN now() ELSE NULL END)`, id, workspaceID, input.KnowledgeBaseID, input.CollectionID, strings.TrimSpace(input.Title), strings.ToLower(strings.TrimSpace(input.Slug)), input.Excerpt, input.Body, input.State, input.Language, authorID, seoJSON, input.ScheduledAt); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO article_revisions(id,article_id,version,title,body,excerpt,edited_by,note) VALUES($1,$2,1,$3,$4,$5,NULLIF($6,''),'created')`, ids.New(ids.PrefixArticleRevision), id, input.Title, input.Body, input.Excerpt, authorID); err != nil {
+				return err
+			}
+			_, err := tx.Exec(ctx, `UPDATE knowledge_bases SET article_count=article_count+1,updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, input.KnowledgeBaseID)
+			return err
+		}
+		var oldVersion int
+		err := tx.QueryRow(ctx, `SELECT version FROM articles WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, workspaceID, id).Scan(&oldVersion)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		version := oldVersion + 1
+		if _, err := tx.Exec(ctx, `UPDATE articles SET knowledge_base_id=$3,collection_id=$4,title=$5,slug=$6,excerpt=$7,body=$8,state=$9,language=$10,seo=$11,scheduled_at=$12,version=$13,published_at=CASE WHEN $9='published' THEN coalesce(published_at,now()) ELSE published_at END,updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, id, input.KnowledgeBaseID, input.CollectionID, input.Title, strings.ToLower(input.Slug), input.Excerpt, input.Body, input.State, input.Language, seoJSON, input.ScheduledAt, version); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO article_revisions(id,article_id,version,title,body,excerpt,edited_by,note) VALUES($1,$2,$3,$4,$5,$6,NULLIF($7,''),'updated')`, ids.New(ids.PrefixArticleRevision), id, version, input.Title, input.Body, input.Excerpt, authorID)
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("knowledgebase: save article: %w", err)
+	}
+	return s.GetArticle(ctx, workspaceID, id)
+}
+
+func (s *Service) PublishArticle(ctx context.Context, workspaceID, id string) (*Article, error) {
+	var exists string
+	err := s.pool.QueryRow(ctx, `UPDATE articles SET state='published',published_at=coalesce(published_at,now()),updated_at=now() WHERE workspace_id=$1 AND id=$2 RETURNING id`, workspaceID, id).Scan(&exists)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.GetArticle(ctx, workspaceID, id)
+}
+
+func (s *Service) SearchPublished(ctx context.Context, workspaceID, kbSlug, query, language, surface string, limit int) ([]SearchResult, error) {
+	query = strings.TrimSpace(query)
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	if surface == "" {
+		surface = "portal"
+	}
+	rows, err := s.pool.Query(ctx, `SELECT a.id,a.workspace_id,a.knowledge_base_id,a.collection_id,a.title,a.slug,a.excerpt,a.body,a.state,a.language,a.author_id,a.seo,a.view_count,a.helpful_count,a.unhelpful_count,a.version,a.scheduled_at,a.published_at,a.created_at,a.updated_at,ts_rank(setweight(to_tsvector('english',a.title),'A')||setweight(to_tsvector('english',a.excerpt),'B')||setweight(to_tsvector('english',a.body),'C'),websearch_to_tsquery('english',$3)) FROM articles a JOIN knowledge_bases k ON k.id=a.knowledge_base_id WHERE a.workspace_id=$1 AND ($2='' OR k.slug=$2) AND a.state='published' AND ($4='' OR a.language=$4) AND ($3='' OR (setweight(to_tsvector('english',a.title),'A')||setweight(to_tsvector('english',a.excerpt),'B')||setweight(to_tsvector('english',a.body),'C')) @@ websearch_to_tsquery('english',$3)) ORDER BY 21 DESC,a.published_at DESC LIMIT $5`, workspaceID, kbSlug, query, language, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]SearchResult, 0)
+	for rows.Next() {
+		var item Article
+		var rank float32
+		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.KnowledgeBaseID, &item.CollectionID, &item.Title, &item.Slug, &item.Excerpt, &item.Body, &item.State, &item.Language, &item.AuthorID, &item.SEO, &item.ViewCount, &item.HelpfulCount, &item.UnhelpfulCount, &item.Version, &item.ScheduledAt, &item.PublishedAt, &item.CreatedAt, &item.UpdatedAt, &rank); err != nil {
+			return nil, err
+		}
+		result = append(result, SearchResult{Article: item, Rank: rank})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	_, _ = s.pool.Exec(ctx, `INSERT INTO article_searches(id,workspace_id,query,result_count,language,surface) VALUES($1,$2,$3,$4,NULLIF($5,''),$6)`, ids.New(ids.PrefixArticleSearch), workspaceID, query, len(result), language, surface)
+	return result, nil
+}
+
+func scanArticles(rows pgx.Rows) ([]Article, error) {
+	result := make([]Article, 0)
+	for rows.Next() {
+		var item Article
+		var seoBytes []byte
+		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.KnowledgeBaseID, &item.CollectionID, &item.Title, &item.Slug, &item.Excerpt, &item.Body, &item.State, &item.Language, &item.AuthorID, &seoBytes, &item.ViewCount, &item.HelpfulCount, &item.UnhelpfulCount, &item.Version, &item.ScheduledAt, &item.PublishedAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if len(seoBytes) > 0 {
+			if err := json.Unmarshal(seoBytes, &item.SEO); err != nil {
+				return nil, err
+			}
+		}
+		if item.SEO == nil {
+			item.SEO = map[string]any{}
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+func uniqueLanguages(input []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(input))
+	for _, v := range input {
+		v = strings.TrimSpace(v)
+		if v != "" && !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
+}
+func validState(state string) bool {
+	switch state {
+	case "draft", "in_review", "scheduled", "published", "archived":
+		return true
+	}
+	return false
+}
