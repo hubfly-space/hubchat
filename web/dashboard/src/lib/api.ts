@@ -6,13 +6,10 @@
  * and the dev proxy in vite.config.ts forwards /api and /ws to the Go server
  * on :8080.
  *
- * Scope note: the dashboard's ~70 screens are still built against
- * `data/fixtures.ts` (see that file's header). Only auth, workspace
- * bootstrap, and conversation/message send-and-receive have a real service
- * layer behind them so far (see docs/architecture.md's status section). This
- * client covers exactly that surface — it is not a stand-in for the fixture
- * data everywhere else, and callers should not assume every method here has a
- * corresponding one for every fixture entity.
+ * Scope note: this compatibility client is used by the explicit live-demo
+ * route and older core screens. New production pages should use the shared
+ * `@hubchat/shared` client/query layer so cancellation, retries, cache
+ * invalidation, pagination, and request diagnostics behave consistently.
  */
 
 const API_BASE = "/api/v1";

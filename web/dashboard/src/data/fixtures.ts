@@ -1,10 +1,11 @@
 /**
- * Fixture dataset.
+ * Explicit demo dataset.
  *
- * The dashboard is built against this rather than a live API so the interface
- * can be reviewed before the Go services exist. It is deliberately shaped like
- * the real payloads (see @hubchat/shared/types) — when the API lands, the
- * swap is `data/fixtures` → `data/client`, and no component changes.
+ * This dataset is intentionally kept for `/dev/live`, visual review, and
+ * isolated component development. Production pages must use the live API and
+ * must render an error state when that API is unavailable; they must not fall
+ * back to this file because a plausible demo row is worse than an explicit
+ * operational failure.
  *
  * Everything is seeded from a fixed clock so screenshots and visual diffs are
  * stable across runs.
