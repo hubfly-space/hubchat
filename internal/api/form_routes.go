@@ -15,8 +15,8 @@ func registerFormRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/forms", requireCapability(deps, authorization.TicketManage, handleListForms(deps)))
 	mux.HandleFunc("POST /v1/forms", requireCapability(deps, authorization.TicketManage, Idempotency(deps)(handleCreateForm(deps))))
 	mux.HandleFunc("GET /v1/forms/{id}", requireCapability(deps, authorization.TicketManage, handleGetForm(deps)))
-	mux.HandleFunc("PATCH /v1/forms/{id}", requireCapability(deps, authorization.TicketManage, handleUpdateForm(deps)))
-	mux.HandleFunc("DELETE /v1/forms/{id}", requireCapability(deps, authorization.TicketManage, handleDeleteForm(deps)))
+	mux.HandleFunc("PATCH /v1/forms/{id}", requireCapability(deps, authorization.TicketManage, Idempotency(deps)(handleUpdateForm(deps))))
+	mux.HandleFunc("DELETE /v1/forms/{id}", requireCapability(deps, authorization.TicketManage, Idempotency(deps)(handleDeleteForm(deps))))
 
 	// Public forms carry the opaque workspace id in the embed URL. The form
 	// itself is still looked up with workspace + slug, and only enabled forms

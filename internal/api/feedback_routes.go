@@ -29,7 +29,7 @@ func registerFeedbackRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /v1/public/feedback/{workspaceID}/boards/{slug}/items", Idempotency(deps)(handlePublicCreateFeedbackItem(deps)))
 	mux.HandleFunc("POST /v1/public/feedback/{workspaceID}/items/{id}/votes", Idempotency(deps)(handlePublicVoteFeedbackItem(deps)))
 	mux.HandleFunc("POST /v1/public/feedback/{workspaceID}/items/{id}/subscription", Idempotency(deps)(handlePublicSubscribeFeedbackItem(deps)))
-	mux.HandleFunc("DELETE /v1/public/feedback/{workspaceID}/items/{id}/subscription", handlePublicUnsubscribeFeedbackItem(deps))
+	mux.HandleFunc("DELETE /v1/public/feedback/{workspaceID}/items/{id}/subscription", Idempotency(deps)(handlePublicUnsubscribeFeedbackItem(deps)))
 }
 
 func handleListFeedbackBoards(deps Deps) http.HandlerFunc {

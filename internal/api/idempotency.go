@@ -205,6 +205,103 @@ func UserIdempotency(deps Deps) func(http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// WidgetIdempotency protects public widget writes. These requests do not have
+// a dashboard session or a portal session, so the workspace has to be resolved
+// from the public key carried by the request itself. A visitor token is added
+// to the endpoint scope when present: two different visitors may legitimately
+// choose the same key, while a retry from the same visitor must replay the
+// original result.
+func WidgetIdempotency(deps Deps) func(http.HandlerFunc) http.HandlerFunc {
+	return func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			key := r.Header.Get("Idempotency-Key")
+			if key == "" || len(key) > 255 || deps.Widget == nil {
+				next(w, r)
+				return
+			}
+
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest,
+					"The request body could not be read.")
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+
+			publicKey := strings.TrimSpace(r.URL.Query().Get("key"))
+			pageURL := strings.TrimSpace(r.URL.Query().Get("url"))
+			token := strings.TrimSpace(r.URL.Query().Get("token"))
+			var envelope struct {
+				PublicKey string `json:"public_key"`
+				URL       string `json:"url"`
+				Token     string `json:"token"`
+			}
+			if len(body) > 0 {
+				_ = json.Unmarshal(body, &envelope)
+			}
+			if publicKey == "" {
+				publicKey = strings.TrimSpace(envelope.PublicKey)
+			}
+			if pageURL == "" {
+				pageURL = strings.TrimSpace(envelope.URL)
+			}
+			if token == "" {
+				token = strings.TrimSpace(envelope.Token)
+			}
+			if publicKey == "" {
+				next(w, r)
+				return
+			}
+
+			widgetRecord, err := deps.Widget.WidgetForOrigin(r.Context(), publicKey, pageURL, r.Header.Get("Origin"))
+			if err != nil {
+				// Let the owning handler return the canonical widget error. This
+				// middleware must not change origin-validation semantics.
+				next(w, r)
+				return
+			}
+
+			endpoint := r.Method + " " + r.URL.Path
+			if token != "" {
+				tokenScope := sha256.Sum256([]byte(token))
+				endpoint += " visitor:" + fmt.Sprintf("%x", tokenScope[:])
+			}
+			fingerprint := sha256.Sum256(body)
+			stored, err := claimIdempotencyKey(r.Context(), deps.Pool, widgetRecord.WorkspaceID, key, endpoint, fingerprint[:])
+			switch {
+			case errors.Is(err, errIdempotencyMismatch):
+				httpserver.WriteError(w, r, http.StatusUnprocessableEntity, "idempotency_key_reused",
+					"This Idempotency-Key was already used with a different request body.")
+				return
+			case errors.Is(err, errIdempotencyInFlight):
+				w.Header().Set("Retry-After", "1")
+				httpserver.WriteError(w, r, http.StatusConflict, "idempotency_in_flight",
+					"An earlier request with this Idempotency-Key is still being processed.")
+				return
+			case err != nil:
+				deps.Logger.Error("widget idempotency claim failed", "error", err,
+					"request_id", httpserver.RequestIDFrom(r.Context()))
+				next(w, r)
+				return
+			}
+			if stored != nil {
+				w.Header().Set("Idempotent-Replay", "true")
+				httpserver.WriteJSON(w, stored.status, json.RawMessage(stored.body))
+				return
+			}
+
+			recorder := &bodyRecorder{ResponseWriter: w, status: http.StatusOK}
+			next(recorder, r)
+			if recorder.status >= 200 && recorder.status < 300 {
+				completeIdempotencyKey(r.Context(), deps, widgetRecord.WorkspaceID, key, endpoint,
+					recorder.status, recorder.buf.Bytes())
+				return
+			}
+			releaseIdempotencyKey(r.Context(), deps, widgetRecord.WorkspaceID, key, endpoint)
+		}
+	}
+}
+
 var (
 	errIdempotencyMismatch = errors.New("api: idempotency key reused with a different body")
 	errIdempotencyInFlight = errors.New("api: idempotency key is still in flight")
