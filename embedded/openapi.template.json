@@ -199,6 +199,14 @@
       "get": { "$ref": "#/components/operations/get", "operationId": "getSurvey", "tags": ["Surveys"] },
       "patch": { "$ref": "#/components/operations/update", "operationId": "updateSurvey", "tags": ["Surveys"] }
     },
+    "/v1/surveys/{id}/responses": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/list", "operationId": "listSurveyResponses", "tags": ["Surveys"] }
+    },
+    "/v1/surveys/{id}/responses.csv": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/list", "operationId": "exportSurveyResponses", "tags": ["Surveys"] }
+    },
     "/v1/public/surveys/{workspaceID}/{id}/responses": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceID" }, { "$ref": "#/components/parameters/Id" }],
       "post": { "$ref": "#/components/operations/publicCreate", "operationId": "submitSurveyResponse", "security": [], "tags": ["Surveys"] }

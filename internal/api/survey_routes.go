@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/httpserver"
@@ -15,6 +16,7 @@ func registerSurveyRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/surveys/{id}", requireCapability(deps, authorization.SurveyManage, handleGetSurvey(deps)))
 	mux.HandleFunc("PATCH /v1/surveys/{id}", requireCapability(deps, authorization.SurveyManage, Idempotency(deps)(handleUpdateSurvey(deps))))
 	mux.HandleFunc("GET /v1/surveys/{id}/responses", requireCapability(deps, authorization.SurveyManage, handleListSurveyResponses(deps)))
+	mux.HandleFunc("GET /v1/surveys/{id}/responses.csv", requireCapability(deps, authorization.SurveyManage, handleExportSurveyResponses(deps)))
 	mux.HandleFunc("GET /v1/surveys/{id}/summary", requireCapability(deps, authorization.SurveyManage, handleSurveySummary(deps)))
 	mux.HandleFunc("GET /v1/public/surveys/{workspaceID}/{id}", handlePublicGetSurvey(deps))
 	mux.HandleFunc("POST /v1/public/surveys/{workspaceID}/{id}/responses", Idempotency(deps)(handlePublicSubmitSurvey(deps)))
@@ -74,12 +76,40 @@ func handleUpdateSurvey(deps Deps) http.HandlerFunc {
 }
 func handleListSurveyResponses(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := deps.Survey.ListResponses(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"), 100)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		items, err := deps.Survey.ListResponsesPage(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"), cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			writeSurveyInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		page := NewPage(items, limit, func(item survey.Response) Cursor {
+			at := time.Time{}
+			if item.SubmittedAt != nil {
+				at = *item.SubmittedAt
+			}
+			return Cursor{At: at, ID: item.ID}
+		})
+		httpserver.WriteJSON(w, http.StatusOK, page)
+	}
+}
+
+func handleExportSurveyResponses(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		workspaceID := actorFromRequest(r).WorkspaceID
+		if _, err := deps.Survey.Get(r.Context(), workspaceID, r.PathValue("id")); err != nil {
+			writeSurveyError(w, r, err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", "attachment; filename=hubchat-survey-"+r.PathValue("id")+".csv")
+		// CSV is streamed after the survey lookup above, so an invalid survey
+		// still receives the normal JSON error contract. Once bytes are sent,
+		// an error cannot safely be represented as another response body.
+		_ = deps.Survey.WriteResponsesCSV(r.Context(), workspaceID, r.PathValue("id"), w)
 	}
 }
 func handleSurveySummary(deps Deps) http.HandlerFunc {

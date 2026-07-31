@@ -4,10 +4,12 @@ package survey
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"strings"
 	"time"
@@ -508,10 +510,25 @@ func (s *Service) Submit(ctx context.Context, workspaceID, id, customerID string
 }
 
 func (s *Service) ListResponses(ctx context.Context, workspaceID, surveyID string, limit int) ([]Response, error) {
+	return s.ListResponsesPage(ctx, workspaceID, surveyID, time.Time{}, "", limit)
+}
+
+// ListResponsesPage returns submitted responses in a stable cursor order. A
+// response cursor uses submitted_at plus id, so equal timestamps cannot cause
+// rows to disappear or repeat while an operator pages through a large survey.
+func (s *Service) ListResponsesPage(ctx context.Context, workspaceID, surveyID string, before time.Time, beforeID string, limit int) ([]Response, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	rows, err := s.pool.Query(ctx, `SELECT r.id,r.survey_id,r.customer_id,r.conversation_id,r.ticket_id,r.agent_id,r.score,r.comment,r.submitted_at,COALESCE(jsonb_object_agg(a.question_id,a.value) FILTER (WHERE a.question_id IS NOT NULL),'{}'::jsonb) FROM survey_responses r LEFT JOIN survey_answers a ON a.response_id=r.id WHERE r.workspace_id=$1 AND r.survey_id=$2 AND r.submitted_at IS NOT NULL GROUP BY r.id ORDER BY r.submitted_at DESC,r.id DESC LIMIT $3`, workspaceID, surveyID, limit)
+	query := `SELECT r.id,r.survey_id,r.customer_id,r.conversation_id,r.ticket_id,r.agent_id,r.score,r.comment,r.submitted_at,COALESCE(jsonb_object_agg(a.question_id,a.value) FILTER (WHERE a.question_id IS NOT NULL),'{}'::jsonb) FROM survey_responses r LEFT JOIN survey_answers a ON a.response_id=r.id WHERE r.workspace_id=$1 AND r.survey_id=$2 AND r.submitted_at IS NOT NULL`
+	args := []any{workspaceID, surveyID}
+	if !before.IsZero() {
+		query += ` AND (r.submitted_at,r.id) < ($3,$4)`
+		args = append(args, before, beforeID)
+	}
+	query += fmt.Sprintf(` GROUP BY r.id ORDER BY r.submitted_at DESC,r.id DESC LIMIT $%d`, len(args)+1)
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -527,6 +544,49 @@ func (s *Service) ListResponses(ctx context.Context, workspaceID, surveyID strin
 		result = append(result, item)
 	}
 	return result, rows.Err()
+}
+
+// WriteResponsesCSV streams all submitted responses for an operator export.
+// Answers remain one JSON column so custom question shapes stay lossless.
+func (s *Service) WriteResponsesCSV(ctx context.Context, workspaceID, surveyID string, output io.Writer) error {
+	if _, err := s.Get(ctx, workspaceID, surveyID); err != nil {
+		return err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT r.id,r.customer_id,r.score,r.comment,r.submitted_at,COALESCE(jsonb_object_agg(a.question_id,a.value) FILTER (WHERE a.question_id IS NOT NULL),'{}'::jsonb) FROM survey_responses r LEFT JOIN survey_answers a ON a.response_id=r.id WHERE r.workspace_id=$1 AND r.survey_id=$2 AND r.submitted_at IS NOT NULL GROUP BY r.id ORDER BY r.submitted_at DESC,r.id DESC`, workspaceID, surveyID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	writer := csv.NewWriter(output)
+	if err := writer.Write([]string{"id", "customer_id", "score", "comment", "submitted_at", "answers"}); err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id, comment string
+		var customerID *string
+		var score *float64
+		var submittedAt time.Time
+		var answers []byte
+		if err := rows.Scan(&id, &customerID, &score, &comment, &submittedAt, &answers); err != nil {
+			return err
+		}
+		customer := ""
+		if customerID != nil {
+			customer = *customerID
+		}
+		scoreValue := ""
+		if score != nil {
+			scoreValue = fmt.Sprintf("%g", *score)
+		}
+		if err := writer.Write([]string{id, customer, scoreValue, comment, submittedAt.UTC().Format(time.RFC3339Nano), string(answers)}); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	writer.Flush()
+	return writer.Error()
 }
 
 func (s *Service) Summary(ctx context.Context, workspaceID, surveyID string) (*Summary, error) {
