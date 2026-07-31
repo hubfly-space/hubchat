@@ -583,6 +583,7 @@ type widgetIdentifyRequest struct {
 	Email       *string `json:"email"`
 	ExternalID  *string `json:"external_id"`
 	SignedToken *string `json:"signed_token"`
+	Attributes  map[string]any `json:"attributes"`
 }
 
 func handleWidgetIdentify(deps Deps) http.HandlerFunc {
@@ -598,7 +599,7 @@ func handleWidgetIdentify(deps Deps) http.HandlerFunc {
 			return
 		}
 		cust, err := deps.Widget.Identify(r.Context(), workspaceID, visitor, widget.IdentifyInput{
-			Name: req.Name, Email: req.Email, ExternalID: req.ExternalID, SignedToken: req.SignedToken,
+			Name: req.Name, Email: req.Email, ExternalID: req.ExternalID, SignedToken: req.SignedToken, Attributes: req.Attributes,
 		})
 		if err != nil {
 			writeWidgetError(w, r, err)

@@ -46,6 +46,10 @@ type IdentifyInput struct {
 	Name       *string
 	Email      *string
 	ExternalID *string
+	// Attributes are validated against the workspace metadata schema before
+	// they are merged. The browser may suggest values, but it cannot bypass
+	// declared keys, source allowlists, or value constraints.
+	Attributes map[string]any
 	// SignedToken, when present, is verified against this workspace's derived
 	// key (see identity_token.go) and — only then — treated as proof rather
 	// than a bare claim (§6.9: never merge on weak signals).
@@ -84,6 +88,11 @@ func (s *Service) Identify(ctx context.Context, workspaceID string, visitor *Vis
 	found, err := s.customer.Identify(ctx, workspaceID, existingCustomerID, name, email, externalID, verified)
 	if err != nil {
 		return nil, err
+	}
+	if len(in.Attributes) > 0 {
+		if _, err := s.customer.SetCustomerAttributes(ctx, workspaceID, "", found.ID, "js_sdk", in.Attributes); err != nil {
+			return nil, err
+		}
 	}
 
 	// Already linked to exactly this customer — nothing new to record.

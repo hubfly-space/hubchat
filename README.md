@@ -37,7 +37,8 @@ What runs today:
 | `make check` | Typecheck, lint, vet, and unit test |
 
 Integration tests use a separate destructive test database and run with
-`make test-integration` after `make dev-db` and `export HUBCHAT_TEST_DATABASE_URL=...`.
+`make test-integration` after `make dev-db`. They default to `hubchat_test`, so
+they never wipe the development database.
 
 ---
 

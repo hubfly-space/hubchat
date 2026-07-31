@@ -21,6 +21,14 @@ return authenticated, workspace-scoped CSV snapshots. Customer exports require
 the `customer.read_sensitive` capability and are capped at 10,000 rows; use the
 background portability archive for larger or complete workspace transfers.
 
+Workspace archive imports are deliberately two-step: upload a workspace-owned
+`.json.gz` file, create an import request with `auto_start: false`, preview it
+with `POST /api/v1/portability/imports/{id}/preview`, then confirm it with
+`POST /api/v1/portability/imports/{id}/confirm` and
+`{"backup_verified":true}`. The importer records a table/row cursor and resumes
+idempotently after a worker retry. Archive files are checksum-verified,
+workspace-scoped, and limited to 512 MiB compressed.
+
 The checked-in document is generated from
 [`openapi.template.json`](../embedded/openapi.template.json) with
 `node scripts/generate-openapi.mjs`; `make openapi-check` validates the

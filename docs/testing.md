@@ -23,9 +23,13 @@ database. Do not use a database containing local work.
 
 ```bash
 make dev-db
-export HUBCHAT_TEST_DATABASE_URL="postgres://hubchat:hubchat@127.0.0.1:5432/hubchat?sslmode=disable"
 make test-integration
 ```
+
+`make test-integration` defaults to `hubchat_test`, a dedicated database it
+creates, migrates, and then destroys data in — it never touches the development
+database (`hubchat`). Point it elsewhere only deliberately:
+`export HUBCHAT_TEST_DATABASE_URL="postgres://hubchat:hubchat@127.0.0.1:5432/other?sslmode=disable"`.
 
 The suite runs one package at a time because each package resets the shared
 test database. A missing `HUBCHAT_TEST_DATABASE_URL` skips integration tests by
