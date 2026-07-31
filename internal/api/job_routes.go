@@ -11,6 +11,7 @@ import (
 
 func registerJobRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/jobs", requireCapability(deps, authorization.WorkspaceManage, handleListJobs(deps)))
+	mux.HandleFunc("POST /v1/jobs/{id}/cancel", requireCapability(deps, authorization.WorkspaceManage, Idempotency(deps)(handleCancelJob(deps))))
 	mux.HandleFunc("POST /v1/jobs/{id}/retry", requireCapability(deps, authorization.WorkspaceManage, Idempotency(deps)(handleRetryJob(deps))))
 }
 
@@ -38,5 +39,20 @@ func handleRetryJob(deps Deps) http.HandlerFunc {
 			return
 		}
 		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"status": "queued"})
+	}
+}
+
+func handleCancelJob(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		if err := deps.Jobs.Cancel(r.Context(), actor.WorkspaceID, r.PathValue("id")); err != nil {
+			if errors.Is(err, jobs.ErrNotFound) {
+				httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Job not found or is no longer pending.")
+				return
+			}
+			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not cancel background job.")
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"status": "cancelled"})
 	}
 }

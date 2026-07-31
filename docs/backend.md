@@ -108,6 +108,8 @@ Durable rows in PostgreSQL, leased with a heartbeat.
 - Idempotent. A job may run twice; assume it will.
 - Retry with exponential backoff up to `MaxAttempts`, then dead-letter.
 - Dead-lettered jobs stay visible and retryable, in the dashboard and the CLI.
+- Pending jobs can be explicitly cancelled from the dashboard or API; running
+  jobs are never force-killed because handlers may hold external side effects.
 - **Workspace fairness is explicit.** One tenant's export must not starve
   everyone else's notifications.
 

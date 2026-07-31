@@ -72,15 +72,16 @@ func handleGetPortal(deps Deps) http.HandlerFunc {
 }
 
 type updatePortalRequest struct {
-	Name            *string        `json:"name"`
-	Subdomain       *string        `json:"subdomain"`
-	Theme           map[string]any `json:"theme"`
-	Features        map[string]any `json:"features"`
-	AuthMethods     []string       `json:"auth_methods"`
-	Permissions     map[string]any `json:"permissions"`
-	DefaultInboxID  *string        `json:"default_inbox_id"`
-	DefaultLanguage *string        `json:"default_language"`
-	Enabled         *bool          `json:"enabled"`
+	Name            *string                  `json:"name"`
+	Subdomain       *string                  `json:"subdomain"`
+	Theme           map[string]any           `json:"theme"`
+	Features        map[string]any           `json:"features"`
+	AuthMethods     []string                 `json:"auth_methods"`
+	Permissions     map[string]any           `json:"permissions"`
+	Navigation      *[]portal.NavigationItem `json:"navigation"`
+	DefaultInboxID  *string                  `json:"default_inbox_id"`
+	DefaultLanguage *string                  `json:"default_language"`
+	Enabled         *bool                    `json:"enabled"`
 }
 
 func handleUpdatePortal(deps Deps) http.HandlerFunc {
@@ -93,7 +94,7 @@ func handleUpdatePortal(deps Deps) http.HandlerFunc {
 		}
 		p, err := deps.Portal.Update(r.Context(), actor.WorkspaceID, r.PathValue("id"), portal.UpdateRequest{
 			Name: req.Name, Subdomain: req.Subdomain, Theme: req.Theme, Features: req.Features,
-			AuthMethods: req.AuthMethods, Permissions: req.Permissions, DefaultInboxID: req.DefaultInboxID,
+			AuthMethods: req.AuthMethods, Permissions: req.Permissions, Navigation: req.Navigation, DefaultInboxID: req.DefaultInboxID,
 			DefaultLanguage: req.DefaultLanguage, Enabled: req.Enabled,
 		})
 		if errors.Is(err, portal.ErrNotFound) {

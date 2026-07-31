@@ -52,7 +52,9 @@ type Job struct {
 	Attempt     int             `json:"attempt"`
 	MaxAttempts int             `json:"max_attempts"`
 	ScheduledAt time.Time       `json:"scheduled_at"`
-	LastError   string          `json:"last_error,omitempty"`
+	StartedAt   *time.Time      `json:"started_at,omitempty"`
+	FinishedAt  *time.Time      `json:"finished_at,omitempty"`
+	LastError   string          `json:"error,omitempty"`
 	CreatedAt   time.Time       `json:"created_at"`
 }
 
@@ -242,7 +244,8 @@ func (c *Client) List(ctx context.Context, filter ListFilter) ([]Job, error) {
 	}
 	rows, err := c.pool.Query(ctx, `
 		SELECT id, coalesce(workspace_id, ''), queue, type, payload, state,
-		       priority, attempt, max_attempts, scheduled_at, coalesce(last_error, ''), created_at
+		       priority, attempt, max_attempts, scheduled_at, started_at, finished_at,
+		       coalesce(last_error, ''), created_at
 		FROM jobs
 		WHERE ($1 = '' OR workspace_id = $1)
 		  AND ($2 = '' OR state = $2)
@@ -261,7 +264,7 @@ func (c *Client) List(ctx context.Context, filter ListFilter) ([]Job, error) {
 		if err := rows.Scan(
 			&job.ID, &job.WorkspaceID, &job.Queue, &job.Type, &job.Payload,
 			&job.State, &job.Priority, &job.Attempt, &job.MaxAttempts,
-			&job.ScheduledAt, &job.LastError, &job.CreatedAt,
+			&job.ScheduledAt, &job.StartedAt, &job.FinishedAt, &job.LastError, &job.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("jobs: scan list: %w", err)
 		}
