@@ -12,11 +12,22 @@ import (
 
 func registerSavedViewRoutes(mux *http.ServeMux, deps Deps) {
 	idempotent := Idempotency(deps)
-	mux.HandleFunc("GET /v1/saved-views", requireCapability(deps, authorization.ConversationRead, handleListSavedViews(deps)))
-	mux.HandleFunc("POST /v1/saved-views", requireCapability(deps, authorization.ConversationAssign, idempotent(handleCreateSavedView(deps))))
-	mux.HandleFunc("GET /v1/saved-views/{id}", requireCapability(deps, authorization.ConversationRead, handleGetSavedView(deps)))
-	mux.HandleFunc("PATCH /v1/saved-views/{id}", requireCapability(deps, authorization.ConversationAssign, idempotent(handleUpdateSavedView(deps))))
-	mux.HandleFunc("DELETE /v1/saved-views/{id}", requireCapability(deps, authorization.ConversationAssign, idempotent(handleDeleteSavedView(deps))))
+	mux.HandleFunc("GET /v1/saved-views", requireSavedViewActor(deps, handleListSavedViews(deps)))
+	mux.HandleFunc("POST /v1/saved-views", requireSavedViewActor(deps, idempotent(handleCreateSavedView(deps))))
+	mux.HandleFunc("GET /v1/saved-views/{id}", requireSavedViewActor(deps, handleGetSavedView(deps)))
+	mux.HandleFunc("PATCH /v1/saved-views/{id}", requireSavedViewActor(deps, idempotent(handleUpdateSavedView(deps))))
+	mux.HandleFunc("DELETE /v1/saved-views/{id}", requireSavedViewActor(deps, idempotent(handleDeleteSavedView(deps))))
+}
+
+func requireSavedViewActor(deps Deps, next http.HandlerFunc) http.HandlerFunc {
+	return requireActor(deps, func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		if r.Method == http.MethodGet && r.PathValue("id") == "" && !canReadSavedView(actor, r.URL.Query().Get("entity_type")) {
+			writeSavedViewForbidden(w, r)
+			return
+		}
+		next(w, r)
+	})
 }
 
 func handleListSavedViews(deps Deps) http.HandlerFunc {
@@ -56,6 +67,10 @@ func handleCreateSavedView(deps Deps) http.HandlerFunc {
 			return
 		}
 		actor := actorFromRequest(r)
+		if !canWriteSavedView(actor, input.EntityType) {
+			writeSavedViewForbidden(w, r)
+			return
+		}
 		item, err := deps.SavedView.Create(r.Context(), actor.WorkspaceID, actor.MemberID, input)
 		if err != nil {
 			writeSavedViewError(w, r, err)
@@ -73,6 +88,10 @@ func handleGetSavedView(deps Deps) http.HandlerFunc {
 			writeSavedViewError(w, r, err)
 			return
 		}
+		if !canReadSavedView(actor, item.EntityType) {
+			writeSavedViewForbidden(w, r)
+			return
+		}
 		httpserver.WriteJSON(w, http.StatusOK, item)
 	}
 }
@@ -85,6 +104,18 @@ func handleUpdateSavedView(deps Deps) http.HandlerFunc {
 			return
 		}
 		actor := actorFromRequest(r)
+		current, getErr := deps.SavedView.Get(r.Context(), actor.WorkspaceID, actor.MemberID, actor.Role, r.PathValue("id"))
+		if getErr != nil {
+			writeSavedViewError(w, r, getErr)
+			return
+		}
+		if input.EntityType == "" {
+			input.EntityType = current.EntityType
+		}
+		if !canWriteSavedView(actor, current.EntityType) || !canWriteSavedView(actor, input.EntityType) {
+			writeSavedViewForbidden(w, r)
+			return
+		}
 		item, err := deps.SavedView.Update(r.Context(), actor.WorkspaceID, actor.MemberID, actor.Role, r.PathValue("id"), input)
 		if err != nil {
 			writeSavedViewError(w, r, err)
@@ -97,12 +128,49 @@ func handleUpdateSavedView(deps Deps) http.HandlerFunc {
 func handleDeleteSavedView(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
+		current, getErr := deps.SavedView.Get(r.Context(), actor.WorkspaceID, actor.MemberID, actor.Role, r.PathValue("id"))
+		if getErr != nil {
+			writeSavedViewError(w, r, getErr)
+			return
+		}
+		if !canWriteSavedView(actor, current.EntityType) {
+			writeSavedViewForbidden(w, r)
+			return
+		}
 		if err := deps.SavedView.Delete(r.Context(), actor.WorkspaceID, actor.MemberID, actor.Role, r.PathValue("id")); err != nil {
 			writeSavedViewError(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+func canReadSavedView(actor *authorization.Actor, entityType string) bool {
+	switch entityType {
+	case "ticket":
+		return actor.Can(authorization.TicketManage)
+	case "conversation":
+		return actor.Can(authorization.ConversationRead)
+	case "":
+		return actor.Can(authorization.ConversationRead) || actor.Can(authorization.TicketManage)
+	default:
+		return false
+	}
+}
+
+func canWriteSavedView(actor *authorization.Actor, entityType string) bool {
+	switch entityType {
+	case "ticket":
+		return actor.Can(authorization.TicketManage)
+	case "", "conversation":
+		return actor.Can(authorization.ConversationAssign)
+	default:
+		return false
+	}
+}
+
+func writeSavedViewForbidden(w http.ResponseWriter, r *http.Request) {
+	httpserver.WriteError(w, r, http.StatusForbidden, httpserver.CodeForbidden, "You do not have permission to use this saved view.")
 }
 
 func writeSavedViewError(w http.ResponseWriter, r *http.Request, err error) {

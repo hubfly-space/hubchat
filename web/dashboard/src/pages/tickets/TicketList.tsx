@@ -5,9 +5,14 @@ import {
   BulkActionBar,
   Button,
   DataTable,
+  Dialog,
+  DialogClose,
+  DialogContent,
   EmptyState,
+  Field,
   FilterBar,
   invalidate,
+  Input,
   Menu,
   MenuContent,
   MenuItem,
@@ -17,11 +22,14 @@ import {
   PageHeader,
   Pagination,
   PriorityIndicator,
+  Select,
   TagChip,
   TicketStatusBadge,
   Toolbar,
   Tooltip,
+  idempotencyKey,
   useInfinite,
+  useMutation,
   useQuery,
   formatRelativeShort,
   type Column,
@@ -29,17 +37,18 @@ import {
   type FilterCondition,
   type FilterFieldDef,
   type Paginated,
+  type SavedView,
   type Ticket,
 } from "@hubchat/shared";
 import { Circle, Download, Flag, TicketCheck, UserRound, Users2 } from "lucide-react";
-import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useWorkspace } from "../../app/workspace-context";
 import { NewTicketDialog } from "./NewTicketDialog";
 
-// Only fields the backend can actually filter on are offered — no gt/lt date
-// range (Stage 8's saved-view query compiler will add that) and no company
-// filter (no company directory exists yet to pick from; §Stage 4).
+// Only fields the backend can actually filter on are offered. Saved views use
+// this same condition shape, so a view opened from a link cannot invent a
+// client-only filter and silently show the wrong queue.
 const FILTER_FIELDS: FilterFieldDef[] = [
   {
     key: "status",
@@ -96,23 +105,45 @@ function conditionsToParams(conditions: FilterCondition[]): URLSearchParams {
       params.set("assignee_id", "unassigned");
       continue;
     }
-    if (typeof condition.value !== "string" || condition.value === "") continue;
+    if (condition.operator !== "is" && condition.operator !== "in") continue;
+    const values = Array.isArray(condition.value)
+      ? condition.value.map(String).filter(Boolean)
+      : typeof condition.value === "string" && condition.value !== ""
+        ? [condition.value]
+        : [];
+    if (values.length === 0) continue;
+    const firstValue = values[0];
+    if (!firstValue) continue;
     switch (condition.field) {
       case "status":
-        params.set("status", condition.value);
+        params.set("status", values.join(","));
         break;
       case "priority":
-        params.set("priority", condition.value);
+        params.set("priority", firstValue);
         break;
       case "assignee":
-        params.set("assignee_id", condition.value);
+        params.set("assignee_id", firstValue);
         break;
       case "team":
-        params.set("team_id", condition.value);
+        params.set("team_id", firstValue);
         break;
     }
   }
   return params;
+}
+
+function decodeConditions(value: string | null): FilterCondition[] {
+  if (!value) return [];
+  try {
+    const decoded: unknown = JSON.parse(value);
+    return Array.isArray(decoded) ? (decoded as FilterCondition[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function viewConditions(view: SavedView): FilterCondition[] {
+  return Array.isArray(view.filters?.conditions) ? view.filters.conditions : [];
 }
 
 /**
@@ -124,13 +155,70 @@ function conditionsToParams(conditions: FilterCondition[]): URLSearchParams {
  */
 export default function TicketList() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { members, teams, tags, tagById } = useWorkspace();
 
-  const [conditions, setConditions] = useState<FilterCondition[]>([]);
+  const activeViewID = searchParams.get("view") ?? "";
+  const encodedFilters = searchParams.get("filters");
+  const [conditions, setConditions] = useState<FilterCondition[]>(() => decodeConditions(encodedFilters));
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [newTicketOpen, setNewTicketOpen] = useState(false);
+  const [saveViewOpen, setSaveViewOpen] = useState(false);
+  const [saveViewName, setSaveViewName] = useState("");
+  const [saveViewScope, setSaveViewScope] = useState<"personal" | "team" | "workspace">("personal");
+  const [saveViewTeamID, setSaveViewTeamID] = useState("");
+  const appliedViewRef = useRef<string | null>(null);
 
   const filterFields = useMemo(() => fieldsWithDirectory(members, teams), [members, teams]);
+  const savedViews = useInfinite<SavedView>(["saved-views", "ticket"], (cursor, signal) => {
+    const params = new URLSearchParams({ entity_type: "ticket", limit: "50" });
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<SavedView>>(`/saved-views?${params.toString()}`, { signal });
+  });
+  const selectedView = useQuery<SavedView>(
+    activeViewID ? ["saved-view", activeViewID] : null,
+    (signal) => api.get(`/saved-views/${encodeURIComponent(activeViewID)}`, { signal }),
+  );
+  const availableViews = useMemo(() => {
+    const byID = new Map(savedViews.items.map((view) => [view.id, view]));
+    if (selectedView.data) byID.set(selectedView.data.id, selectedView.data);
+    return [...byID.values()];
+  }, [savedViews.items, selectedView.data]);
+
+  useEffect(() => {
+    if (activeViewID) {
+      const view = availableViews.find((item) => item.id === activeViewID);
+      if (!view || appliedViewRef.current === view.id) return;
+      setConditions(viewConditions(view));
+      appliedViewRef.current = view.id;
+      return;
+    }
+    if (appliedViewRef.current !== null || encodedFilters !== null) {
+      setConditions(decodeConditions(encodedFilters));
+      appliedViewRef.current = null;
+    }
+  }, [activeViewID, availableViews, encodedFilters]);
+
+  const changeConditions = (next: FilterCondition[]) => {
+    setConditions(next);
+    appliedViewRef.current = null;
+    setSearchParams((current) => {
+      current.delete("view");
+      if (next.length > 0) current.set("filters", JSON.stringify(next));
+      else current.delete("filters");
+      return current;
+    }, { replace: true });
+  };
+
+  const selectSavedView = (viewID: string) => {
+    setSearchParams((current) => {
+      current.delete("filters");
+      if (viewID) current.set("view", viewID);
+      else current.delete("view");
+      return current;
+    }, { replace: true });
+  };
+
   const filterParams = useMemo(() => conditionsToParams(conditions).toString(), [conditions]);
 
   const list = useInfinite<Ticket>(["tickets", filterParams], (cursor, signal) => {
@@ -138,6 +226,22 @@ export default function TicketList() {
     if (cursor) params.set("cursor", cursor);
     return api.get<Paginated<Ticket>>(`/tickets?${params.toString()}`, { signal });
   });
+
+  const saveView = useMutation<
+    { name: string; entity_type: "ticket"; scope: "personal" | "team" | "workspace"; team_id: string; filters: { match: "all"; conditions: FilterCondition[] }; sort: { field: string; direction: "desc" } },
+    SavedView
+  >(
+    (input) => api.post("/saved-views", input, { idempotencyKey: idempotencyKey() }),
+    {
+      invalidates: [["saved-views", "ticket"]],
+      onSuccess: (view) => {
+        setSaveViewOpen(false);
+        setSaveViewName("");
+        setSaveViewScope("personal");
+        selectSavedView(view.id);
+      },
+    },
+  );
 
   const customerIds = useMemo(
     () => [...new Set(list.items.map((t) => t.customer_id).filter((id): id is string => !!id))],
@@ -303,7 +407,26 @@ export default function TicketList() {
         }
       />
 
-      <Toolbar leading={<FilterBar fields={filterFields} conditions={conditions} onChange={setConditions} />} />
+      <Toolbar
+        leading={
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <FilterBar fields={filterFields} conditions={conditions} onChange={changeConditions} />
+            <Select
+              size="sm"
+              value={activeViewID}
+              onValueChange={selectSavedView}
+              aria-label="Ticket saved view"
+              options={[
+                { value: "", label: "Current filters" },
+                ...availableViews.map((view) => ({ value: view.id, label: view.name })),
+              ]}
+            />
+            <Button variant="ghost" size="sm" onClick={() => setSaveViewOpen(true)}>
+              Save view
+            </Button>
+          </div>
+        }
+      />
 
       <div className="min-h-0 flex-1 overflow-auto">
         <DataTable
@@ -382,6 +505,62 @@ export default function TicketList() {
           navigate(`/tickets/${t.id}`);
         }}
       />
+
+      <Dialog open={saveViewOpen} onOpenChange={setSaveViewOpen}>
+        <DialogContent
+          title="Save ticket view"
+          description="Save the current ticket filters as a reusable queue view."
+          footer={
+            <>
+              <DialogClose asChild><Button variant="ghost" size="sm">Cancel</Button></DialogClose>
+              <Button
+                variant="primary"
+                size="sm"
+                loading={saveView.isPending}
+                disabled={!saveViewName.trim() || (saveViewScope === "team" && !(saveViewTeamID || teams[0]?.id))}
+                onClick={() => void saveView.mutate({
+                  name: saveViewName.trim(),
+                  entity_type: "ticket",
+                  scope: saveViewScope,
+                  team_id: saveViewScope === "team" ? saveViewTeamID || teams[0]?.id || "" : "",
+                  filters: { match: "all", conditions },
+                  sort: { field: "updated_at", direction: "desc" },
+                }).catch(() => {})}
+              >
+                Save view
+              </Button>
+            </>
+          }
+        >
+          <div className="space-y-4 pb-2">
+            <Field label="Name" required>
+              <Input autoFocus value={saveViewName} onChange={(event) => setSaveViewName(event.target.value)} placeholder="Urgent tickets" />
+            </Field>
+            <Field label="Visibility">
+              <Select
+                value={saveViewScope}
+                onValueChange={(value) => setSaveViewScope(value as "personal" | "team" | "workspace")}
+                options={[
+                  { value: "personal", label: "Only me" },
+                  { value: "workspace", label: "Everyone in the workspace" },
+                  { value: "team", label: "A team" },
+                ]}
+              />
+            </Field>
+            {saveViewScope === "team" && (
+              <Field label="Team" required>
+                <Select
+                  value={saveViewTeamID || teams[0]?.id || ""}
+                  onValueChange={setSaveViewTeamID}
+                  disabled={teams.length === 0}
+                  options={teams.map((team) => ({ value: team.id, label: team.name }))}
+                />
+              </Field>
+            )}
+            {Boolean(saveView.error) && <p className="text-sm text-danger">Could not save this view. Try again.</p>}
+          </div>
+        </DialogContent>
+      </Dialog>
     </Page>
   );
 }

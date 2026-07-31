@@ -24,10 +24,11 @@ func TestSavedViewListUsesCursorAndVisibilityScope(t *testing.T) {
 			('usr_views_a','Views A','views-a@example.com'), ('usr_views_b','Views B','views-b@example.com');
 		INSERT INTO workspace_members (id,workspace_id,user_id,role) VALUES
 			('mem_views_a','wrk_views_a','usr_views_a','agent'), ('mem_views_b','wrk_views_b','usr_views_b','agent');
-		INSERT INTO saved_views (id,workspace_id,name,scope,owner_id,filters,position) VALUES
-			('svw_a1','wrk_views_a','Personal A','personal','mem_views_a','{}',1),
-			('svw_a2','wrk_views_a','Workspace A','workspace',NULL,'{}',2),
-			('svw_b1','wrk_views_b','Other workspace','workspace',NULL,'{}',1)
+		INSERT INTO saved_views (id,workspace_id,name,entity_type,scope,owner_id,filters,position) VALUES
+			('svw_a1','wrk_views_a','Personal A','conversation','personal','mem_views_a','{}',1),
+			('svw_a2','wrk_views_a','Workspace A','conversation','workspace',NULL,'{}',2),
+			('svw_at1','wrk_views_a','Ticket queue','ticket','workspace',NULL,'{}',1),
+			('svw_b1','wrk_views_b','Other workspace','conversation','workspace',NULL,'{}',1)
 	`); err != nil {
 		t.Fatal(err)
 	}
@@ -52,5 +53,9 @@ func TestSavedViewListUsesCursorAndVisibilityScope(t *testing.T) {
 	second, secondResponse := request("/api/v1/saved-views?entity_type=conversation&limit=1&cursor=" + *first.NextCursor)
 	if secondResponse.Code != http.StatusOK || second.HasMore || len(second.Data) != 1 || second.Data[0].ID != "svw_a2" {
 		t.Fatalf("second saved-view page = %d %+v", secondResponse.Code, second)
+	}
+	ticketViews, ticketResponse := request("/api/v1/saved-views?entity_type=ticket&limit=50")
+	if ticketResponse.Code != http.StatusOK || ticketViews.HasMore || len(ticketViews.Data) != 1 || ticketViews.Data[0].ID != "svw_at1" || ticketViews.Data[0].EntityType != "ticket" {
+		t.Fatalf("ticket saved-view page = %d %+v", ticketResponse.Code, ticketViews)
 	}
 }

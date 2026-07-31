@@ -499,10 +499,16 @@ export type SavedView = {
   workspace_id: Id;
   name: string;
   icon: string | null;
+  entity_type: "conversation" | "ticket";
   scope: "personal" | "team" | "workspace";
+  owner_id?: Id | null;
+  team_id?: Id | null;
   filters: FilterGroup;
   sort: { field: string; direction: "asc" | "desc" };
-  count: number | null;
+  position?: number;
+  created_at?: Timestamp;
+  updated_at?: Timestamp;
+  count?: number | null;
 };
 
 export type FilterOperator =

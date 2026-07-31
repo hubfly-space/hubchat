@@ -298,6 +298,7 @@ export const savedViews: SavedView[] = [
     workspace_id: currentWorkspace.id,
     name: "Urgent · EU customers",
     icon: "flame",
+    entity_type: "conversation",
     scope: "team",
     filters: {
       match: "all",
@@ -314,6 +315,7 @@ export const savedViews: SavedView[] = [
     workspace_id: currentWorkspace.id,
     name: "Enterprise accounts",
     icon: "building",
+    entity_type: "conversation",
     scope: "workspace",
     filters: {
       match: "all",
@@ -327,6 +329,7 @@ export const savedViews: SavedView[] = [
     workspace_id: currentWorkspace.id,
     name: "Awaiting first reply",
     icon: "clock",
+    entity_type: "conversation",
     scope: "personal",
     filters: {
       match: "all",
