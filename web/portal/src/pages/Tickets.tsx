@@ -2,7 +2,6 @@ import {
   Badge,
   Button,
   Card,
-  CardBody,
   EmptyState,
   SegmentedControl,
   formatRelativeShort,
