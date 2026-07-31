@@ -12,23 +12,24 @@ import (
 
 // registerMemberRoutes mounts member directory and lifecycle management.
 func registerMemberRoutes(mux *http.ServeMux, deps Deps) {
+	idempotent := Idempotency(deps)
 	mux.HandleFunc("GET /v1/members",
 		requireActor(deps, handleListMembers(deps)))
 	mux.HandleFunc("GET /v1/roles",
 		requireActor(deps, handleListRoles(deps)))
 
 	mux.HandleFunc("PATCH /v1/members/{id}/role",
-		requireCapability(deps, authorization.MemberManage, handleSetMemberRole(deps)))
+		requireCapability(deps, authorization.MemberManage, idempotent(handleSetMemberRole(deps))))
 	mux.HandleFunc("PATCH /v1/members/{id}/capabilities",
-		requireCapability(deps, authorization.MemberManage, handleSetMemberCapabilities(deps)))
+		requireCapability(deps, authorization.MemberManage, idempotent(handleSetMemberCapabilities(deps))))
 	mux.HandleFunc("DELETE /v1/members/{id}",
-		requireCapability(deps, authorization.MemberManage, handleRemoveMember(deps)))
+		requireCapability(deps, authorization.MemberManage, idempotent(handleRemoveMember(deps))))
 
 	// Self-service: a member changes their own status without member.manage.
 	mux.HandleFunc("PATCH /v1/members/me/presence",
-		requireActor(deps, handleSetOwnPresence(deps)))
+		requireActor(deps, idempotent(handleSetOwnPresence(deps))))
 	mux.HandleFunc("PATCH /v1/members/me/accepting-conversations",
-		requireActor(deps, handleSetOwnAccepting(deps)))
+		requireActor(deps, idempotent(handleSetOwnAccepting(deps))))
 }
 
 func handleListMembers(deps Deps) http.HandlerFunc {

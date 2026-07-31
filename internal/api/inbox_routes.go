@@ -22,11 +22,11 @@ func registerInboxRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/inboxes/{id}",
 		requireActor(deps, handleGetInbox(deps)))
 	mux.HandleFunc("PATCH /v1/inboxes/{id}",
-		requireCapability(deps, authorization.WorkspaceManage, handleUpdateInbox(deps)))
+		requireCapability(deps, authorization.WorkspaceManage, idempotent(handleUpdateInbox(deps))))
 	mux.HandleFunc("PUT /v1/inboxes/{id}/default",
 		requireCapability(deps, authorization.WorkspaceManage, idempotent(handleSetDefaultInbox(deps))))
 	mux.HandleFunc("DELETE /v1/inboxes/{id}",
-		requireCapability(deps, authorization.WorkspaceManage, handleDeleteInbox(deps)))
+		requireCapability(deps, authorization.WorkspaceManage, idempotent(handleDeleteInbox(deps))))
 }
 
 type inboxDetailJSON struct {

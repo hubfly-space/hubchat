@@ -11,7 +11,7 @@ import (
 
 func registerJobRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/jobs", requireCapability(deps, authorization.WorkspaceManage, handleListJobs(deps)))
-	mux.HandleFunc("POST /v1/jobs/{id}/retry", requireCapability(deps, authorization.WorkspaceManage, handleRetryJob(deps)))
+	mux.HandleFunc("POST /v1/jobs/{id}/retry", requireCapability(deps, authorization.WorkspaceManage, Idempotency(deps)(handleRetryJob(deps))))
 }
 
 func handleListJobs(deps Deps) http.HandlerFunc {
