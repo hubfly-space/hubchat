@@ -1,5 +1,6 @@
 import { ApiError, Badge, Button, EmptyState, cn, formatDate, api, useQuery, type BadgeTone } from "@hubchat/shared";
 import { Rss } from "lucide-react";
+import { Link } from "react-router-dom";
 import { usePortal } from "../portal-context";
 
 const TAG_TONE: Record<string, BadgeTone> = {
@@ -25,8 +26,8 @@ export default function Changelog() {
             What we shipped, newest first.
           </p>
         </div>
-        <Button variant="secondary" size="sm" leading={<Rss />}>
-          Subscribe
+        <Button variant="secondary" size="sm" leading={<Rss />} asChild>
+          <Link to="/account">Subscription settings</Link>
         </Button>
       </header>
 
@@ -34,7 +35,7 @@ export default function Changelog() {
         <span aria-hidden="true" className="absolute bottom-2 left-[5px] top-2 w-px bg-line" />
 
         {query.isLoading ? <p className="pl-7 text-sm text-fg-muted">Loading updates…</p> : query.isError ? <EmptyState icon={Rss} title="Changelog unavailable" description={query.error instanceof ApiError ? query.error.message : "Try again in a moment."} /> : changelog.length === 0 ? <EmptyState icon={Rss} title="No published updates yet" description="Check back here for product updates." /> : changelog.map((entry) => (
-          <li key={entry.id} className="relative pb-10 pl-7 last:pb-0">
+          <li id={entry.id} key={entry.id} className="relative scroll-mt-20 pb-10 pl-7 last:pb-0">
             <span
               aria-hidden="true"
               className={cn(
