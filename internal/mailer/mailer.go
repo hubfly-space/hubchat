@@ -22,11 +22,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
+	"mime"
+	"mime/multipart"
 	"net"
 	"net/smtp"
+	"net/textproto"
 	"strings"
 	"text/template"
 	"time"
@@ -47,6 +51,21 @@ type Message struct {
 	// removes a whole class of rendering and sanitisation concerns from the
 	// authentication path.
 	Body string
+	// MessageID and InReplyTo are supplied by the email channel for replies.
+	// Authentication messages leave them empty and remain ordinary standalone
+	// mail.
+	MessageID   string
+	InReplyTo   string
+	Attachments []Attachment
+}
+
+// Attachment is copied into the SMTP message at send time. The durable job
+// stores file ids rather than bytes; the worker resolves and authorizes those
+// ids immediately before delivery.
+type Attachment struct {
+	Name     string
+	MIMEType string
+	Body     []byte
 }
 
 // ErrNotConfigured is returned when no SMTP host is set.
@@ -176,15 +195,68 @@ func (s *SMTPSender) compose(message Message) []byte {
 	if replyTo != "" {
 		fmt.Fprintf(&buf, "Reply-To: %s\r\n", sanitizeHeader(replyTo))
 	}
+	if message.MessageID != "" {
+		fmt.Fprintf(&buf, "Message-ID: %s\r\n", sanitizeHeader(message.MessageID))
+	}
+	if message.InReplyTo != "" {
+		fmt.Fprintf(&buf, "In-Reply-To: %s\r\n", sanitizeHeader(message.InReplyTo))
+		fmt.Fprintf(&buf, "References: %s\r\n", sanitizeHeader(message.InReplyTo))
+	}
 	fmt.Fprintf(&buf, "Date: %s\r\n", time.Now().Format(time.RFC1123Z))
 	buf.WriteString("MIME-Version: 1.0\r\n")
-	buf.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
 	// Transactional mail must never land in a "promotions" tab or be bounced
 	// back to a list address.
 	buf.WriteString("Auto-Submitted: auto-generated\r\n")
-	buf.WriteString("\r\n")
+	if len(message.Attachments) == 0 {
+		buf.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
+		buf.WriteString("\r\n")
+		buf.WriteString(strings.ReplaceAll(message.Body, "\n", "\r\n"))
+		return buf.Bytes()
+	}
 
-	buf.WriteString(strings.ReplaceAll(message.Body, "\n", "\r\n"))
+	writer := multipart.NewWriter(&buf)
+	boundary := writer.Boundary()
+	buf.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=%q\r\n", boundary))
+	buf.WriteString("\r\n")
+	textHeader := make(textproto.MIMEHeader)
+	textHeader.Set("Content-Type", "text/plain; charset=utf-8")
+	textPart, err := writer.CreatePart(textHeader)
+	if err != nil {
+		return buf.Bytes()
+	}
+	_, _ = textPart.Write([]byte(strings.ReplaceAll(message.Body, "\n", "\r\n")))
+	for _, attachment := range message.Attachments {
+		name := sanitizeHeader(attachment.Name)
+		if name == "" {
+			name = "attachment"
+		}
+		mimeType := sanitizeHeader(attachment.MIMEType)
+		if mimeType == "" {
+			mimeType = "application/octet-stream"
+		}
+		contentType := mimeType
+		if formatted := mime.FormatMediaType(mimeType, map[string]string{"name": name}); formatted != "" {
+			contentType = formatted
+		}
+		header := make(textproto.MIMEHeader)
+		header.Set("Content-Type", contentType)
+		header.Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
+		header.Set("Content-Transfer-Encoding", "base64")
+		part, partErr := writer.CreatePart(header)
+		if partErr != nil {
+			continue
+		}
+		encoded := base64.StdEncoding.EncodeToString(attachment.Body)
+		for len(encoded) > 0 {
+			lineLength := 76
+			if len(encoded) < lineLength {
+				lineLength = len(encoded)
+			}
+			_, _ = part.Write([]byte(encoded[:lineLength] + "\r\n"))
+			encoded = encoded[lineLength:]
+		}
+	}
+	_ = writer.Close()
 
 	return buf.Bytes()
 }
