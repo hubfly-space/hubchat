@@ -11,6 +11,7 @@ import (
 	"github.com/hubchat/hubchat/internal/conversation"
 	"github.com/hubchat/hubchat/internal/file"
 	"github.com/hubchat/hubchat/internal/httpserver"
+	"github.com/hubchat/hubchat/internal/sla"
 )
 
 func registerConversationRoutes(mux *http.ServeMux, deps Deps) {
@@ -164,10 +165,21 @@ func handleListConversations(deps Deps) http.HandlerFunc {
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load conversations.")
 			return
 		}
+		var slaByConv map[string]*sla.SubjectSLA
+		if deps.SLA != nil {
+			slaByConv, err = deps.SLA.ConversationSLAs(r.Context(), actor.WorkspaceID, ids)
+			if err != nil {
+				httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load conversation SLA.")
+				return
+			}
+		}
 
 		out := make([]map[string]any, len(page.Data))
 		for i, c := range page.Data {
 			out[i] = conversationJSON(c, tagsByConv[c.ID], !readByConv[c.ID], viewersFor(deps, c.ID))
+			if deps.SLA != nil {
+				out[i]["sla"] = slaJSON(slaByConv[c.ID])
+			}
 		}
 		httpserver.WriteJSON(w, http.StatusOK, Page[map[string]any]{
 			Data: out, NextCursor: page.NextCursor, HasMore: page.HasMore,
@@ -585,7 +597,15 @@ func singleConversationJSON(r *http.Request, deps Deps, workspaceID, memberID st
 	if err != nil {
 		read = true
 	}
-	return conversationJSON(c, tagIDs, !read, viewersFor(deps, c.ID))
+	out := conversationJSON(c, tagIDs, !read, viewersFor(deps, c.ID))
+	if deps.SLA != nil {
+		if item, err := deps.SLA.ConversationSLA(r.Context(), workspaceID, c.ID); err == nil {
+			out["sla"] = slaJSON(item)
+		} else if deps.Logger != nil {
+			deps.Logger.Warn("could not load conversation SLA", "conversation_id", c.ID, "error", err)
+		}
+	}
+	return out
 }
 
 // viewersFor is an in-memory hub lookup, not a database query — cheap enough
@@ -619,8 +639,7 @@ func conversationJSON(c conversation.Conversation, tagIDs []string, unread bool,
 		"last_message_at":      c.LastMessageAt,
 		"last_customer_at":     c.LastCustomerAt,
 		"snoozed_until":        c.SnoozedUntil,
-		// SLA tracking is Stage 8 (automation/sla module) — always null until
-		// that module exists, per the shared contract's `ConversationSla | null`.
+		// The handler attaches the live SLA summary after the base DTO is built.
 		"sla":        nil,
 		"viewers":    viewers,
 		"created_at": c.CreatedAt,

@@ -15,10 +15,17 @@ func registerEmailChannelRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /v1/email/mailboxes", requireCapability(deps, authorization.IntegrationManage, Idempotency(deps)(handleCreateMailbox(deps))))
 	mux.HandleFunc("PATCH /v1/email/mailboxes/{id}", requireCapability(deps, authorization.IntegrationManage, handleUpdateMailbox(deps)))
 	mux.HandleFunc("DELETE /v1/email/mailboxes/{id}", requireCapability(deps, authorization.IntegrationManage, handleDeleteMailbox(deps)))
+	mux.HandleFunc("GET /v1/email/mailboxes/{id}/delivery-events", requireCapability(deps, authorization.IntegrationManage, handleListEmailDeliveryEvents(deps)))
+	mux.HandleFunc("GET /v1/email/mailboxes/{id}/suppressions", requireCapability(deps, authorization.IntegrationManage, handleListEmailSuppressions(deps)))
+	mux.HandleFunc("DELETE /v1/email/mailboxes/{id}/suppressions/{address}", requireCapability(deps, authorization.IntegrationManage, handleRemoveEmailSuppression(deps)))
+	mux.HandleFunc("GET /v1/email/suppressions", requireCapability(deps, authorization.IntegrationManage, handleListEmailSuppressions(deps)))
 
 	// Providers post their normalized JSON payload here. Authentication is the
 	// mailbox's HMAC secret, not a dashboard session.
 	mux.HandleFunc("POST /v1/email/inbound/{provider}", handleInboundEmail(deps))
+	// Delivery providers use a mailbox-specific callback URL so status and
+	// suppression updates cannot be routed to another workspace.
+	mux.HandleFunc("POST /v1/email/delivery/{provider}/{mailboxID}", handleEmailDelivery(deps))
 }
 
 func handleListMailboxes(deps Deps) http.HandlerFunc {
@@ -74,6 +81,59 @@ func handleDeleteMailbox(deps Deps) http.HandlerFunc {
 	}
 }
 
+func handleListEmailDeliveryEvents(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		if _, err := deps.EmailChannel.Get(r.Context(), actor.WorkspaceID, r.PathValue("id")); err != nil {
+			writeEmailChannelError(w, r, err)
+			return
+		}
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		items, err := deps.EmailChannel.ListDeliveryEvents(r.Context(), actor.WorkspaceID, r.PathValue("id"), cursor.At, cursor.ID, limit+1)
+		if err != nil {
+			writeEmailChannelInternal(w, r)
+			return
+		}
+		page := NewPage(items, limit, func(item emailchannel.DeliveryEventView) Cursor {
+			return Cursor{At: item.OccurredAt, ID: item.ID}
+		})
+		httpserver.WriteJSON(w, http.StatusOK, page)
+	}
+}
+
+func handleListEmailSuppressions(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		if mailboxID := r.PathValue("id"); mailboxID != "" {
+			if _, err := deps.EmailChannel.Get(r.Context(), actor.WorkspaceID, mailboxID); err != nil {
+				writeEmailChannelError(w, r, err)
+				return
+			}
+		}
+		items, err := deps.EmailChannel.ListSuppressions(r.Context(), actor.WorkspaceID, 200)
+		if err != nil {
+			writeEmailChannelInternal(w, r)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+	}
+}
+
+func handleRemoveEmailSuppression(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		if err := deps.EmailChannel.RemoveSuppression(r.Context(), actor.WorkspaceID, r.PathValue("address")); err != nil {
+			writeEmailChannelError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 func handleInboundEmail(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 2<<20))
@@ -81,7 +141,7 @@ func handleInboundEmail(deps Deps) http.HandlerFunc {
 			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Inbound email payload is too large or malformed.")
 			return
 		}
-		input, err := emailchannel.UnmarshalProviderPayload(body)
+		input, err := emailchannel.UnmarshalProviderPayloadFor(r.PathValue("provider"), r.Header.Get("Content-Type"), body)
 		if err != nil {
 			writeEmailChannelValidation(w, r, err)
 			return
@@ -92,6 +152,26 @@ func handleInboundEmail(deps Deps) http.HandlerFunc {
 			return
 		}
 		httpserver.WriteJSON(w, http.StatusAccepted, result)
+	}
+}
+
+func handleEmailDelivery(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 2<<20))
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Delivery payload is too large or malformed.")
+			return
+		}
+		event, err := emailchannel.UnmarshalDeliveryPayload(r.PathValue("provider"), r.Header.Get("Content-Type"), body)
+		if err != nil {
+			writeEmailChannelValidation(w, r, err)
+			return
+		}
+		if err := deps.EmailChannel.IngestDelivery(r.Context(), r.PathValue("mailboxID"), r.PathValue("provider"), body, r.Header.Get("X-Hubchat-Signature"), event); err != nil {
+			writeEmailChannelDeliveryError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
 	}
 }
 
@@ -116,6 +196,17 @@ func writeEmailChannelInboundError(w http.ResponseWriter, r *http.Request, err e
 		httpserver.WriteJSON(w, http.StatusAccepted, map[string]any{"status": "already_received"})
 	case errors.Is(err, emailchannel.ErrInvalidMessage):
 		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, err.Error())
+	default:
+		writeEmailChannelInternal(w, r)
+	}
+}
+
+func writeEmailChannelDeliveryError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, emailchannel.ErrNotFound), errors.Is(err, emailchannel.ErrSignature), errors.Is(err, emailchannel.ErrSecretUnavailable):
+		httpserver.WriteError(w, r, http.StatusUnauthorized, httpserver.CodeUnauthorized, "Email delivery authentication failed.")
+	case errors.Is(err, emailchannel.ErrInvalidDelivery):
+		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, "The delivery event is invalid.")
 	default:
 		writeEmailChannelInternal(w, r)
 	}

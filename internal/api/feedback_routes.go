@@ -27,6 +27,8 @@ func registerFeedbackRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/public/feedback/{workspaceID}/boards/{slug}/items", handlePublicFeedbackItems(deps))
 	mux.HandleFunc("POST /v1/public/feedback/{workspaceID}/boards/{slug}/items", Idempotency(deps)(handlePublicCreateFeedbackItem(deps)))
 	mux.HandleFunc("POST /v1/public/feedback/{workspaceID}/items/{id}/votes", Idempotency(deps)(handlePublicVoteFeedbackItem(deps)))
+	mux.HandleFunc("POST /v1/public/feedback/{workspaceID}/items/{id}/subscription", Idempotency(deps)(handlePublicSubscribeFeedbackItem(deps)))
+	mux.HandleFunc("DELETE /v1/public/feedback/{workspaceID}/items/{id}/subscription", handlePublicUnsubscribeFeedbackItem(deps))
 }
 
 func handleListFeedbackBoards(deps Deps) http.HandlerFunc {
@@ -243,6 +245,30 @@ func handlePublicVoteFeedbackItem(deps Deps) http.HandlerFunc {
 	}
 }
 
+func handlePublicSubscribeFeedbackItem(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		workspaceID := r.PathValue("workspaceID")
+		customerID := portalCustomerForRequest(r, deps, workspaceID)
+		if err := deps.Feedback.Subscribe(r.Context(), workspaceID, r.PathValue("id"), customerID); err != nil {
+			writeFeedbackError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, map[string]any{"subscribed": true})
+	}
+}
+
+func handlePublicUnsubscribeFeedbackItem(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		workspaceID := r.PathValue("workspaceID")
+		customerID := portalCustomerForRequest(r, deps, workspaceID)
+		if err := deps.Feedback.Unsubscribe(r.Context(), workspaceID, r.PathValue("id"), customerID); err != nil {
+			writeFeedbackError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"subscribed": false})
+	}
+}
+
 func portalCustomerForRequest(r *http.Request, deps Deps, workspaceID string) string {
 	if deps.Portal == nil {
 		return ""
@@ -265,6 +291,8 @@ func writeFeedbackError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, err.Error())
 	case errors.Is(err, feedback.ErrAlreadyVoted), errors.Is(err, feedback.ErrVoteLimit):
 		httpserver.WriteError(w, r, http.StatusConflict, httpserver.CodeConflict, err.Error())
+	case errors.Is(err, feedback.ErrCustomerRequired):
+		httpserver.WriteError(w, r, http.StatusUnauthorized, httpserver.CodeUnauthorized, "Sign in to follow feedback updates.")
 	case errors.Is(err, feedback.ErrVotingDisabled), errors.Is(err, feedback.ErrCommentsDisabled):
 		httpserver.WriteError(w, r, http.StatusForbidden, httpserver.CodeForbidden, err.Error())
 	default:

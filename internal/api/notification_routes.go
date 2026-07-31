@@ -12,8 +12,45 @@ import (
 func registerNotificationRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/notifications", requireActor(deps, handleListNotifications(deps)))
 	mux.HandleFunc("GET /v1/notifications/count", requireActor(deps, handleNotificationCount(deps)))
+	mux.HandleFunc("GET /v1/notifications/preferences", requireActor(deps, handleGetNotificationPreferences(deps)))
+	mux.HandleFunc("PUT /v1/notifications/preferences", requireActor(deps, Idempotency(deps)(handleSaveNotificationPreferences(deps))))
 	mux.HandleFunc("POST /v1/notifications/{id}/read", requireActor(deps, handleMarkNotificationRead(deps)))
 	mux.HandleFunc("POST /v1/notifications/read-all", requireActor(deps, handleMarkAllNotificationsRead(deps)))
+}
+
+func handleGetNotificationPreferences(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		items, err := deps.Notification.Preferences(r.Context(), actor.WorkspaceID, actor.MemberID)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load notification preferences.")
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+	}
+}
+
+func handleSaveNotificationPreferences(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		var request struct {
+			Data []notification.PreferenceInput `json:"data"`
+		}
+		if err := httpserver.DecodeJSON(r, &request); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed notification preferences.")
+			return
+		}
+		items, err := deps.Notification.SavePreferences(r.Context(), actor.WorkspaceID, actor.MemberID, request.Data)
+		if errors.Is(err, notification.ErrInvalidPreference) {
+			httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, "One or more notification preference types is invalid or duplicated.")
+			return
+		}
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not save notification preferences.")
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+	}
 }
 
 func handleListNotifications(deps Deps) http.HandlerFunc {
