@@ -102,6 +102,7 @@ export function Widget({
   // starting a new one. Refs, not state: reading the current value inside
   // `send` must never race a stale render.
   const tokenRef = useRef<string | null>(null);
+  const visitorTokenPromiseRef = useRef<Promise<string> | null>(null);
   const conversationRef = useRef<string | null>(null);
   const socketRef = useRef<VisitorSocket | null>(null);
   const viewedArticlesRef = useRef(new Set<string>());
@@ -112,11 +113,21 @@ export function Widget({
 
   const ensureVisitorToken = useCallback(async () => {
     let token = tokenRef.current;
+    if (token) return token;
+    if (visitorTokenPromiseRef.current) return visitorTokenPromiseRef.current;
+
+    const pending = issueVisitor(host, publicKey)
+      .then((issued) => {
+        tokenRef.current = issued.token;
+        return issued.token;
+      })
+      .finally(() => {
+        visitorTokenPromiseRef.current = null;
+      });
+    visitorTokenPromiseRef.current = pending;
+    token = await pending;
     if (!token) {
-      const issued = await issueVisitor(host, publicKey);
-      token = issued.token;
-      tokenRef.current = token;
-      saveSession(publicKey, { token, conversationId: conversationRef.current });
+      throw new Error("visitor token was empty");
     }
     return token;
   }, [host, publicKey]);
@@ -271,13 +282,7 @@ export function Widget({
           break;
         case "identify": {
           const ensureTokenThenIdentify = async () => {
-            let token = tokenRef.current;
-            if (!token) {
-              const issued = await issueVisitor(host, publicKey);
-              token = issued.token;
-              tokenRef.current = token;
-              saveSession(publicKey, { token, conversationId: conversationRef.current });
-            }
+            const token = await ensureVisitorToken();
             await apiIdentify(host, publicKey, token, {
               name: typeof payload?.name === "string" ? payload.name : undefined,
               email: typeof payload?.email === "string" ? payload.email : undefined,
@@ -321,7 +326,7 @@ export function Widget({
     window.addEventListener("hubchat:command", onCommand);
     window.dispatchEvent(new CustomEvent("hubchat:internal:mounted"));
     return () => window.removeEventListener("hubchat:command", onCommand);
-  }, [show, hide, host, publicKey]);
+  }, [ensureVisitorToken, show, hide, host, publicKey]);
 
   useEffect(() => {
     onEvent("ready");
@@ -363,12 +368,7 @@ export function Widget({
 
     void (async () => {
       try {
-        let token = tokenRef.current;
-        if (!token) {
-          const issued = await issueVisitor(host, publicKey);
-          token = issued.token;
-          tokenRef.current = token;
-        }
+        let token = await ensureVisitorToken();
 
         let sentMessageID = "";
         if (!conversationRef.current) {
