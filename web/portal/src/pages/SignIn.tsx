@@ -2,7 +2,7 @@ import { ApiError, Button, Callout, Field, Input, Separator, api, useMutation } 
 import { ArrowLeft, MailCheck } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { portalAccent, portalErrorMessage, usePortal } from "../portal-context";
+import { portalAccent, portalErrorMessage, safePortalNext, usePortal } from "../portal-context";
 
 /**
  * Customer sign-in.
@@ -17,16 +17,17 @@ export default function SignIn() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const { data, isLoading, error } = usePortal();
+  const next = safePortalNext(params.get("next"), params.get("portal"));
   const deleted = params.get("deleted") === "1";
-  const requestLink = useMutation(({ email: value, portal }: { email: string; portal?: string }) =>
-    api.post("/portal/auth/magic-link", { email: value, portal }),
+  const requestLink = useMutation(({ email: value, portal, next: destination }: { email: string; portal?: string; next?: string }) =>
+    api.post("/portal/auth/magic-link", { email: value, portal, next: destination }),
   );
 
   useEffect(() => {
     const token = params.get("token");
     if (!token) return;
-    void api.post("/portal/auth/magic-link/redeem", { token }).then(() => navigate(`/?portal=${encodeURIComponent(params.get("portal") ?? "")}`, { replace: true }));
-  }, [navigate, params]);
+    void api.post("/portal/auth/magic-link/redeem", { token }).then(() => navigate(next, { replace: true }));
+  }, [navigate, next, params]);
 
   if (isLoading) return <div className="grid min-h-dvh place-items-center bg-canvas text-sm text-fg-muted">Loading portal…</div>;
   if (error || !data) return <div className="grid min-h-dvh place-items-center bg-canvas px-4 text-center text-sm text-fg-muted">{portalErrorMessage(error)}</div>;
@@ -35,7 +36,7 @@ export default function SignIn() {
   const accent = portalAccent(portal);
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    void requestLink.mutate({ email, portal: portal.id }).then(() => setSent(true));
+    void requestLink.mutate({ email, portal: portal.id, next }).then(() => setSent(true));
   };
 
   return (

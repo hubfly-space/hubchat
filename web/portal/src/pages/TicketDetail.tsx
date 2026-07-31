@@ -19,7 +19,7 @@ import {
 } from "@hubchat/shared";
 import { Paperclip, TicketCheck } from "lucide-react";
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { portalErrorMessage, usePortal } from "../portal-context";
 
 const STATUS: Record<string, { label: string; tone: BadgeTone }> = {
@@ -56,6 +56,7 @@ type Detail = { ticket: Ticket; messages: Message[] };
 
 export default function TicketDetail() {
   const { number: id } = useParams();
+  const location = useLocation();
   const toast = useToast();
   const { data: portalData } = usePortal();
   const [reply, setReply] = useState("");
@@ -70,7 +71,7 @@ export default function TicketDetail() {
   );
 
   if (!portalData?.viewer) {
-    return <EmptyState icon={TicketCheck} title="Sign in to view this request" description="This request is available only to its customer." action={<Button variant="primary" size="sm" asChild><Link to="/sign-in">Sign in</Link></Button>} />;
+    return <EmptyState icon={TicketCheck} title="Sign in to view this request" description="This request is available only to its customer." action={<Button variant="primary" size="sm" asChild><Link to={`/sign-in?portal=${encodeURIComponent(portalData?.portal.id ?? "")}&next=${encodeURIComponent(location.pathname + location.search)}`}>Sign in</Link></Button>} />;
   }
   if (query.isLoading) return <div className="py-12 text-center text-sm text-fg-muted">Loading request…</div>;
   if (query.isError || !query.data) {

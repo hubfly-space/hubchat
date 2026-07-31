@@ -11,7 +11,7 @@ import {
 } from "@hubchat/shared";
 import { Plus, TicketCheck } from "lucide-react";
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { portalErrorMessage, usePortal } from "../portal-context";
 
 const STATUS: Record<string, { label: string; tone: BadgeTone }> = {
@@ -35,6 +35,7 @@ type PortalTicket = {
 
 export default function Tickets() {
   const [filter, setFilter] = useState<"open" | "all">("open");
+  const location = useLocation();
   const { data: portalData } = usePortal();
   const query = useQuery<{ data: PortalTicket[]; has_more: boolean; next_cursor: string | null }>(
     portalData?.viewer ? ["portal", "tickets"] : null,
@@ -42,7 +43,7 @@ export default function Tickets() {
   );
 
   if (!portalData?.viewer) {
-    return <EmptyState icon={TicketCheck} title="Sign in to view your requests" description="Use your email to access requests and replies from this portal." action={<Button variant="primary" size="sm" asChild><Link to="/sign-in">Sign in</Link></Button>} />;
+    return <EmptyState icon={TicketCheck} title="Sign in to view your requests" description="Use your email to access requests and replies from this portal." action={<Button variant="primary" size="sm" asChild><Link to={`/sign-in?portal=${encodeURIComponent(portalData?.portal.id ?? "")}&next=${encodeURIComponent(location.pathname + location.search)}`}>Sign in</Link></Button>} />;
   }
   if (query.isLoading) return <div className="py-12 text-center text-sm text-fg-muted">Loading your requests…</div>;
   if (query.isError) return <div className="py-12 text-center text-sm text-danger">{portalErrorMessage(query.error)} <Button className="ml-2" variant="secondary" size="sm" onClick={query.refetch}>Try again</Button></div>;

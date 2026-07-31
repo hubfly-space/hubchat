@@ -18,7 +18,7 @@ import {
 } from "@hubchat/shared";
 import { CheckCircle2, Paperclip, TicketCheck, UploadCloud } from "lucide-react";
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { usePortal } from "../portal-context";
 
 type CreatedTicket = { ticket: { id: string; prefix: string; number: number; conversation_id?: string }; opening_message_id?: string };
@@ -26,6 +26,7 @@ type SearchResponse = { data: Array<{ article: { id: string; slug: string; title
 
 export default function NewTicket() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { data: portalData } = usePortal();
   const [summary, setSummary] = useState("");
   const [description, setDescription] = useState("");
@@ -44,7 +45,7 @@ export default function NewTicket() {
   );
 
   if (!portalData?.viewer) {
-    return <EmptyState icon={TicketCheck} title="Sign in before sending a request" description="A portal session keeps your request history and replies connected to you." action={<Button variant="primary" size="sm" asChild><Link to="/sign-in">Sign in</Link></Button>} />;
+    return <EmptyState icon={TicketCheck} title="Sign in before sending a request" description="A portal session keeps your request history and replies connected to you." action={<Button variant="primary" size="sm" asChild><Link to={`/sign-in?portal=${encodeURIComponent(portalData?.portal.id ?? "")}&next=${encodeURIComponent(location.pathname + location.search)}`}>Sign in</Link></Button>} />;
   }
 
   const suggestions = (suggestionsQuery.data?.data ?? []).map((item) => item.article).slice(0, 3);
