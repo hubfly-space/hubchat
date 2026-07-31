@@ -17,18 +17,18 @@ func registerSettingsRoutes(mux *http.ServeMux, deps Deps) {
 		requireActor(deps, handleGetSettings(deps)))
 
 	mux.HandleFunc("PATCH /v1/workspace/general",
-		requireCapability(deps, authorization.WorkspaceManage, handleUpdateGeneral(deps)))
+		requireCapability(deps, authorization.WorkspaceManage, Idempotency(deps)(handleUpdateGeneral(deps))))
 	mux.HandleFunc("PATCH /v1/workspace/branding",
-		requireCapability(deps, authorization.WorkspaceManage, handleUpdateBranding(deps)))
+		requireCapability(deps, authorization.WorkspaceManage, Idempotency(deps)(handleUpdateBranding(deps))))
 
 	// Security and privacy are gated on workspace.manage_security rather than
 	// workspace.manage — §5.1/§5.2 reserve session policy, sign-in methods,
 	// and retention specifically for the owner and security-privileged
 	// admins, not general administration.
 	mux.HandleFunc("PATCH /v1/workspace/security",
-		requireCapability(deps, authorization.WorkspaceManageSecurity, handleUpdateSecurity(deps)))
+		requireCapability(deps, authorization.WorkspaceManageSecurity, Idempotency(deps)(handleUpdateSecurity(deps))))
 	mux.HandleFunc("PATCH /v1/workspace/privacy",
-		requireCapability(deps, authorization.WorkspaceManageSecurity, handleUpdatePrivacy(deps)))
+		requireCapability(deps, authorization.WorkspaceManageSecurity, Idempotency(deps)(handleUpdatePrivacy(deps))))
 }
 
 func handleGetSettings(deps Deps) http.HandlerFunc {

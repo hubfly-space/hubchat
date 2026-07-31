@@ -13,7 +13,7 @@ func registerPortalAdminRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/portals", requireCapability(deps, authorization.PortalManage, handleListPortals(deps)))
 	mux.HandleFunc("POST /v1/portals", requireCapability(deps, authorization.PortalManage, Idempotency(deps)(handleCreatePortal(deps))))
 	mux.HandleFunc("GET /v1/portals/{id}", requireCapability(deps, authorization.PortalManage, handleGetPortal(deps)))
-	mux.HandleFunc("PATCH /v1/portals/{id}", requireCapability(deps, authorization.PortalManage, handleUpdatePortal(deps)))
+	mux.HandleFunc("PATCH /v1/portals/{id}", requireCapability(deps, authorization.PortalManage, Idempotency(deps)(handleUpdatePortal(deps))))
 }
 
 func handleListPortals(deps Deps) http.HandlerFunc {

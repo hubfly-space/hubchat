@@ -14,8 +14,8 @@ func registerNotificationRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/notifications/count", requireActor(deps, handleNotificationCount(deps)))
 	mux.HandleFunc("GET /v1/notifications/preferences", requireActor(deps, handleGetNotificationPreferences(deps)))
 	mux.HandleFunc("PUT /v1/notifications/preferences", requireActor(deps, Idempotency(deps)(handleSaveNotificationPreferences(deps))))
-	mux.HandleFunc("POST /v1/notifications/{id}/read", requireActor(deps, handleMarkNotificationRead(deps)))
-	mux.HandleFunc("POST /v1/notifications/read-all", requireActor(deps, handleMarkAllNotificationsRead(deps)))
+	mux.HandleFunc("POST /v1/notifications/{id}/read", requireActor(deps, Idempotency(deps)(handleMarkNotificationRead(deps))))
+	mux.HandleFunc("POST /v1/notifications/read-all", requireActor(deps, Idempotency(deps)(handleMarkAllNotificationsRead(deps))))
 }
 
 func handleGetNotificationPreferences(deps Deps) http.HandlerFunc {

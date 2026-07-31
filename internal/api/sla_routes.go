@@ -17,7 +17,7 @@ func registerSLARoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/sla/policies", requireCapability(deps, authorization.SLAManage, handleListSLAPolicies(deps)))
 	mux.HandleFunc("POST /v1/sla/policies", requireCapability(deps, authorization.SLAManage, Idempotency(deps)(handleCreateSLAPolicy(deps))))
 	mux.HandleFunc("GET /v1/sla/policies/{id}", requireCapability(deps, authorization.SLAManage, handleGetSLAPolicy(deps)))
-	mux.HandleFunc("PATCH /v1/sla/policies/{id}", requireCapability(deps, authorization.SLAManage, handleUpdateSLAPolicy(deps)))
+	mux.HandleFunc("PATCH /v1/sla/policies/{id}", requireCapability(deps, authorization.SLAManage, Idempotency(deps)(handleUpdateSLAPolicy(deps))))
 	mux.HandleFunc("GET /v1/sla/instances", requireCapability(deps, authorization.SLAManage, handleListSLAInstances(deps)))
 }
 
