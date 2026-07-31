@@ -14,6 +14,8 @@ import {
   SegmentedControl,
   api,
   formatCompact,
+  formatDuration,
+  formatPercent,
   useQuery,
 } from "@hubchat/shared";
 import { CalendarClock, Download, Inbox, Info } from "lucide-react";
@@ -32,6 +34,7 @@ type Rollup = {
   count: number;
   dimensions: Record<string, unknown>;
 };
+type Summary = { first_response_seconds: number; sla_compliance_percent: number; sla_instances: number; backlog_conversations: number; backlog_tickets: number };
 
 /** Reporting overview backed by the durable event rollups. */
 export default function ReportsOverview() {
@@ -43,12 +46,13 @@ export default function ReportsOverview() {
   };
   const conversations = useQuery<{ data: Rollup[] }>(["reports", "conversations", range], (signal) => api.get(query("conversations.created"), { signal }));
   const tickets = useQuery<{ data: Rollup[] }>(["reports", "tickets", range], (signal) => api.get(query("tickets.created"), { signal }));
+  const summary = useQuery<Summary>(["reports", "summary", range], (signal) => api.get(`/analytics/summary?from=${encodeURIComponent(new Date(Date.now() - days * 86400000).toISOString())}`, { signal }));
 
   const conversationPoints = toPoints(conversations.data?.data ?? []);
   const ticketPoints = toPoints(tickets.data?.data ?? []);
   const channelSplit = splitChannels(conversations.data?.data ?? []);
-  const loading = conversations.isLoading || tickets.isLoading;
-  const failed = conversations.isError || tickets.isError;
+  const loading = conversations.isLoading || tickets.isLoading || summary.isLoading;
+  const failed = conversations.isError || tickets.isError || summary.isError;
 
   return (
     <Page>
@@ -69,15 +73,16 @@ export default function ReportsOverview() {
           Figures are folded from the append-only event log in UTC day buckets. A rollup is empty until the worker has processed the workspace events.
         </Callout>
 
-        {loading ? <p className="text-sm text-fg-muted">Loading live report rollups…</p> : failed ? <EmptyState icon={Inbox} title="Reports unavailable" description="The analytics rollup API could not be loaded." action={<Button variant="secondary" size="sm" onClick={() => { conversations.refetch(); tickets.refetch(); }}>Try again</Button>} /> : (
+        {loading ? <p className="text-sm text-fg-muted">Loading live report rollups…</p> : failed ? <EmptyState icon={Inbox} title="Reports unavailable" description="The analytics rollup API could not be loaded." action={<Button variant="secondary" size="sm" onClick={() => { conversations.refetch(); tickets.refetch(); summary.refetch(); }}>Try again</Button>} /> : (
           <>
             <Section title="Headline">
               <Card>
                 <CardBody className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
                   <Metric label="Conversations" value={formatCompact(sum(conversationPoints))} sparkline={conversationPoints} definition="Conversations created in the selected period, across every channel." />
                   <Metric label="Tickets" value={formatCompact(sum(ticketPoints))} sparkline={ticketPoints} definition="Tickets created in the selected period." />
-                  <Metric label="First response" value="—" definition="This duration metric will appear when response-time rollups are available." />
-                  <Metric label="SLA compliance" value="—" definition="This ratio will appear after SLA instance outcomes are folded." />
+                  <Metric label="First response" value={summary.data?.first_response_seconds ? formatDuration(summary.data.first_response_seconds) : "—"} definition="Average elapsed wall-clock time from the first customer reply to the first agent reply." />
+                  <Metric label="SLA compliance" value={summary.data && summary.data.sla_instances > 0 ? formatPercent(summary.data.sla_compliance_percent / 100) : "—"} definition="Satisfied SLA instances divided by all met or breached instances in the selected period." />
+                  <Metric label="Backlog" value={summary.data ? formatCompact(summary.data.backlog_conversations + summary.data.backlog_tickets) : "—"} definition="Open conversations and tickets at the end of the selected period." />
                 </CardBody>
               </Card>
             </Section>
