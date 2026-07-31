@@ -88,6 +88,13 @@ func (r *repository) companyByID(ctx context.Context, workspaceID, id string) (*
 	return scanCompany(row)
 }
 
+func (r *repository) companyByExternalID(ctx context.Context, workspaceID, externalID string) (*Company, error) {
+	row := r.pool.QueryRow(ctx, `SELECT `+companyColumns+`
+		FROM companies c WHERE c.workspace_id = $1 AND c.external_id = $2
+	`, workspaceID, externalID)
+	return scanCompany(row)
+}
+
 func (r *repository) companiesByIDs(ctx context.Context, workspaceID string, ids []string) ([]Company, error) {
 	if len(ids) == 0 {
 		return []Company{}, nil
@@ -314,6 +321,13 @@ func (s *Service) CreateCompany(ctx context.Context, workspaceID, actorMemberID,
 
 func (s *Service) Company(ctx context.Context, workspaceID, id string) (*Company, error) {
 	return s.repo.companyByID(ctx, workspaceID, id)
+}
+
+// FindCompanyByExternalID is the workspace-scoped lookup used by resumable
+// company imports. External IDs are the stable conflict key; names and
+// domains are mutable display data.
+func (s *Service) FindCompanyByExternalID(ctx context.Context, workspaceID, externalID string) (*Company, error) {
+	return s.repo.companyByExternalID(ctx, workspaceID, strings.TrimSpace(externalID))
 }
 
 func (s *Service) Companies(ctx context.Context, workspaceID string, ids []string) ([]Company, error) {

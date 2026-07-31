@@ -65,6 +65,13 @@ func (s *Service) Get(ctx context.Context, workspaceID, id string) (*Customer, e
 	return s.repo.byID(ctx, workspaceID, id)
 }
 
+// FindByExternalID resolves an import/SDK-owned identifier without widening
+// the workspace boundary. Callers use ErrNotFound to distinguish a new row
+// from a conflict that should be updated.
+func (s *Service) FindByExternalID(ctx context.Context, workspaceID, externalID string) (*Customer, error) {
+	return s.repo.byExternalID(ctx, workspaceID, strings.TrimSpace(externalID))
+}
+
 // GetMany batch-loads customers by id, for rendering a page of conversations
 // that each reference one.
 func (s *Service) GetMany(ctx context.Context, workspaceID string, ids []string) ([]Customer, error) {

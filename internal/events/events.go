@@ -80,6 +80,7 @@ const (
 	FeedbackLinked        Type = "feedback.linked"
 	FeedbackMerged        Type = "feedback.merged"
 	ChangelogPublished    Type = "changelog.published"
+	ArticlePublished      Type = "article.published"
 	SurveyResponseCreated Type = "survey.response_created"
 
 	SLAApproaching Type = "sla.approaching"
