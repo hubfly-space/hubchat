@@ -342,6 +342,15 @@ func Load() (Config, error) {
 
 	cfg.Dev = os.Getenv("HUBCHAT_DEV") == "1"
 
+	// Development mode runs over plain http (localhost), where a Secure cookie
+	// is at best ignored and at worst silently dropped by some browsers — the
+	// same reason Validate() refuses Dev behind an https PublicURL. The rest of
+	// the dev posture already relaxes protections (§httpserver/csrf.go widens
+	// the origin allowlist to loopback); the cookie flag is part of that.
+	if cfg.Dev {
+		cfg.Security.CookieSecure = false
+	}
+
 	return cfg, nil
 }
 

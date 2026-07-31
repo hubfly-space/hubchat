@@ -248,6 +248,102 @@ func Import(ctx context.Context, pool *database.Pool, archive *Archive, targetWo
 	return summaries, nil
 }
 
+// ImportChunk applies one bounded, idempotent batch of an archive. The cursor
+// is a table index plus a row offset rather than a database offset: archive
+// order is immutable, and a worker can safely retry a committed batch after a
+// lease loss because every insert remains ON CONFLICT DO NOTHING.
+func ImportChunk(ctx context.Context, pool *database.Pool, archive *Archive, targetWorkspaceID string, tableIndex, rowIndex, limit int) (nextTable, nextRow, processed int, done bool, err error) {
+	if err := validateImportTarget(ctx, pool, archive, targetWorkspaceID); err != nil {
+		return tableIndex, rowIndex, 0, false, err
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if tableIndex < 0 || rowIndex < 0 || tableIndex > len(tableSpecs) {
+		return tableIndex, rowIndex, 0, false, errors.New("portability: invalid import progress cursor")
+	}
+
+	for tableIndex < len(tableSpecs) {
+		spec := tableSpecs[tableIndex]
+		rows := archive.Tables[spec.name]
+		if rowIndex >= len(rows) {
+			tableIndex++
+			rowIndex = 0
+			continue
+		}
+		end := rowIndex + limit
+		if end > len(rows) {
+			end = len(rows)
+		}
+		batchSize := end - rowIndex
+
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			return tableIndex, rowIndex, 0, false, err
+		}
+		for _, raw := range rows[rowIndex:end] {
+			if err := insertArchiveRow(ctx, tx, spec, raw, targetWorkspaceID); err != nil {
+				_ = tx.Rollback(ctx)
+				return tableIndex, rowIndex, 0, false, err
+			}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return tableIndex, rowIndex, 0, false, err
+		}
+
+		rowIndex = end
+		if rowIndex >= len(rows) {
+			tableIndex++
+			rowIndex = 0
+			for tableIndex < len(tableSpecs) && len(archive.Tables[tableSpecs[tableIndex].name]) == 0 {
+				tableIndex++
+			}
+		}
+		return tableIndex, rowIndex, batchSize, tableIndex >= len(tableSpecs), nil
+	}
+	return tableIndex, rowIndex, 0, true, nil
+}
+
+func validateImportTarget(ctx context.Context, pool *database.Pool, archive *Archive, targetWorkspaceID string) error {
+	if archive == nil || archive.Version != CurrentVersion {
+		return fmt.Errorf("portability: unsupported archive version")
+	}
+	if targetWorkspaceID == "" {
+		return errors.New("portability: target workspace id is required")
+	}
+	var exists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workspaces WHERE id=$1)`, targetWorkspaceID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return errors.New("portability: target workspace not found")
+	}
+	return nil
+}
+
+func insertArchiveRow(ctx context.Context, tx pgx.Tx, spec struct {
+	name   string
+	where  string
+	direct bool
+}, raw json.RawMessage, targetWorkspaceID string) error {
+	if spec.direct {
+		var object map[string]any
+		if err := json.Unmarshal(raw, &object); err != nil {
+			return err
+		}
+		object["workspace_id"] = targetWorkspaceID
+		var err error
+		raw, err = json.Marshal(object)
+		if err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, fmt.Sprintf(`INSERT INTO %s SELECT * FROM jsonb_populate_record(NULL::%s,$1::jsonb) ON CONFLICT DO NOTHING`, spec.name, spec.name), raw); err != nil {
+		return fmt.Errorf("portability: import %s: %w", spec.name, err)
+	}
+	return nil
+}
+
 func archiveIDs(rows []json.RawMessage) []string {
 	seen := make(map[string]struct{}, len(rows))
 	ids := make([]string, 0, len(rows))

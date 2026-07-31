@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/httpserver"
@@ -10,11 +11,25 @@ import (
 
 func registerPortabilityRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/portability/exports", requireCapability(deps, authorization.WorkspaceManage, handleListExports(deps)))
+	mux.HandleFunc("GET /v1/portability/exports/{id}", requireCapability(deps, authorization.WorkspaceManage, handleGetExport(deps)))
 	mux.HandleFunc("GET /v1/portability/exports/{id}/manifest", requireCapability(deps, authorization.WorkspaceManage, handleExportManifest(deps)))
 	mux.HandleFunc("POST /v1/portability/exports", requireCapability(deps, authorization.WorkspaceManage, Idempotency(deps)(handleCreateExport(deps))))
 	mux.HandleFunc("GET /v1/portability/imports", requireCapability(deps, authorization.WorkspaceManage, handleListImports(deps)))
+	mux.HandleFunc("GET /v1/portability/imports/{id}", requireCapability(deps, authorization.WorkspaceManage, handleGetImport(deps)))
 	mux.HandleFunc("POST /v1/portability/imports", requireCapability(deps, authorization.WorkspaceManage, Idempotency(deps)(handleCreateImport(deps))))
 	mux.HandleFunc("POST /v1/portability/imports/{id}/preview", requireCapability(deps, authorization.WorkspaceManage, handlePreviewImport(deps)))
+	mux.HandleFunc("POST /v1/portability/imports/{id}/confirm", requireCapability(deps, authorization.WorkspaceManage, Idempotency(deps)(handleConfirmImport(deps))))
+}
+
+func handleGetExport(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		item, err := deps.Portability.Get(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"))
+		if err != nil {
+			writePortabilityError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, item)
+	}
 }
 
 func handleExportManifest(deps Deps) http.HandlerFunc {
@@ -89,21 +104,33 @@ func handleListImports(deps Deps) http.HandlerFunc {
 func handleCreateImport(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
-			FileID  string         `json:"file_id"`
-			Kind    string         `json:"kind"`
-			Mapping map[string]any `json:"mapping"`
+			FileID    string         `json:"file_id"`
+			Kind      string         `json:"kind"`
+			Mapping   map[string]any `json:"mapping"`
+			AutoStart bool           `json:"auto_start"`
 		}
 		if err := httpserver.DecodeJSON(r, &input); err != nil {
 			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, err.Error())
 			return
 		}
 		actor := actorFromRequest(r)
-		item, err := deps.Portability.CreateImport(r.Context(), actor.WorkspaceID, actor.MemberID, input.FileID, input.Kind, input.Mapping)
+		item, err := deps.Portability.CreateImport(r.Context(), actor.WorkspaceID, actor.MemberID, input.FileID, input.Kind, input.Mapping, input.AutoStart)
 		if err != nil {
 			writePortabilityError(w, r, err)
 			return
 		}
 		httpserver.WriteJSON(w, http.StatusAccepted, item)
+	}
+}
+
+func handleGetImport(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		item, err := deps.Portability.GetImport(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"))
+		if err != nil {
+			writePortabilityError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, item)
 	}
 }
 
@@ -119,6 +146,37 @@ func handlePreviewImport(deps Deps) http.HandlerFunc {
 	}
 }
 
+func handleConfirmImport(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			BackupVerified bool `json:"backup_verified"`
+		}
+		if err := httpserver.DecodeJSON(r, &input); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, err.Error())
+			return
+		}
+		actor := actorFromRequest(r)
+		item, err := deps.Portability.ConfirmImport(r.Context(), actor.WorkspaceID, r.PathValue("id"), input.BackupVerified)
+		if err != nil {
+			writePortabilityError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusAccepted, item)
+	}
+}
+
 func writePortabilityError(w http.ResponseWriter, r *http.Request, err error) {
-	httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, err.Error())
+	message := err.Error()
+	switch {
+	case strings.Contains(message, "not found"):
+		httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, message)
+	case strings.Contains(message, "already") || strings.Contains(message, "already "):
+		httpserver.WriteError(w, r, http.StatusConflict, httpserver.CodeConflict, message)
+	case strings.Contains(message, "job queue is unavailable"):
+		httpserver.WriteError(w, r, http.StatusServiceUnavailable, httpserver.CodeUnavailable, "The background job queue is unavailable.")
+	case strings.HasPrefix(message, "portability:"):
+		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, message)
+	default:
+		httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not complete the portability request.")
+	}
 }

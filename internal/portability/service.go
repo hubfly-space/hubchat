@@ -19,8 +19,10 @@ import (
 )
 
 const (
-	JobExport = "portability.export"
-	JobImport = "portability.import"
+	JobExport       = "portability.export"
+	JobImport       = "portability.import"
+	importBatchSize = 100
+	maxArchiveBytes = 512 << 20
 )
 
 type Request struct {
@@ -114,7 +116,7 @@ func (s *Service) CreateExport(ctx context.Context, workspaceID, memberID, kind 
 	return s.Get(ctx, workspaceID, id)
 }
 
-func (s *Service) CreateImport(ctx context.Context, workspaceID, memberID, fileID, kind string, mapping map[string]any) (*Request, error) {
+func (s *Service) CreateImport(ctx context.Context, workspaceID, memberID, fileID, kind string, mapping map[string]any, start bool) (*Request, error) {
 	if strings.TrimSpace(fileID) == "" {
 		return nil, errors.New("portability: import archive file is required")
 	}
@@ -134,19 +136,63 @@ func (s *Service) CreateImport(ctx context.Context, workspaceID, memberID, fileI
 	if s.files == nil {
 		return nil, errors.New("portability: file service is unavailable")
 	}
-	if _, err := s.files.Get(ctx, workspaceID, fileID); err != nil {
+	fileRecord, err := s.files.Get(ctx, workspaceID, fileID)
+	if err != nil {
 		return nil, fmt.Errorf("portability: import file: %w", err)
+	}
+	if !validArchiveFile(fileRecord) {
+		return nil, errors.New("portability: import file must be a JSON gzip archive")
+	}
+	if _, err := s.readArchive(ctx, workspaceID, &fileRecord.ID); err != nil {
+		return nil, fmt.Errorf("portability: validate archive: %w", err)
+	}
+	if _, ok := mapping["backup_verified"]; !ok {
+		mapping["backup_verified"] = false
+	}
+	if _, ok := mapping["previewed"]; !ok {
+		mapping["previewed"] = false
+	}
+	mappingJSON, err = json.Marshal(mapping)
+	if err != nil {
+		return nil, err
 	}
 	id := ids.New(ids.PrefixImport)
 	if _, err := s.pool.Exec(ctx, `INSERT INTO import_requests(id,workspace_id,kind,file_id,mapping,requested_by) VALUES($1,$2,$3,$4,$5::jsonb,NULLIF($6,''))`, id, workspaceID, kind, fileID, mappingJSON, memberID); err != nil {
 		return nil, fmt.Errorf("portability: create import: %w", err)
 	}
+	if _, err := s.pool.Exec(ctx, `INSERT INTO import_request_progress(import_id) VALUES($1)`, id); err != nil {
+		return nil, fmt.Errorf("portability: create import progress: %w", err)
+	}
+	if start {
+		return s.ConfirmImport(ctx, workspaceID, id, true)
+	}
+	return s.GetImport(ctx, workspaceID, id)
+}
+
+// ConfirmImport is the explicit safety boundary for an additive archive
+// restore. The operator must have reviewed the dry-run and verified a backup
+// before the durable import job can be enqueued.
+func (s *Service) ConfirmImport(ctx context.Context, workspaceID, id string, backupVerified bool) (*Request, error) {
+	if !backupVerified {
+		return nil, errors.New("portability: backup verification is required before import")
+	}
+	request, err := s.GetImport(ctx, workspaceID, id)
+	if err != nil {
+		return nil, err
+	}
+	if request.State != "pending" {
+		return nil, fmt.Errorf("portability: import is already %s", request.State)
+	}
+	if _, err := s.PreviewImport(ctx, workspaceID, id); err != nil {
+		return nil, fmt.Errorf("portability: import preview is required: %w", err)
+	}
 	if s.jobs == nil {
-		_ = s.failImport(ctx, id, errors.New("portability: job queue is unavailable"))
 		return nil, errors.New("portability: job queue is unavailable")
 	}
-	if _, err := s.jobs.Enqueue(ctx, jobs.Spec{WorkspaceID: workspaceID, Queue: "imports", Type: JobImport, Payload: importPayload{RequestID: id}, DedupeKey: "portability-import:" + id}); err != nil {
-		_ = s.failImport(ctx, id, err)
+	if _, err := s.pool.Exec(ctx, `UPDATE import_requests SET mapping = mapping || '{"backup_verified":true}'::jsonb WHERE workspace_id=$1 AND id=$2 AND state='pending'`, workspaceID, id); err != nil {
+		return nil, err
+	}
+	if _, err := s.jobs.Enqueue(ctx, jobs.Spec{WorkspaceID: workspaceID, Queue: "imports", Type: JobImport, Payload: importPayload{RequestID: id}, DedupeKey: "portability-import:" + id}); err != nil && !errors.Is(err, jobs.ErrDuplicate) {
 		return nil, err
 	}
 	return s.GetImport(ctx, workspaceID, id)
@@ -260,7 +306,14 @@ func (s *Service) PreviewImport(ctx context.Context, workspaceID, id string) ([]
 	if err != nil {
 		return nil, err
 	}
-	return Import(ctx, s.pool, archive, workspaceID, true)
+	summaries, err := Import(ctx, s.pool, archive, workspaceID, true)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE import_requests SET mapping = mapping || '{"previewed":true}'::jsonb WHERE workspace_id=$1 AND id=$2 AND state='pending'`, workspaceID, id); err != nil {
+		return nil, err
+	}
+	return summaries, nil
 }
 
 // ExportManifest reads only the completed, workspace-owned archive metadata
@@ -370,7 +423,7 @@ func (s *Service) RunImport(ctx context.Context, id string) error {
 	if err != nil {
 		return s.failImport(ctx, id, err)
 	}
-	summaries, err := Import(ctx, s.pool, archive, request.WorkspaceID, false)
+	summaries, err := Import(ctx, s.pool, archive, request.WorkspaceID, true)
 	if err != nil {
 		return s.failImport(ctx, id, err)
 	}
@@ -378,13 +431,42 @@ func (s *Service) RunImport(ctx context.Context, id string) error {
 	for _, summary := range summaries {
 		total += summary.Rows
 	}
-	_, err = s.pool.Exec(ctx, `UPDATE import_requests SET state='completed',total_rows=$2,processed_rows=$2,failed_rows=0,completed_at=now(),errors='[]'::jsonb WHERE id=$1`, id, total)
-	return err
+	if _, err := s.pool.Exec(ctx, `UPDATE import_requests SET total_rows=$2 WHERE id=$1`, id, total); err != nil {
+		return err
+	}
+	if _, err := s.pool.Exec(ctx, `INSERT INTO import_request_progress(import_id) VALUES($1) ON CONFLICT (import_id) DO NOTHING`, id); err != nil {
+		return err
+	}
+	tableIndex, rowIndex, err := s.importCursor(ctx, id)
+	if err != nil {
+		return err
+	}
+	for {
+		nextTable, nextRow, _, done, err := ImportChunk(ctx, s.pool, archive, request.WorkspaceID, tableIndex, rowIndex, importBatchSize)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return s.failImport(ctx, id, err)
+		}
+		processed := importedRowsBefore(archive, nextTable, nextRow)
+		if _, err := s.pool.Exec(ctx, `UPDATE import_request_progress SET table_index=$2,row_index=$3,updated_at=now() WHERE import_id=$1`, id, nextTable, nextRow); err != nil {
+			return err
+		}
+		if _, err := s.pool.Exec(ctx, `UPDATE import_requests SET processed_rows=$2 WHERE id=$1`, id, processed); err != nil {
+			return err
+		}
+		if done {
+			_, err = s.pool.Exec(ctx, `UPDATE import_requests SET state='completed',processed_rows=$2,failed_rows=0,completed_at=now(),errors='[]'::jsonb WHERE id=$1`, id, processed)
+			return err
+		}
+		tableIndex, rowIndex = nextTable, nextRow
+	}
 }
 
 func (s *Service) claimImport(ctx context.Context, id string) (*Request, error) {
 	var request Request
-	err := s.pool.QueryRow(ctx, `UPDATE import_requests SET state='running' WHERE id=$1 AND state='pending' RETURNING id,workspace_id,kind,file_id,state,total_rows,processed_rows,failed_rows,errors,requested_by,completed_at,created_at`, id).Scan(importArgs(&request)...)
+	err := s.pool.QueryRow(ctx, `UPDATE import_requests SET state='running' WHERE id=$1 AND state IN ('pending','running') RETURNING id,workspace_id,kind,file_id,state,total_rows,processed_rows,failed_rows,errors,requested_by,completed_at,created_at`, id).Scan(importArgs(&request)...)
 	return &request, err
 }
 
@@ -392,21 +474,67 @@ func (s *Service) readArchive(ctx context.Context, workspaceID string, fileID *s
 	if fileID == nil || s.files == nil {
 		return nil, errors.New("portability: archive file is missing")
 	}
-	_, opened, err := s.files.Open(ctx, workspaceID, *fileID)
+	record, opened, err := s.files.Open(ctx, workspaceID, *fileID)
 	if err != nil {
 		return nil, err
 	}
 	defer opened.Close()
-	gzipReader, err := gzip.NewReader(opened)
+	compressed, err := io.ReadAll(io.LimitReader(opened, maxArchiveBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("portability: read archive: %w", err)
+	}
+	if int64(len(compressed)) > maxArchiveBytes {
+		return nil, errors.New("portability: archive exceeds the 512 MiB compressed limit")
+	}
+	if err := filemodule.VerifyChecksum(bytes.NewReader(compressed), record.Checksum); err != nil {
+		return nil, fmt.Errorf("portability: verify archive checksum: %w", err)
+	}
+	gzipReader, err := gzip.NewReader(bytes.NewReader(compressed))
 	if err != nil {
 		return nil, fmt.Errorf("portability: open archive: %w", err)
 	}
 	defer gzipReader.Close()
 	var archive Archive
-	if err := json.NewDecoder(io.LimitReader(gzipReader, 512<<20)).Decode(&archive); err != nil {
+	if err := json.NewDecoder(io.LimitReader(gzipReader, maxArchiveBytes)).Decode(&archive); err != nil {
 		return nil, fmt.Errorf("portability: decode archive: %w", err)
 	}
+	if archive.Version != CurrentVersion || archive.SourceWorkspaceID == "" || archive.Tables == nil {
+		return nil, errors.New("portability: unsupported or incomplete archive")
+	}
 	return &archive, nil
+}
+
+func validArchiveFile(record *filemodule.Record) bool {
+	if record == nil || record.SizeBytes <= 0 || record.SizeBytes > maxArchiveBytes {
+		return false
+	}
+	name := strings.ToLower(record.Name)
+	mime := strings.ToLower(record.MIMEType)
+	return strings.HasSuffix(name, ".json.gz") || mime == "application/gzip" || mime == "application/json" || mime == "application/octet-stream"
+}
+
+func (s *Service) importCursor(ctx context.Context, id string) (int, int, error) {
+	var tableIndex, rowIndex int
+	err := s.pool.QueryRow(ctx, `SELECT table_index,row_index FROM import_request_progress WHERE import_id=$1`, id).Scan(&tableIndex, &rowIndex)
+	return tableIndex, rowIndex, err
+}
+
+func importedRowsBefore(archive *Archive, tableIndex, rowIndex int) int {
+	if tableIndex >= len(tableSpecs) {
+		tableIndex = len(tableSpecs)
+	}
+	total := 0
+	for index := 0; index < tableIndex; index++ {
+		total += len(archive.Tables[tableSpecs[index].name])
+	}
+	if tableIndex < len(tableSpecs) {
+		rows := len(archive.Tables[tableSpecs[tableIndex].name])
+		if rowIndex > rows {
+			rowIndex = rows
+		}
+		total += rowIndex
+	}
+	return total
 }
 
 func (s *Service) failExport(ctx context.Context, id string, cause error) error {
