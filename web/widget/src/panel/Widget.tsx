@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   Book,
@@ -14,24 +14,36 @@ import {
 } from "lucide-react";
 import {
   clearSession,
+  createFeedbackItem,
+  getArticle,
   identify as apiIdentify,
   issueVisitor,
+  listFeedbackBoards,
+  listFeedbackItems,
   listForms,
   listMessages,
   loadSession,
   postMessage,
   saveSession,
+  searchArticles,
   startConversation,
+  submitArticleFeedback,
+  subscribeFeedbackItem,
+  unsubscribeFeedbackItem,
   submitForm,
   track as apiTrack,
   uploadFile,
+  voteFeedbackItem,
+  type WidgetFeedbackBoard,
+  type WidgetFeedbackItem,
+  type WidgetArticle,
   type WidgetForm,
   type WireMessage,
 } from "../lib/api";
 import { VisitorSocket, type WireEvent } from "../lib/socket";
 import type { WidgetConfig, WidgetMessage } from "../types";
 
-type Screen = "home" | "chat" | "articles" | "article" | "form";
+type Screen = "home" | "chat" | "articles" | "article" | "form" | "feedback";
 
 function fromWire(m: WireMessage): WidgetMessage {
   return {
@@ -75,6 +87,10 @@ export function Widget({
   const [uploading, setUploading] = useState(false);
   const [attachmentError, setAttachmentError] = useState("");
   const [query, setQuery] = useState("");
+  const [articleResults, setArticleResults] = useState<WidgetArticle[]>(config.articles);
+  const [articleDetail, setArticleDetail] = useState<WidgetArticle | null>(null);
+  const [articleLoading, setArticleLoading] = useState(false);
+  const [articleFeedback, setArticleFeedback] = useState<"submitted" | "error" | null>(null);
   const [agentTyping, setAgentTyping] = useState(false);
 
   const timelineRef = useRef<HTMLDivElement>(null);
@@ -228,6 +244,11 @@ export function Widget({
           setScreen("form");
           show();
           break;
+        case "openFeedback":
+          setActiveArticle(typeof payload?.slug === "string" ? payload.slug : null);
+          setScreen("feedback");
+          show();
+          break;
         case "identify": {
           const ensureTokenThenIdentify = async () => {
             let token = tokenRef.current;
@@ -245,6 +266,13 @@ export function Widget({
             });
           };
           void ensureTokenThenIdentify().catch(() => {});
+          break;
+        }
+        case "context":
+        case "update": {
+          if (!tokenRef.current) break;
+          const context = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
+          void apiTrack(host, publicKey, tokenRef.current, "context.updated", context).catch(() => {});
           break;
         }
         case "track": {
@@ -360,16 +388,31 @@ export function Widget({
     })();
   };
 
-  const article = config.articles.find((item) => item.slug === activeArticle);
-  const results = useMemo(
-    () =>
-      query
-        ? config.articles.filter((item) =>
-            `${item.title} ${item.excerpt}`.toLowerCase().includes(query.toLowerCase()),
-          )
-        : config.articles,
-    [query, config.articles],
-  );
+  useEffect(() => {
+    if (screen !== "articles" || !config.modes.includes("knowledge_base")) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void searchArticles(host, publicKey, query).then((items) => {
+        if (!cancelled) setArticleResults(items);
+      }).catch(() => {
+        if (!cancelled && !query.trim()) setArticleResults(config.articles);
+      });
+    }, query.trim() ? 180 : 0);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [config.articles, config.modes, host, publicKey, query, screen]);
+
+  useEffect(() => {
+    if (screen !== "article" || !activeArticle) return;
+    setArticleLoading(true);
+    setArticleDetail(null);
+    setArticleFeedback(null);
+    void getArticle(host, publicKey, activeArticle)
+      .then(setArticleDetail)
+      .catch(() => setArticleDetail(config.articles.find((item) => item.slug === activeArticle) ?? null))
+      .finally(() => setArticleLoading(false));
+  }, [activeArticle, config.articles, host, publicKey, screen]);
+
+  const article: WidgetArticle | undefined = articleDetail ?? config.articles.find((item) => item.slug === activeArticle);
 
   const right = appearance.position === "bottom-right";
 
@@ -423,6 +466,7 @@ export function Widget({
                 }}
                 onBrowse={() => setScreen("articles")}
                 onForm={() => { setActiveArticle(null); setScreen("form"); }}
+                onFeedback={() => { setActiveArticle(null); setScreen("feedback"); }}
                 onArticle={(slug) => {
                   setActiveArticle(slug);
                   setScreen("article");
@@ -445,7 +489,7 @@ export function Widget({
               <ArticlesScreen
                 query={query}
                 onQuery={setQuery}
-                results={results}
+                results={articleResults}
                 onOpen={(slug) => {
                   setActiveArticle(slug);
                   setScreen("article");
@@ -457,19 +501,9 @@ export function Widget({
               <div className="p-4">
                 <h2 className="text-md font-semibold tracking-tight text-fg">{article.title}</h2>
                 <p className="mt-2 text-sm leading-relaxed text-fg-secondary">{article.excerpt}</p>
-                <p className="mt-4 text-sm leading-relaxed text-fg-secondary">
-                  Open the full guide in the help centre for the complete walkthrough, including
-                  code samples.
-                </p>
-                <a
-                  href={`${host}/portal/kb/article/${article.slug}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-4 inline-flex items-center gap-1.5 text-sm text-accent"
-                  style={{ pointerEvents: "auto" }}
-                >
-                  Read the full guide
-                  <ChevronRight className="size-3.5" />
+                {articleLoading ? <p className="mt-4 text-xs text-fg-muted">Loading guide…</p> : article.body && <div className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-fg-secondary">{article.body}</div>}
+                <a href={`${host}/portal/kb/article/${article.slug}`} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-1.5 text-sm text-accent" style={{ pointerEvents: "auto" }}>
+                  Open in help centre <ChevronRight className="size-3.5" />
                 </a>
 
                 <div className="mt-6 rounded-lg border border-line bg-inset p-3">
@@ -477,6 +511,7 @@ export function Widget({
                   <div className="mt-2 flex gap-2">
                     <button
                       type="button"
+                      onClick={() => { void submitArticleFeedback(host, publicKey, article.slug, true, "").then(() => setArticleFeedback("submitted")).catch(() => setArticleFeedback("error")); }}
                       className="rounded-md border border-line px-2.5 py-1 text-xs text-fg-secondary transition-colors hover:bg-fill"
                     >
                       Yes, thanks
@@ -489,11 +524,17 @@ export function Widget({
                       No, I need help
                     </button>
                   </div>
+                  {articleFeedback === "submitted" && <p className="mt-2 text-xs text-fg-muted">Thanks — your feedback was recorded.</p>}
+                  {articleFeedback === "error" && <p className="mt-2 text-xs text-danger">We could not record that feedback. Please try again.</p>}
                 </div>
               </div>
             )}
+            {screen === "article" && !article && (
+              <div className="p-6 text-center text-xs text-fg-muted">{articleLoading ? "Loading guide…" : "This guide is no longer available."}</div>
+            )}
 
             {screen === "form" && <FormScreen host={host} publicKey={publicKey} token={tokenRef.current} initialSlug={activeArticle} onToken={(token) => { tokenRef.current = token; saveSession(publicKey, { token, conversationId: conversationRef.current }); }} onDone={() => setScreen("home")} />}
+            {screen === "feedback" && <FeedbackScreen host={host} publicKey={publicKey} token={tokenRef.current} initialSlug={activeArticle} onToken={(token) => { tokenRef.current = token; saveSession(publicKey, { token, conversationId: conversationRef.current }); }} onDone={() => setScreen("home")} />}
           </div>
 
           {screen === "chat" && (
@@ -665,12 +706,14 @@ function HomeScreen({
   onStartChat,
   onBrowse,
   onForm,
+  onFeedback,
   onArticle,
 }: {
   config: WidgetConfig;
   onStartChat: () => void;
   onBrowse: () => void;
   onForm: () => void;
+  onFeedback: () => void;
   onArticle: (slug: string) => void;
 }) {
   return (
@@ -731,6 +774,14 @@ function HomeScreen({
         >
           <Ticket className="size-3.5 shrink-0 text-fg-muted" />
           <span className="flex-1 text-xs text-fg-secondary">Submit a detailed request</span>
+          <ChevronRight className="size-3 shrink-0 text-fg-disabled" />
+        </button>
+      )}
+
+      {config.modes.includes("feedback") && (
+        <button type="button" onClick={onFeedback} className="mt-3 flex w-full items-center gap-2 rounded-md border border-line px-3 py-2.5 text-left transition-colors hover:bg-fill">
+          <MessageSquarePlus className="size-3.5 shrink-0 text-fg-muted" />
+          <span className="flex-1 text-xs text-fg-secondary">Share feedback</span>
           <ChevronRight className="size-3 shrink-0 text-fg-disabled" />
         </button>
       )}
@@ -884,6 +935,62 @@ function ArticlesScreen({
       )}
     </div>
   );
+}
+
+function FeedbackScreen({ host, publicKey, token, initialSlug, onToken, onDone }: {
+  host: string;
+  publicKey: string;
+  token: string | null;
+  initialSlug: string | null;
+  onToken: (token: string) => void;
+  onDone: () => void;
+}) {
+  const [boards, setBoards] = useState<WidgetFeedbackBoard[]>([]);
+  const [board, setBoard] = useState<WidgetFeedbackBoard | null>(null);
+  const [items, setItems] = useState<WidgetFeedbackItem[]>([]);
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [error, setError] = useState("");
+  const [sending, setSending] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void listFeedbackBoards(host, publicKey).then((next) => {
+      if (cancelled) return;
+      setBoards(next);
+      setBoard(next.find((item) => item.slug === initialSlug) ?? next[0] ?? null);
+    }).catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : "Feedback is unavailable."); });
+    return () => { cancelled = true; };
+  }, [host, publicKey, initialSlug]);
+  useEffect(() => {
+    if (!board) return;
+    void listFeedbackItems(host, publicKey, token, board.slug).then(setItems).catch(() => setError("Could not load feedback items."));
+  }, [host, publicKey, token, board]);
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!board || !title.trim() || !description.trim()) return;
+    setSending(true); setError("");
+    try {
+      const result = await createFeedbackItem(host, publicKey, token, board.slug, title.trim(), description.trim());
+      if (result.token) onToken(result.token);
+      setItems((current) => [result.item, ...current]); setTitle(""); setDescription("");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not submit feedback."); }
+    finally { setSending(false); }
+  };
+  const vote = async (item: WidgetFeedbackItem) => {
+    if (!token) { setError("Identify yourself before voting."); return; }
+    try { await voteFeedbackItem(host, publicKey, token, item.id); setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, vote_count: entry.vote_count + 1, viewer_has_voted: true } : entry)); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Could not record vote."); }
+  };
+  const follow = async (item: WidgetFeedbackItem) => {
+    if (!token) { setError("Identify yourself before following feedback."); return; }
+    try {
+      if (item.viewer_subscribed) await unsubscribeFeedbackItem(host, publicKey, token, item.id);
+      else await subscribeFeedbackItem(host, publicKey, token, item.id);
+      setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, viewer_subscribed: !item.viewer_subscribed } : entry));
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not update feedback subscription."); }
+  };
+  if (!board) return <div className="p-6 text-center"><p className="text-sm font-medium text-fg">No public feedback boards</p>{error && <p className="mt-2 text-xs text-danger">{error}</p>}<button type="button" onClick={onDone} className="mt-4 rounded-md border border-line px-3 py-1.5 text-xs text-fg-secondary">Back</button></div>;
+  return <div className="p-3"><div className="mb-3 flex items-center gap-2">{boards.length > 1 ? <select value={board.slug} onChange={(event) => setBoard(boards.find((item) => item.slug === event.target.value) ?? board)} className="min-w-0 flex-1 rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg">{boards.map((item) => <option key={item.id} value={item.slug}>{item.name}</option>)}</select> : <p className="text-sm font-medium text-fg">{board.name}</p>}</div>{board.description && <p className="mb-3 text-xs text-fg-muted">{board.description}</p>}<form className="space-y-2 border-b border-line pb-3" onSubmit={(event) => void submit(event)}><input required value={title} onChange={(event) => setTitle(event.target.value)} placeholder="What should we improve?" className="w-full rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" /><textarea required rows={3} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Tell us why this matters…" className="w-full resize-none rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" /><button type="submit" disabled={sending} className="w-full rounded-md bg-accent px-3 py-2 text-sm font-medium text-accent-fg disabled:opacity-50">{sending ? "Sending…" : "Submit feedback"}</button></form>{error && <p className="mt-2 text-xs text-danger">{error}</p>}<div className="mt-3 space-y-2">{items.length === 0 ? <p className="py-4 text-center text-xs text-fg-muted">No feedback here yet.</p> : items.map((item) => <div key={item.id} className="rounded-md border border-line bg-inset p-2.5"><p className="text-xs font-medium text-fg">{item.title}</p><p className="mt-1 line-clamp-2 text-[11px] text-fg-muted">{item.description}</p><div className="mt-2 flex items-center justify-between gap-2"><span className="text-[11px] text-fg-disabled">{item.status.replaceAll("_", " ")}</span><div className="flex items-center gap-1.5"><button type="button" disabled={item.viewer_has_voted} onClick={() => void vote(item)} className="rounded border border-line px-2 py-1 text-[11px] text-fg-secondary disabled:opacity-50">{item.viewer_has_voted ? "Voted" : `Vote · ${item.vote_count}`}</button><button type="button" onClick={() => void follow(item)} className="rounded border border-line px-2 py-1 text-[11px] text-fg-secondary">{item.viewer_subscribed ? "Following" : "Follow"}</button></div></div></div>)}</div></div>;
 }
 
 function FormScreen({ host, publicKey, token, initialSlug, onToken, onDone }: {
