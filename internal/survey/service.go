@@ -16,6 +16,7 @@ import (
 
 	"github.com/hubchat/hubchat/internal/auth"
 	"github.com/hubchat/hubchat/internal/database"
+	"github.com/hubchat/hubchat/internal/events"
 	"github.com/hubchat/hubchat/internal/ids"
 	"github.com/hubchat/hubchat/internal/jobs"
 )
@@ -35,12 +36,14 @@ var questionTypes = map[string]bool{"star": true, "stars": true, "number": true,
 type Options struct {
 	Jobs      *jobs.Client
 	PublicURL *url.URL
+	Events    *events.Log
 }
 
 type Service struct {
 	pool      *database.Pool
 	jobs      *jobs.Client
 	publicURL *url.URL
+	events    *events.Log
 }
 
 type Question struct {
@@ -134,6 +137,7 @@ func New(pool *database.Pool, options ...Options) *Service {
 	if len(options) > 0 {
 		service.jobs = options[0].Jobs
 		service.publicURL = options[0].PublicURL
+		service.events = options[0].Events
 	}
 	return service
 }
@@ -462,7 +466,31 @@ func (s *Service) Submit(ctx context.Context, workspaceID, id, customerID string
 			}
 		}
 		_, err := tx.Exec(ctx, `UPDATE surveys SET response_count=response_count+1,updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, id)
-		return err
+		if err != nil {
+			return err
+		}
+		if s.events != nil {
+			actorType := events.ActorSystem
+			if storedCustomerID != "" {
+				actorType = events.ActorCustomer
+			}
+			if _, err := s.events.Append(ctx, tx, events.Event{
+				WorkspaceID: workspaceID,
+				Type:        events.SurveyResponseCreated,
+				EntityType:  "survey_response",
+				EntityID:    response.ID,
+				ActorType:   actorType,
+				ActorID:     storedCustomerID,
+				Data: map[string]any{
+					"survey_id": id,
+					"type":      survey.Type,
+					"score":     score,
+				},
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err

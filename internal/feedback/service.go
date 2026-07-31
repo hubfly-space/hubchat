@@ -60,28 +60,28 @@ type Board struct {
 	UpdatedAt        time.Time `json:"updated_at"`
 }
 type Item struct {
-	ID               string    `json:"id"`
-	WorkspaceID      string    `json:"workspace_id"`
-	BoardID          string    `json:"board_id"`
-	Title            string    `json:"title"`
-	Description      string    `json:"description"`
-	Type             string    `json:"type"`
-	Status           string    `json:"status"`
-	Visibility       string    `json:"visibility"`
-	SubmitterID      *string   `json:"submitter_id,omitempty"`
-	CompanyID        *string   `json:"company_id,omitempty"`
-	ProductArea      *string   `json:"product_area,omitempty"`
-	Priority         *string   `json:"priority,omitempty"`
-	VoteCount        int       `json:"vote_count"`
-	CommentCount     int       `json:"comment_count"`
-	SubscriberCount  int       `json:"subscriber_count"`
-	ViewerHasVoted   bool      `json:"viewer_has_voted"`
-	ViewerSubscribed bool      `json:"viewer_subscribed"`
-	MergedIntoID     *string   `json:"merged_into_id,omitempty"`
-	LinkedConversationIDs []string `json:"linked_conversation_ids"`
-	LinkedTicketIDs       []string `json:"linked_ticket_ids"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID                    string    `json:"id"`
+	WorkspaceID           string    `json:"workspace_id"`
+	BoardID               string    `json:"board_id"`
+	Title                 string    `json:"title"`
+	Description           string    `json:"description"`
+	Type                  string    `json:"type"`
+	Status                string    `json:"status"`
+	Visibility            string    `json:"visibility"`
+	SubmitterID           *string   `json:"submitter_id,omitempty"`
+	CompanyID             *string   `json:"company_id,omitempty"`
+	ProductArea           *string   `json:"product_area,omitempty"`
+	Priority              *string   `json:"priority,omitempty"`
+	VoteCount             int       `json:"vote_count"`
+	CommentCount          int       `json:"comment_count"`
+	SubscriberCount       int       `json:"subscriber_count"`
+	ViewerHasVoted        bool      `json:"viewer_has_voted"`
+	ViewerSubscribed      bool      `json:"viewer_subscribed"`
+	MergedIntoID          *string   `json:"merged_into_id,omitempty"`
+	LinkedConversationIDs []string  `json:"linked_conversation_ids"`
+	LinkedTicketIDs       []string  `json:"linked_ticket_ids"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }
 type Comment struct {
 	ID             string    `json:"id"`
@@ -332,7 +332,7 @@ func (s *Service) GetItem(ctx context.Context, workspaceID, id, customerID strin
 	if len(items) == 0 {
 		return nil, ErrNotFound
 	}
-	if err := s.loadLinks(ctx, workspaceID, items[0]); err != nil {
+	if err := s.loadLinks(ctx, workspaceID, &items[0]); err != nil {
 		return nil, err
 	}
 	return &items[0], nil
@@ -374,6 +374,7 @@ func (s *Service) AddLink(ctx context.Context, workspaceID, itemID, memberID str
 	}
 	var link Link
 	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		created := false
 		var exists bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM feedback_items WHERE workspace_id=$1 AND id=$2)`, workspaceID, itemID).Scan(&exists); err != nil {
 			return err
@@ -394,15 +395,18 @@ func (s *Service) AddLink(ctx context.Context, workspaceID, itemID, memberID str
 		if !targetExists {
 			return ErrInvalidLink
 		}
-		if err := tx.QueryRow(ctx, `
+		insertErr := tx.QueryRow(ctx, `
 			INSERT INTO feedback_links(id,workspace_id,item_id,conversation_id,ticket_id)
 			VALUES($1,$2,$3,NULLIF($4,''),NULLIF($5,''))
 			ON CONFLICT DO NOTHING
 			RETURNING id,workspace_id,item_id,conversation_id,ticket_id,created_at
 		`, ids.New(ids.PrefixFeedbackLink), workspaceID, itemID, conversationID, ticketID).Scan(
 			&link.ID, &link.WorkspaceID, &link.ItemID, &link.ConversationID, &link.TicketID, &link.CreatedAt,
-		); errors.Is(err, pgx.ErrNoRows) {
-			err = tx.QueryRow(ctx, `
+		)
+		if insertErr == nil {
+			created = true
+		} else if errors.Is(insertErr, pgx.ErrNoRows) {
+			insertErr = tx.QueryRow(ctx, `
 				SELECT id,workspace_id,item_id,conversation_id,ticket_id,created_at
 				FROM feedback_links
 				WHERE workspace_id=$1 AND item_id=$2
@@ -411,15 +415,15 @@ func (s *Service) AddLink(ctx context.Context, workspaceID, itemID, memberID str
 				&link.ID, &link.WorkspaceID, &link.ItemID, &link.ConversationID, &link.TicketID, &link.CreatedAt,
 			)
 		}
-		if err != nil {
-			return err
+		if insertErr != nil {
+			return insertErr
 		}
-		if s.audit != nil {
+		if created && s.audit != nil {
 			if err := audit.RecordTx(ctx, tx, audit.Entry{WorkspaceID: workspaceID, ActorType: audit.ActorUser, ActorID: memberID, Action: audit.FeedbackLinked, EntityType: "feedback_item", EntityID: itemID, Metadata: map[string]any{"conversation_id": conversationID, "ticket_id": ticketID}}); err != nil {
 				return err
 			}
 		}
-		if s.events != nil {
+		if created && s.events != nil {
 			if _, err := s.events.Append(ctx, tx, events.Event{WorkspaceID: workspaceID, Type: events.FeedbackLinked, EntityType: "feedback_item", EntityID: itemID, ActorType: events.ActorUser, ActorID: memberID, Data: map[string]any{"conversation_id": conversationID, "ticket_id": ticketID}}); err != nil {
 				return err
 			}
@@ -564,7 +568,6 @@ func (s *Service) MergeItems(ctx context.Context, workspaceID, sourceID, targetI
 				return err
 			}
 		}
-		_ = target
 		return nil
 	})
 	if err != nil {
@@ -760,6 +763,8 @@ func scanItems(rows pgx.Rows) ([]Item, error) {
 		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.BoardID, &item.Title, &item.Description, &item.Type, &item.Status, &item.Visibility, &item.SubmitterID, &item.CompanyID, &item.ProductArea, &item.Priority, &item.VoteCount, &item.CommentCount, &item.SubscriberCount, &item.MergedIntoID, &item.ViewerHasVoted, &item.ViewerSubscribed, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
+		item.LinkedConversationIDs = []string{}
+		item.LinkedTicketIDs = []string{}
 		result = append(result, item)
 	}
 	return result, rows.Err()

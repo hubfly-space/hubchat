@@ -58,9 +58,9 @@ const (
 	WebhookUpdated Action = "webhook.updated"
 	WebhookDeleted Action = "webhook.deleted"
 
-	WidgetUpdated Action = "widget.updated"
-	PortalUpdated Action = "portal.updated"
-	RuleChanged   Action = "automation_rule.changed"
+	WidgetUpdated  Action = "widget.updated"
+	PortalUpdated  Action = "portal.updated"
+	RuleChanged    Action = "automation_rule.changed"
 	FeedbackLinked Action = "feedback.linked"
 	FeedbackMerged Action = "feedback.merged"
 
