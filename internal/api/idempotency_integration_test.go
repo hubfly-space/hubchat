@@ -3,20 +3,65 @@
 package api
 
 import (
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/hubchat/hubchat/internal/auth"
+	"github.com/hubchat/hubchat/internal/config"
 	"github.com/hubchat/hubchat/internal/database/dbtest"
 	"github.com/hubchat/hubchat/internal/httpserver"
 	"github.com/hubchat/hubchat/internal/widget"
 )
+
+func TestSetupStateReportsActionableReadiness(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	publicURL, err := url.Parse("https://support.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := Deps{
+		Pool:      pool,
+		Auth:      auth.New(pool, auth.Options{SessionLifetime: time.Hour}),
+		PublicURL: publicURL,
+		Config: config.Config{
+			Storage:  config.Storage{Backend: "local", LocalPath: t.TempDir()},
+			Email:    config.Email{Enabled: true, SMTPHost: "mail.example.com", FromAddress: "support@example.com"},
+			Security: config.Security{SecretKey: []byte("12345678901234567890123456789012")},
+		},
+	}
+
+	response := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/setup/state", nil)
+	handleSetupState(deps)(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("setup state status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	var state setupState
+	if err := json.NewDecoder(response.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	if !state.MigrationsReady {
+		t.Fatalf("setup state reported migrations not ready: %+v", state)
+	}
+	if !state.StorageReady || state.StorageDetail == "" {
+		t.Fatalf("setup state reported storage not ready: %+v", state)
+	}
+	if !state.SecretKeyOK || !state.EmailConfigured {
+		t.Fatalf("setup state reported configured services as unavailable: %+v", state)
+	}
+	if len(state.Checks) != 6 {
+		t.Fatalf("setup state returned %d checks, want 6", len(state.Checks))
+	}
+}
 
 func TestIdempotencyUsesWorkspacePathForPublicRetries(t *testing.T) {
 	pool := dbtest.Pool(t)

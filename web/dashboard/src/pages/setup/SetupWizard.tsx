@@ -38,6 +38,10 @@ type SetupState = {
   secret_key_ok: boolean;
   email_configured: boolean;
   storage_backend: string;
+  storage_ready: boolean;
+  storage_detail: string;
+  migrations_ready: boolean;
+  checks: { id: string; status: "pass" | "warn" | "fail"; detail: string }[];
   migrations_total: number;
   migrations_applied: number;
 };
@@ -145,7 +149,14 @@ export default function SetupWizard() {
 }
 
 function ChecksStep({ state, onNext }: { state: SetupState; onNext: () => void }) {
-  const migrationsCurrent = state.migrations_applied >= state.migrations_total;
+  const check = (id: string) => state.checks.find((item) => item.id === id);
+  const migrationsCheck = check("migrations");
+  const publicURLCheck = check("public_url");
+  const storageCheck = check("storage");
+  const emailCheck = check("email");
+  const secretCheck = check("secret_key");
+  const migrationsCurrent = migrationsCheck?.status === "pass" || state.migrations_ready;
+  const canContinue = migrationsCurrent && state.public_url !== "" && state.storage_ready && state.secret_key_ok;
 
   return (
     <StepShell
@@ -153,41 +164,38 @@ function ChecksStep({ state, onNext }: { state: SetupState; onNext: () => void }
       description="Hubchat verified its configuration before starting. Everything below reflects the server you are actually talking to — not a simulation."
       onNext={onNext}
       nextLabel="Continue"
+      nextDisabled={!canContinue}
     >
       <div className="flex flex-col gap-2">
         <CheckRow
           icon={<Database />}
           label="Database schema"
-          detail={`${state.migrations_applied} of ${state.migrations_total} migrations applied`}
-          state={migrationsCurrent ? "pass" : "fail"}
+          detail={migrationsCheck?.detail ?? `${state.migrations_applied} of ${state.migrations_total} migrations applied`}
+          state={migrationsCheck?.status ?? (migrationsCurrent ? "pass" : "fail")}
         />
         <CheckRow
           icon={<Server />}
           label="Public URL"
-          detail={state.public_url || "Not configured"}
-          state={state.public_url ? "pass" : "fail"}
+          detail={publicURLCheck?.detail ?? (state.public_url || "Not configured")}
+          state={publicURLCheck?.status ?? (state.public_url ? "pass" : "fail")}
         />
         <CheckRow
           icon={<HardDrive />}
           label="Attachment storage"
-          detail={state.storage_backend === "s3" ? "S3-compatible storage" : "Local disk"}
-          state="pass"
+          detail={storageCheck?.detail ?? (state.storage_detail || (state.storage_backend === "s3" ? "S3-compatible storage" : "Local disk"))}
+          state={storageCheck?.status ?? (state.storage_ready ? "pass" : "fail")}
         />
         <CheckRow
           icon={<Mail />}
           label="Outbound email"
-          detail={
-            state.email_configured
-              ? "SMTP configured"
-              : "No SMTP configured — notifications will queue"
-          }
-          state={state.email_configured ? "pass" : "warn"}
+          detail={emailCheck?.detail ?? (state.email_configured ? "SMTP configured" : "No SMTP configured — notifications will queue")}
+          state={emailCheck?.status ?? (state.email_configured ? "pass" : "warn")}
         />
         <CheckRow
           icon={<ShieldCheck />}
           label="Secret key"
-          detail={state.secret_key_ok ? "Present, at least 32 bytes" : "Missing or too short"}
-          state={state.secret_key_ok ? "pass" : "fail"}
+          detail={secretCheck?.detail ?? (state.secret_key_ok ? "Present, at least 32 bytes" : "Missing or too short")}
+          state={secretCheck?.status ?? (state.secret_key_ok ? "pass" : "fail")}
         />
       </div>
 
