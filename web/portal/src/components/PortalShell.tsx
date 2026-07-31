@@ -8,13 +8,16 @@ import {
   MenuRadioItem,
   MenuSeparator,
   MenuTrigger,
+  api,
+  useMutation,
   cn,
   useTheme,
   type ThemeMode,
 } from "@hubchat/shared";
 import { LogOut, Monitor, Moon, Sun, TicketCheck, UserRound } from "lucide-react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { portal, viewer } from "../data";
+import { portalAccent, usePortal } from "../portal-context";
+import { portalErrorMessage } from "../portal-context";
 
 /**
  * Portal chrome.
@@ -24,14 +27,24 @@ import { portal, viewer } from "../data";
  * `[data-branded]` mechanism the widget uses.
  */
 export function PortalShell() {
+  const { data, isLoading, error, refetch } = usePortal();
+  const logout = useMutation(() => api.post("/portal/auth/logout"));
   const { pathname } = useLocation();
   const { mode, setMode } = useTheme();
   const onHome = pathname === "/";
 
+  if (isLoading) return <div className="grid min-h-dvh place-items-center bg-canvas text-sm text-fg-muted">Loading portal…</div>;
+  if (error || !data) {
+    return <div className="grid min-h-dvh place-items-center bg-canvas px-4 text-center text-sm text-fg-muted"><div><p>{portalErrorMessage(error)}</p><Button className="mt-4" variant="secondary" size="sm" onClick={refetch}>Try again</Button></div></div>;
+  }
+
+  const { portal, viewer } = data;
+  const accent = portalAccent(portal);
+
   return (
     <div
       data-branded
-      style={{ ["--hc-accent-brand" as string]: portal.accent }}
+      style={{ ["--hc-accent-brand" as string]: accent }}
       className="flex min-h-dvh flex-col bg-canvas text-fg"
     >
       <a
@@ -47,7 +60,7 @@ export function PortalShell() {
             <span
               aria-hidden="true"
               className="grid size-6 place-items-center rounded-md text-[11px] font-bold text-white"
-              style={{ backgroundColor: portal.accent }}
+                style={{ backgroundColor: accent }}
             >
               N
             </span>
@@ -93,7 +106,7 @@ export function PortalShell() {
               </MenuContent>
             </Menu>
 
-            {viewer.signedIn ? (
+            {viewer ? (
               <Menu>
                 <MenuTrigger asChild>
                   <button
@@ -117,7 +130,7 @@ export function PortalShell() {
                     <NavLink to="/account">Profile & preferences</NavLink>
                   </MenuItem>
                   <MenuSeparator />
-                  <MenuItem icon={<LogOut />} destructive>
+                  <MenuItem icon={<LogOut />} destructive onSelect={() => { void logout.mutate(undefined); window.location.assign("/portal/sign-in"); }}>
                     Sign out
                   </MenuItem>
                 </MenuContent>
@@ -139,11 +152,13 @@ export function PortalShell() {
         <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-6 text-xs text-fg-muted sm:flex-row sm:items-center sm:px-6">
           <p>© 2026 Northwind Cloud</p>
           <nav aria-label="Footer" className="flex gap-4 sm:ml-auto">
-            {portal.footerLinks.map((link) => (
-              <a key={link.href} href={link.href} className="transition-colors hover:text-fg">
-                {link.label}
-              </a>
-            ))}
+            {Array.isArray(portal.features.footer_links) &&
+              portal.features.footer_links.map((link) => {
+                if (!link || typeof link !== "object") return null;
+                const item = link as { href?: unknown; label?: unknown };
+                if (typeof item.href !== "string" || typeof item.label !== "string") return null;
+                return <a key={item.href} href={item.href} className="transition-colors hover:text-fg">{item.label}</a>;
+              })}
           </nav>
         </div>
       </footer>

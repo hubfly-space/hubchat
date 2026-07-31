@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 import { PortalShell } from "./components/PortalShell";
 import { RouteFallback } from "./components/RouteFallback";
+import { PortalProvider } from "./portal-context";
 import Home from "./pages/Home";
 import "./styles.css";
 
@@ -56,7 +57,9 @@ createRoot(container).render(
     <ThemeProvider storageKey="hubchat.portal" defaultMode="light">
       <TooltipProvider delayDuration={300}>
         <ToastProvider>
-          <RouterProvider router={router} />
+          <PortalProvider>
+            <RouterProvider router={router} />
+          </PortalProvider>
         </ToastProvider>
       </TooltipProvider>
     </ThemeProvider>
