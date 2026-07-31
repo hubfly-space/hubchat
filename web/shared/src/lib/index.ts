@@ -5,3 +5,4 @@ export * from "./realtime";
 export * from "./format";
 export * from "./hooks";
 export * from "./theme";
+export * from "./download";
