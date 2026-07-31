@@ -252,9 +252,11 @@ export function Widget({
 
       switch (method) {
         case "show":
+        case "open":
           show();
           break;
         case "hide":
+        case "close":
           hide();
           break;
         case "toggle":
@@ -271,11 +273,13 @@ export function Widget({
           show();
           break;
         case "openForm":
+        case "openTicketForm":
           setActiveArticle(typeof payload?.slug === "string" ? payload.slug : null);
           setScreen("form");
           show();
           break;
         case "openFeedback":
+        case "openFeedbackForm":
           setActiveArticle(typeof payload?.slug === "string" ? payload.slug : null);
           setScreen("feedback");
           show();
@@ -287,25 +291,28 @@ export function Widget({
               name: typeof payload?.name === "string" ? payload.name : undefined,
               email: typeof payload?.email === "string" ? payload.email : undefined,
               external_id: typeof payload?.external_id === "string" ? payload.external_id : undefined,
-              signed_token: typeof payload?.token === "string" ? payload.token : undefined,
+              signed_token: typeof payload?.signed_token === "string" ? payload.signed_token :
+                typeof payload?.token === "string" ? payload.token : undefined,
+              attributes: payload?.attributes && typeof payload.attributes === "object" ? payload.attributes as Record<string, unknown> : undefined,
             });
           };
           void ensureTokenThenIdentify().catch(() => {});
           break;
         }
-        case "context":
-        case "update": {
-          if (!tokenRef.current) break;
+        case "context": {
           const context = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
-          void apiTrack(host, publicKey, tokenRef.current, "context.updated", context).catch(() => {});
+          void ensureVisitorToken().then((token) => apiTrack(host, publicKey, token, "context.updated", context)).catch(() => {});
+          break;
+        }
+        case "update": {
+          const attributes = payload?.attributes && typeof payload.attributes === "object" ? payload.attributes as Record<string, unknown> : {};
+          void ensureVisitorToken().then((token) => apiIdentify(host, publicKey, token, { attributes })).catch(() => {});
           break;
         }
         case "track": {
           const type = typeof payload?.type === "string" ? payload.type : "";
-          if (!type || !tokenRef.current) break;
-          void apiTrack(host, publicKey, tokenRef.current, type, (payload?.payload as Record<string, unknown>) ?? {}).catch(
-            () => {},
-          );
+          if (!type) break;
+          void ensureVisitorToken().then((token) => apiTrack(host, publicKey, token, type, (payload?.payload as Record<string, unknown>) ?? {})).catch(() => {});
           break;
         }
         case "reset":

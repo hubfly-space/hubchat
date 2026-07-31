@@ -96,8 +96,10 @@ export function mount({
 }
 
 const commands = new Set([
-  "show",
-  "hide",
+	"show",
+	"open",
+	"hide",
+	"close",
   "toggle",
   "identify",
   "context",
@@ -106,7 +108,9 @@ const commands = new Set([
   "startConversation",
   "openArticle",
   "openForm",
+  "openTicketForm",
   "openFeedback",
+  "openFeedbackForm",
   "reset",
   "on",
 ]);
