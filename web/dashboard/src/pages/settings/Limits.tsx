@@ -1,139 +1,76 @@
 import {
+  ApiError,
   Badge,
+  Button,
   Callout,
   Card,
   CardBody,
   CardHeader,
+  EmptyState,
   Page,
   PageBody,
   PageHeader,
   Section,
   UsageMeter,
-  formatBytes,
+  api,
+  useQuery,
 } from "@hubchat/shared";
-import { Info } from "lucide-react";
+import { BarChart3, Info } from "lucide-react";
 
-const LIMITS = [
-  { group: "People", items: [
-    { label: "Workspace members", used: 6, limit: null },
-    { label: "Teams", used: 2, limit: null },
-  ]},
-  { group: "Surfaces", items: [
-    { label: "Inboxes", used: 3, limit: null },
-    { label: "Widgets", used: 3, limit: null },
-    { label: "Portals", used: 1, limit: null },
-    { label: "Feedback boards", used: 3, limit: null },
-    { label: "Knowledge bases", used: 1, limit: null },
-  ]},
-  { group: "Volume", items: [
-    { label: "Monthly active contacts", used: 2_140, limit: null },
-    { label: "Conversations this month", used: 1_284, limit: null },
-    { label: "Stored events", used: 184_920, limit: 500_000 },
-    { label: "API requests today", used: 42_180, limit: 250_000 },
-  ]},
+type UsageMetric = {
+  key: string;
+  label: string;
+  used: number | null;
+  limit?: number | null;
+  unit?: string;
+  period?: string;
+  measured: boolean;
+};
+type UsageLimit = { key: string; label: string; value: number; unit?: string };
+type UsageSnapshot = { computed_at: string; metrics: UsageMetric[]; request_limits: UsageLimit[] };
+
+const GROUPS = [
+  { title: "People", keys: ["workspace_members", "teams"] },
+  { title: "Surfaces", keys: ["inboxes", "widgets", "portals", "feedback_boards", "knowledge_bases"] },
+  { title: "Volume", keys: ["monthly_active_contacts", "conversations_month", "events_month", "api_requests_day"] },
 ];
 
-/**
- * Usage and limits (§23).
- *
- * The self-hosted edition enforces no plan limits — but the counters exist, and
- * the interface reads them, so a hosted edition does not require a second
- * codebase. What you see here is genuine usage, not a paywall.
- */
+function displayLimit(limit: UsageLimit) {
+  if (limit.unit === "bytes") return `${(limit.value / 1024 / 1024).toFixed(limit.value >= 1024 * 1024 ? 0 : 2)} MB`;
+  return limit.value.toLocaleString();
+}
+
+function Metric({ metric }: { metric: UsageMetric }) {
+  if (!metric.measured || metric.used == null) {
+    return <div className="flex items-baseline justify-between gap-3 border-b border-line-subtle py-2 last:border-b-0"><span className="text-sm text-fg-secondary">{metric.label}</span><span className="text-xs text-fg-muted">Not recorded</span></div>;
+  }
+  return <UsageMeter label={metric.label} used={metric.used} limit={metric.limit ?? null} unit={metric.unit === "bytes" ? "bytes" : undefined} />;
+}
+
+/** Live usage and deployment ceilings (§23). */
 export default function Limits() {
+  const query = useQuery<UsageSnapshot>(["workspace-usage"], (signal) => api.get("/workspace/usage", { signal }));
+  const metrics = new Map((query.data?.metrics ?? []).map((metric) => [metric.key, metric]));
+
   return (
     <Page>
-      <PageHeader
-        title="Usage & limits"
-        description="What this workspace is consuming. Useful for capacity planning long before it is useful for billing."
-      />
-
+      <PageHeader title="Usage & limits" description="Measured workspace consumption and the request ceilings configured for this deployment." />
       <PageBody width="narrow">
         <Callout tone="info" className="mb-5" icon={<Info />}>
-          This is a self-hosted deployment, so no plan limits are enforced. Counters marked with a
-          ceiling are operational safeguards — the event and API limits protect PostgreSQL from a
-          runaway integration (§26.4), not your invoice.
+          Usage is calculated from workspace-owned records. A counter marked “Not recorded” means the deployment has not enabled that meter; it is never displayed as a fabricated zero.
         </Callout>
 
-        {LIMITS.map((group) => (
-          <Section key={group.group} title={group.group}>
-            <Card>
-              <CardBody className="space-y-4">
-                {group.items.map((item) => (
-                  <UsageMeter
-                    key={item.label}
-                    label={item.label}
-                    used={item.used}
-                    limit={item.limit}
-                  />
-                ))}
-              </CardBody>
-            </Card>
-          </Section>
-        ))}
+        {query.isLoading ? <p className="text-sm text-fg-muted">Loading live usage…</p> : query.error ? <EmptyState icon={BarChart3} title="Usage unavailable" description={query.error instanceof ApiError ? query.error.message : "Could not load workspace usage."} action={<Button variant="secondary" onClick={query.refetch}>Try again</Button>} /> : (
+          <>
+            {GROUPS.map((group) => <Section key={group.title} title={group.title}><Card><CardBody className="space-y-4">{group.keys.map((key) => { const metric = metrics.get(key); return metric ? <Metric key={key} metric={metric} /> : <p key={key} className="text-sm text-fg-muted">{key.replaceAll("_", " ")} is not available.</p>; })}</CardBody></Card></Section>)}
 
-        <Section title="Storage">
-          <Card>
-            <CardBody className="space-y-4">
-              <UsageMeter
-                label="Attachments"
-                used={4_180}
-                limit={null}
-                unit="MB"
-              />
-              <UsageMeter label="Generated exports" used={184} limit={null} unit="MB" />
-              <div className="border-t border-line-subtle pt-3">
-                <p className="flex items-baseline justify-between text-xs">
-                  <span className="text-fg-secondary">Total on disk</span>
-                  <span className="tabular text-fg">{formatBytes(4_364 * 1024 * 1024)}</span>
-                </p>
-                <p className="mt-1 text-2xs text-fg-muted">
-                  Stored at /var/lib/hubchat/files · 214 GB free on the volume
-                </p>
-              </div>
-            </CardBody>
-          </Card>
-        </Section>
+            <Section title="Storage"><Card><CardBody>{metrics.get("storage_bytes") ? <Metric metric={metrics.get("storage_bytes")!} /> : <p className="text-sm text-fg-muted">Storage usage is not available.</p>}<p className="mt-3 text-xs text-fg-muted">Computed {query.data?.computed_at ? new Date(query.data.computed_at).toLocaleString() : "—"}.</p></CardBody></Card></Section>
 
-        <Section title="Per-request ceilings">
-          <Card>
-            <CardHeader
-              title="Hard limits"
-              description="Requests exceeding these are rejected rather than truncated, so you find out at integration time instead of discovering silently-lost data later."
-            />
-            <CardBody>
-              <dl className="space-y-2 text-xs">
-                {[
-                  ["Maximum file size", "25 MB"],
-                  ["Maximum event payload", "32 KB"],
-                  ["Maximum request body", "10 MB"],
-                  ["Maximum JSON attribute depth", "4 levels"],
-                  ["Maximum custom attributes per customer", "64"],
-                  ["Maximum actions per rule execution", "20"],
-                ].map(([label, value]) => (
-                  <div key={label} className="flex items-baseline justify-between gap-3">
-                    <dt className="text-fg-muted">{label}</dt>
-                    <dd className="shrink-0 tabular text-fg-secondary">{value}</dd>
-                  </div>
-                ))}
-              </dl>
-            </CardBody>
-          </Card>
-        </Section>
+            <Section title="Per-request ceilings"><Card><CardHeader title="Configured hard limits" description="These values come from the running deployment configuration. Requests exceeding them are rejected rather than silently truncated." /><CardBody><dl className="space-y-2 text-xs">{(query.data?.request_limits ?? []).map((limit) => <div key={limit.key} className="flex items-baseline justify-between gap-3"><dt className="text-fg-muted">{limit.label}</dt><dd className="shrink-0 tabular text-fg-secondary">{displayLimit(limit)}{limit.unit === "count" ? "" : ""}</dd></div>)}</dl></CardBody></Card></Section>
 
-        <Section title="Edition">
-          <Card>
-            <CardBody className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-sm text-fg">Self-hosted, open source</p>
-                <p className="mt-0.5 text-xs text-fg-muted">
-                  No entitlement checks are active. Every module is available.
-                </p>
-              </div>
-              <Badge tone="success">All features</Badge>
-            </CardBody>
-          </Card>
-        </Section>
+            <Section title="Edition"><Card><CardBody className="flex items-center justify-between gap-4"><div><p className="text-sm text-fg">Self-hosted, open source</p><p className="mt-0.5 text-xs text-fg-muted">No entitlement checks are active. Every installed module is available.</p></div><Badge tone="success">All features</Badge></CardBody></Card></Section>
+          </>
+        )}
       </PageBody>
     </Page>
   );

@@ -177,7 +177,7 @@ export default function ImportExport() {
             </Section>
 
             <Section title="From the command line">
-              <CodeBlock language="bash" code={`hubchat workspace export --slug northwind --out ./northwind.json.gz\nhubchat workspace import --file ./northwind.json.gz --slug northwind-restored`} />
+              <CodeBlock language="bash" code={`hubchat workspace export --slug acme --out ./acme.json.gz\nhubchat workspace import --file ./acme.json.gz --slug acme-restored`} />
             </Section>
           </TabsContent>
 

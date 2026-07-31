@@ -12,6 +12,7 @@ import {
   Page,
   PageBody,
   PageHeader,
+  Pagination,
   SegmentedControl,
   Section,
   Toolbar,
@@ -19,10 +20,12 @@ import {
   formatRelativeShort,
   api,
   useMutation,
+  useInfinite,
   useQuery,
   type BadgeTone,
   type Column,
   type Job,
+  type Paginated,
 } from "@hubchat/shared";
 import { Activity, Ban, RotateCcw } from "lucide-react";
 import { useState } from "react";
@@ -36,16 +39,31 @@ const STATE: Record<Job["state"], { label: string; tone: BadgeTone }> = {
   cancelled: { label: "Cancelled", tone: "neutral" },
 };
 
+type JobSummary = {
+  queue_depth: number;
+  running: number;
+  failed_24h: number;
+  dead: number;
+};
+
 /** Background job inspection (§8.7). */
 export default function Jobs() {
   const [filter, setFilter] = useState<"all" | Job["state"]>("all");
-  const query = useQuery<{ data: Job[] }>(["jobs", "all"], (signal) => api.get("/jobs", { signal }));
-  const retry = useMutation<string, unknown>((id) => api.post(`/jobs/${encodeURIComponent(id)}/retry`), { invalidates: [["jobs", filter], ["jobs", "all"]] });
-  const cancel = useMutation<string, unknown>((id) => api.post(`/jobs/${encodeURIComponent(id)}/cancel`), { invalidates: [["jobs", filter], ["jobs", "all"]] });
+  const jobs = useInfinite<Job>(
+    ["jobs", filter],
+    (cursor, signal) => {
+      const params = new URLSearchParams({ limit: "50" });
+      if (filter !== "all") params.set("state", filter);
+      if (cursor) params.set("cursor", cursor);
+      return api.get<Paginated<Job>>(`/jobs?${params.toString()}`, { signal });
+    },
+  );
+  const summary = useQuery<JobSummary>(["jobs-summary"], (signal) => api.get("/jobs/summary", { signal }));
+  const retry = useMutation<string, unknown>((id) => api.post(`/jobs/${encodeURIComponent(id)}/retry`), { invalidates: [["jobs"], ["jobs-summary"]] });
+  const cancel = useMutation<string, unknown>((id) => api.post(`/jobs/${encodeURIComponent(id)}/cancel`), { invalidates: [["jobs"], ["jobs-summary"]] });
   const [cancelling, setCancelling] = useState<Job | null>(null);
-  const allRows = query.data?.data ?? [];
-  const rows = allRows.filter((job) => filter === "all" || job.state === filter);
-  const dead = allRows.filter((job) => job.state === "dead").length;
+  const rows = jobs.items;
+  const dead = summary.data?.dead ?? 0;
 
   const columns: Column<Job>[] = [
     {
@@ -125,29 +143,29 @@ export default function Jobs() {
           </Callout>
         )}
 
-        {query.isError ? <EmptyState icon={Activity} title="Job queue unavailable" description={query.error instanceof ApiError ? query.error.message : "Try again in a moment."} action={<Button variant="secondary" size="sm" onClick={query.refetch}>Try again</Button>} /> : <Section>
+        {jobs.error ? <EmptyState icon={Activity} title="Job queue unavailable" description={jobs.error instanceof ApiError ? jobs.error.message : "Try again in a moment."} action={<Button variant="secondary" size="sm" onClick={jobs.refetch}>Try again</Button>} /> : <Section>
           <Card>
             <CardBody className="grid gap-6 sm:grid-cols-4">
               <Metric
                 label="Queue depth"
-                value={allRows.filter((job) => job.state === "pending").length}
+                value={summary.data?.queue_depth ?? "—"}
                 higherIsBetter={false}
                 definition="Jobs waiting to be leased by a worker. A steadily rising depth means the worker cannot keep up."
               />
               <Metric
                 label="Running"
-                value={allRows.filter((job) => job.state === "running").length}
+                value={summary.data?.running ?? "—"}
                 definition="Jobs currently leased and executing."
               />
               <Metric
                 label="Failed (24h)"
-                value={allRows.filter((job) => job.state === "failed").length}
+                value={summary.data?.failed_24h ?? "—"}
                 higherIsBetter={false}
                 definition="Jobs that errored and are awaiting a retry."
               />
               <Metric
                 label="Dead letter"
-                value={dead}
+                value={summary.data?.dead ?? "—"}
                 higherIsBetter={false}
                 definition="Jobs that exhausted every retry and stopped."
               />
@@ -173,15 +191,15 @@ export default function Jobs() {
             />
           }
           trailing={
-            <Button variant="secondary" size="sm" leading={<RotateCcw />} disabled={retry.isPending} onClick={() => { rows.filter((job) => job.state === "dead").forEach((job) => void retry.mutate(job.id)); }}>
-              Retry dead jobs
+            <Button variant="secondary" size="sm" leading={<RotateCcw />} disabled={retry.isPending || rows.every((job) => job.state !== "dead")} onClick={() => { rows.filter((job) => job.state === "dead").forEach((job) => void retry.mutate(job.id)); }}>
+              Retry loaded dead jobs
             </Button>
           }
         />
 
         <Card className="rounded-t-none">
           <CardBody className="p-0">
-            <DataTable
+            {jobs.isLoading ? <p className="p-5 text-sm text-fg-muted">Loading jobs…</p> : <DataTable
               aria-label="Background jobs"
               rows={rows}
               columns={columns}
@@ -205,9 +223,17 @@ export default function Jobs() {
                   description="Nothing matches this filter — which, for the dead-letter view, is the goal."
                 />
               }
-            />
+            />}
           </CardBody>
         </Card>
+
+        <Pagination
+          hasPrevious={false}
+          hasNext={jobs.hasMore}
+          onPrevious={() => undefined}
+          onNext={() => void jobs.fetchNext()}
+          summary={`${rows.length} job${rows.length === 1 ? "" : "s"} loaded`}
+        />
 
         <ConfirmDialog
           open={cancelling !== null}

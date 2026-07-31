@@ -383,7 +383,7 @@ function InviteDialog() {
 
           <Field label="Email addresses" description="One per line. Everyone in this batch receives the same role.">
             <Input
-              placeholder="teammate@northwind.cloud"
+              placeholder="teammate@example.com"
               value={emails}
               onChange={(event) => setEmails(event.target.value)}
             />
