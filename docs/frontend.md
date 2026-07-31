@@ -15,7 +15,7 @@ web/shared/          used by ≥2 surfaces
 web/dashboard/src/
   app/               shell, routing, workspace context
   pages/<domain>/    one directory per domain
-  data/              fixtures (→ API client)
+  data/              explicit demo fixtures only (production pages use API/query modules)
   components/        dashboard-only components
 ```
 

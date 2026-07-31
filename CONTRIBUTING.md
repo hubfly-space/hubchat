@@ -22,6 +22,10 @@ make dev     # Go on :8080, dashboard on :5173
 
 ```bash
 make check   # typecheck, lint, vet, test
+# Dedicated PostgreSQL suite; see docs/testing.md
+make dev-db
+export HUBCHAT_TEST_DATABASE_URL="postgres://hubchat:hubchat@localhost:5432/hubchat?sslmode=disable"
+make test-integration
 ```
 
 ## Commits

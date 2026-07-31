@@ -17,10 +17,13 @@ PostgreSQL  ──▶  hubchat (one binary)  ──▶  browsers
 
 ## Status
 
-This repository currently contains the **foundation**: the design system, the
-complete browser interfaces built against fixture data, the Go module skeleton
-with its boundary contracts, the HTTP layer, and the first migrations. The
-service layer behind the API is not implemented yet.
+This repository contains a working production-backed support core alongside
+fixture-driven screens that are being migrated module by module. Authentication,
+workspaces, inboxes, conversations, realtime messaging, customers, companies,
+tickets, metadata, search, widget identity, audit logging, jobs, and migrations
+are implemented. Feedback, knowledge base, surveys, forms, automation, SLA,
+email ingestion, webhooks, analytics, files, and portability remain in active
+delivery.
 
 What runs today:
 
@@ -29,7 +32,10 @@ What runs today:
 | `make build` | Produces a single ~18 MB binary with all three frontends embedded |
 | `./dist/hubchat serve` | Serves the dashboard, portal, and widget with correct cache and security headers |
 | `./dist/hubchat doctor` | Checks configuration, embedded assets, and dependencies |
-| `make check` | Typecheck, lint, vet, and test |
+| `make check` | Typecheck, lint, vet, and unit test |
+
+Integration tests use a separate destructive test database and run with
+`make test-integration` after `make dev-db` and `export HUBCHAT_TEST_DATABASE_URL=...`.
 
 ---
 
@@ -72,7 +78,7 @@ cmd/hubchat/          CLI entry point
 internal/             one package per domain module (§8.4), each with doc.go
   httpserver/         routing, middleware, asset serving, error contract
   config/             configuration loading and validation
-  <26 modules>/       boundary contracts; service layer to follow
+  <26 modules>/       domain services, repositories, and boundary contracts
 embedded/             go:embed surface — assets, migrations, templates
   migrations/         SQL, applied in filename order
 web/
