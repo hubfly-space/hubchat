@@ -3,7 +3,6 @@ import {
   EmptyState,
   Menu,
   MenuContent,
-  MenuItem,
   MenuLabel,
   MenuRadioGroup,
   MenuRadioItem,
