@@ -31,6 +31,7 @@ var (
 	ErrInvalidLimit      = errors.New("form: submission limit must be positive")
 	ErrInvalidSubmission = errors.New("form: submission is invalid")
 	ErrSubmissionLimit   = errors.New("form: submission limit reached")
+	ErrRateLimited       = errors.New("form: submission rate limit reached")
 	ErrDisabled          = errors.New("form: form is disabled")
 )
 
@@ -295,6 +296,9 @@ func (s *Service) Submit(ctx context.Context, workspaceID, slug string, input Su
 	if err := validateSubmission(form.Fields, input.Values); err != nil {
 		return "", err
 	}
+	if err := s.checkRateLimit(ctx, workspaceID, form, input.IP); err != nil {
+		return "", err
+	}
 
 	id := ids.New(ids.PrefixSubmission)
 	err = database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
@@ -346,6 +350,30 @@ func (s *Service) Submit(ctx context.Context, workspaceID, slug string, input Su
 	return id, nil
 }
 
+func (s *Service) checkRateLimit(ctx context.Context, workspaceID string, form *Form, ip string) error {
+	if strings.TrimSpace(ip) == "" || form.SpamProtection == nil {
+		return nil
+	}
+	limit := 0
+	switch value := form.SpamProtection["rate_limit_per_hour"].(type) {
+	case float64:
+		limit = int(value)
+	case int:
+		limit = value
+	}
+	if limit <= 0 {
+		return nil
+	}
+	var count int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM form_submissions WHERE workspace_id=$1 AND form_id=$2 AND ip=$3::inet AND created_at>=now()-interval '1 hour'`, workspaceID, form.ID, ip).Scan(&count); err != nil {
+		return err
+	}
+	if count >= limit {
+		return ErrRateLimited
+	}
+	return nil
+}
+
 func (s *Service) routeSubmission(ctx context.Context, workspaceID string, form *Form, submissionID string, input SubmissionInput) error {
 	routing := form.Routing
 	purpose := form.Purpose
@@ -373,6 +401,9 @@ func (s *Service) routeSubmission(ctx context.Context, workspaceID string, form 
 		if err != nil {
 			return err
 		}
+		if err := s.applyRoutingTags(ctx, workspaceID, "ticket", created.ID, routing); err != nil {
+			return err
+		}
 		return s.recordResult(ctx, workspaceID, submissionID, "ticket", created.ID)
 
 	case "conversation":
@@ -396,6 +427,9 @@ func (s *Service) routeSubmission(ctx context.Context, workspaceID string, form 
 		}
 		created, _, err := s.targets.Conversation.Start(ctx, workspaceID, inboxID, "form", nil, customerID, visitorID, "", body)
 		if err != nil {
+			return err
+		}
+		if err := s.applyRoutingTags(ctx, workspaceID, "conversation", created.ID, routing); err != nil {
 			return err
 		}
 		return s.recordResult(ctx, workspaceID, submissionID, "conversation", created.ID)
@@ -484,6 +518,41 @@ func (s *Service) routingInbox(ctx context.Context, workspaceID string, routing 
 func (s *Service) recordResult(ctx context.Context, workspaceID, submissionID, resultType, resultID string) error {
 	_, err := s.pool.Exec(ctx, `UPDATE form_submissions SET result_type=$3,result_id=$4 WHERE workspace_id=$1 AND id=$2`, workspaceID, submissionID, resultType, resultID)
 	return err
+}
+
+func (s *Service) applyRoutingTags(ctx context.Context, workspaceID, subjectType, subjectID string, routing map[string]any) error {
+	var raw []any
+	switch values := routing["tag_ids"].(type) {
+	case []any:
+		raw = values
+	case []string:
+		for _, value := range values {
+			raw = append(raw, value)
+		}
+	}
+	for _, value := range raw {
+		tagID, ok := value.(string)
+		if !ok || strings.TrimSpace(tagID) == "" {
+			continue
+		}
+		var err error
+		switch subjectType {
+		case "ticket":
+			if s.targets.Ticket == nil {
+				return errors.New("form: ticket target is unavailable")
+			}
+			err = s.targets.Ticket.AddTag(ctx, workspaceID, "", subjectID, tagID)
+		case "conversation":
+			if s.targets.Conversation == nil {
+				return errors.New("form: conversation target is unavailable")
+			}
+			err = s.targets.Conversation.AddTag(ctx, workspaceID, "", subjectID, tagID)
+		}
+		if err != nil {
+			return fmt.Errorf("form: apply routing tag: %w", err)
+		}
+	}
+	return nil
 }
 
 func optionalInput(value string) *string {

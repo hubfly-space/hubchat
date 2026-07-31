@@ -38,6 +38,10 @@ import (
 type Message struct {
 	To      string
 	Subject string
+	// ReplyTo optionally overrides the configured global reply address. Email
+	// channel messages use this for the mailbox that owns the conversation;
+	// authentication mail leaves it empty and uses the configured value.
+	ReplyTo string
 	// Body is plain text. HTML mail is deliberately absent for now: these are
 	// six short transactional messages, every client renders text, and it
 	// removes a whole class of rendering and sanitisation concerns from the
@@ -165,8 +169,12 @@ func (s *SMTPSender) compose(message Message) []byte {
 	fmt.Fprintf(&buf, "From: %s\r\n", sanitizeHeader(s.from))
 	fmt.Fprintf(&buf, "To: %s\r\n", sanitizeHeader(message.To))
 	fmt.Fprintf(&buf, "Subject: %s\r\n", sanitizeHeader(message.Subject))
-	if s.cfg.ReplyTo != "" {
-		fmt.Fprintf(&buf, "Reply-To: %s\r\n", sanitizeHeader(s.cfg.ReplyTo))
+	replyTo := message.ReplyTo
+	if replyTo == "" {
+		replyTo = s.cfg.ReplyTo
+	}
+	if replyTo != "" {
+		fmt.Fprintf(&buf, "Reply-To: %s\r\n", sanitizeHeader(replyTo))
 	}
 	fmt.Fprintf(&buf, "Date: %s\r\n", time.Now().Format(time.RFC1123Z))
 	buf.WriteString("MIME-Version: 1.0\r\n")
