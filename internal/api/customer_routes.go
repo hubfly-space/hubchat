@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -22,6 +24,8 @@ func registerCustomerRoutes(mux *http.ServeMux, deps Deps) {
 		requireCapability(deps, authorization.CustomerRead, handleSearchCustomers(deps)))
 	mux.HandleFunc("GET /v1/customers/{id}",
 		requireCapability(deps, authorization.CustomerRead, handleGetCustomer(deps)))
+	mux.HandleFunc("GET /v1/customers/export",
+		requireCapability(deps, authorization.CustomerReadSensitive, handleExportCustomers(deps)))
 	mux.HandleFunc("PATCH /v1/customers/{id}",
 		requireCapability(deps, authorization.CustomerRead, idempotent(handleUpdateCustomer(deps))))
 	mux.HandleFunc("PATCH /v1/customers/{id}/owner",
@@ -69,6 +73,61 @@ func registerCustomerRoutes(mux *http.ServeMux, deps Deps) {
 		requireCapability(deps, authorization.WorkspaceManage, idempotent(handleUpdateAttributeDefinition(deps))))
 	mux.HandleFunc("DELETE /v1/attribute-definitions/{id}",
 		requireCapability(deps, authorization.WorkspaceManage, idempotent(handleArchiveAttributeDefinition(deps))))
+}
+
+// handleExportCustomers returns a bounded, workspace-scoped CSV snapshot. It
+// deliberately walks the same cursor ordering as the customer directory so an
+// export never silently contains only the first UI page.
+func handleExportCustomers(deps Deps) http.HandlerFunc {
+	const pageSize = 200
+	const maxRows = 10000
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		query := r.URL.Query()
+		filter := customer.ListFilter{
+			Query: query.Get("q"), TagID: query.Get("tag_id"),
+			CompanyID: query.Get("company_id"), Verification: query.Get("verification"),
+			Limit: pageSize,
+		}
+		rows := make([]customer.Customer, 0, pageSize)
+		for len(rows) < maxRows {
+			page, err := deps.Customer.List(r.Context(), actor.WorkspaceID, filter)
+			if err != nil {
+				httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not export customers.")
+				return
+			}
+			remaining := maxRows - len(rows)
+			if len(page) > remaining {
+				page = page[:remaining]
+			}
+			rows = append(rows, page...)
+			if len(page) < pageSize || len(rows) >= maxRows {
+				break
+			}
+			last := page[len(page)-1]
+			filter.Before = last.FirstSeenAt
+			if last.LastSeenAt != nil {
+				filter.Before = *last.LastSeenAt
+			}
+			filter.BeforeID = last.ID
+		}
+
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="customers-export.csv"`)
+		writer := csv.NewWriter(w)
+		_ = writer.Write([]string{"ID", "Name", "Email", "Phone", "Verification", "Language", "Timezone", "External ID", "Owner ID", "Attributes", "First Seen", "Last Seen"})
+		for _, item := range rows {
+			attributes, _ := json.Marshal(item.Attributes)
+			_ = writer.Write([]string{
+				item.ID, derefOrEmpty(item.Name), derefOrEmpty(item.Email), derefOrEmpty(item.Phone),
+				item.Verification, derefOrEmpty(item.Language), derefOrEmpty(item.Timezone),
+				derefOrEmpty(item.ExternalID), derefOrEmpty(item.OwnerID), string(attributes),
+				item.FirstSeenAt.Format(timeFormat), formatTimePtr(item.LastSeenAt),
+			})
+		}
+		writer.Flush()
+	}
 }
 
 // customerJSON masks sensitive attribute values (per their attribute

@@ -295,7 +295,7 @@ func (s *Service) Companies(ctx context.Context, workspaceID string, ids []strin
 }
 
 func (s *Service) ListCompanies(ctx context.Context, workspaceID, query string, limit int) ([]Company, error) {
-	if limit <= 0 || limit > 100 {
+	if limit <= 0 || limit > 10000 {
 		limit = 50
 	}
 	return s.repo.listCompanies(ctx, workspaceID, strings.TrimSpace(query), limit)

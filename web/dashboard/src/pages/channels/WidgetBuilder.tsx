@@ -10,6 +10,7 @@ import {
   Checkbox,
   CodeBlock,
   ColorPicker,
+  ConfirmDialog,
   CopyField,
   Dialog,
   DialogContent,
@@ -91,10 +92,12 @@ export default function WidgetBuilder() {
   const [previewState, setPreviewState] = useState<"launcher" | "home" | "chat">("home");
   const [dirty, setDirty] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   // The server is the source of truth; a fresh load (or a refetch after a
   // successful save) replaces the draft. Local edits between saves live only
-  // in this component's state, exactly like before against fixtures.
+  // in this component's state until they are explicitly published.
   useEffect(() => {
     if (widgetQuery.data) {
       setDraft(widgetQuery.data);
@@ -133,6 +136,23 @@ export default function WidgetBuilder() {
   });
 
   if (widgetQuery.isLoading) return <Page>{null}</Page>;
+
+  if (widgetQuery.error) {
+    return (
+      <Page>
+        <div className="p-6">
+          <Callout tone="danger" title="Could not load this widget">
+            {widgetQuery.error instanceof ApiError
+              ? widgetQuery.error.message
+              : "The widget configuration could not be loaded."}
+          </Callout>
+          <Button variant="secondary" size="sm" className="mt-3" onClick={widgetQuery.refetch}>
+            Retry
+          </Button>
+        </div>
+      </Page>
+    );
+  }
 
   if (!draft) {
     return (
@@ -181,10 +201,7 @@ export default function WidgetBuilder() {
               variant="secondary"
               size="sm"
               disabled={!dirty}
-              onClick={() => {
-                setDraft(widgetQuery.data);
-                setDirty(false);
-              }}
+              onClick={() => setDiscardOpen(true)}
             >
               Discard
             </Button>
@@ -840,7 +857,7 @@ export function App() {
                           size="sm"
                           leading={<Trash2 />}
                           loading={remove.isPending}
-                          onClick={() => void remove.mutate().catch(() => {})}
+                          onClick={() => setDeleteOpen(true)}
                         >
                           Delete
                         </Button>
@@ -920,6 +937,30 @@ export function App() {
           onRolledBack={() => setHistoryOpen(false)}
         />
       )}
+
+      <ConfirmDialog
+        open={discardOpen}
+        onOpenChange={setDiscardOpen}
+        title="Discard unpublished widget changes?"
+        description="The editor will return to the last configuration saved on the server. Your unpublished changes cannot be recovered."
+        confirmLabel="Discard changes"
+        onConfirm={() => {
+          setDraft(widgetQuery.data);
+          setDirty(false);
+          setDiscardOpen(false);
+        }}
+      />
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title="Delete this widget?"
+        description="The widget script will stop loading on allowed domains. Existing conversations and their history will be kept."
+        confirmLabel="Delete widget"
+        destructive
+        loading={remove.isPending}
+        confirmationPhrase={draft.name}
+        onConfirm={() => void remove.mutate().then(() => setDeleteOpen(false)).catch(() => {})}
+      />
     </Page>
   );
 }
