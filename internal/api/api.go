@@ -36,6 +36,7 @@ import (
 	"github.com/hubchat/hubchat/internal/jobs"
 	"github.com/hubchat/hubchat/internal/knowledgebase"
 	"github.com/hubchat/hubchat/internal/notification"
+	"github.com/hubchat/hubchat/internal/portability"
 	"github.com/hubchat/hubchat/internal/portal"
 	"github.com/hubchat/hubchat/internal/realtime"
 	"github.com/hubchat/hubchat/internal/search"
@@ -74,6 +75,7 @@ type Deps struct {
 	Automation    *automation.Service
 	Analytics     *analytics.Service
 	EmailChannel  *emailchannel.Service
+	Portability   *portability.Service
 
 	// Hub answers "who is viewing this conversation right now" for the
 	// Conversation DTO's presence field. Read-only from here — writes to
@@ -147,6 +149,7 @@ func New(deps Deps) http.Handler {
 	registerAnalyticsRoutes(mux, deps)
 	registerEmailChannelRoutes(mux, deps)
 	registerJobRoutes(mux, deps)
+	registerPortabilityRoutes(mux, deps)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound,

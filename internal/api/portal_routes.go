@@ -192,7 +192,7 @@ func handlePortalCreateTicket(deps Deps) http.HandlerFunc {
 			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeValidationError, "A title and description are required.")
 			return
 		}
-		conv, _, err := deps.Conversation.Start(r.Context(), session.WorkspaceID, *session.Portal.DefaultInboxID, "portal", &conversationSubject, &customerID, nil, session.Customer.Name, conversationBody)
+		conv, openingMessage, err := deps.Conversation.Start(r.Context(), session.WorkspaceID, *session.Portal.DefaultInboxID, "portal", &conversationSubject, &customerID, nil, session.Customer.Name, conversationBody)
 		if err != nil {
 			if errors.Is(err, conversation.ErrEmptyBody) {
 				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeValidationError, "Describe what you need help with.")
@@ -210,7 +210,10 @@ func handlePortalCreateTicket(deps Deps) http.HandlerFunc {
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not create your request.")
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusCreated, map[string]any{"ticket": portalTicketJSON(*ticket)})
+		httpserver.WriteJSON(w, http.StatusCreated, map[string]any{
+			"ticket":             portalTicketJSON(*ticket),
+			"opening_message_id": openingMessage.ID,
+		})
 	}
 }
 
@@ -378,6 +381,25 @@ func handlePortalTicketFileUpload(deps Deps) http.HandlerFunc {
 		if err != nil {
 			writeFileError(w, r, err)
 			return
+		}
+		if messageID := strings.TrimSpace(r.FormValue("message_id")); messageID != "" {
+			ticket, ticketErr := deps.Ticket.Get(r.Context(), session.WorkspaceID, ticketID)
+			if ticketErr != nil || ticket.ConversationID == nil {
+				_ = deps.File.Delete(r.Context(), session.WorkspaceID, created.ID)
+				writePortalNotFound(w, r)
+				return
+			}
+			var messageBelongs bool
+			if err := deps.Pool.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM messages WHERE workspace_id=$1 AND id=$2 AND conversation_id=$3)`, session.WorkspaceID, messageID, *ticket.ConversationID).Scan(&messageBelongs); err != nil || !messageBelongs {
+				_ = deps.File.Delete(r.Context(), session.WorkspaceID, created.ID)
+				httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, "The attachment target is invalid.")
+				return
+			}
+			if err := deps.File.AttachToMessage(r.Context(), session.WorkspaceID, messageID, []string{created.ID}); err != nil {
+				_ = deps.File.Delete(r.Context(), session.WorkspaceID, created.ID)
+				httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, "The attachment could not be linked.")
+				return
+			}
 		}
 		httpserver.WriteJSON(w, http.StatusCreated, portalFileJSON(*created))
 	}
