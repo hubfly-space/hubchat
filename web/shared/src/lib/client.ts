@@ -172,8 +172,9 @@ async function send<T>(
   body: unknown,
   options: RequestOptions,
 ): Promise<T> {
-  const headers: Record<string, string> = {};
-  if (body !== undefined) headers["Content-Type"] = "application/json";
+	const headers: Record<string, string> = {};
+	const multipart = typeof FormData !== "undefined" && body instanceof FormData;
+	if (body !== undefined && !multipart) headers["Content-Type"] = "application/json";
   if (options.workspaceId) headers["Hubchat-Workspace-Id"] = options.workspaceId;
   if (options.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
 
@@ -185,7 +186,7 @@ async function send<T>(
       // The session is a cookie, so every call must send it. The server's CSRF
       // check is what makes that safe.
       credentials: "include",
-      body: body === undefined ? undefined : JSON.stringify(body),
+		body: body === undefined ? undefined : multipart ? body : JSON.stringify(body),
       signal: options.signal,
     });
   } catch (error) {

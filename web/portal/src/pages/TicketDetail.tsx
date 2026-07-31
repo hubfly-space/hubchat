@@ -49,6 +49,7 @@ type Message = {
   author_name: string;
   body: string;
   created_at: string;
+  attachments?: { id: string; name: string; url: string }[];
 };
 
 type Detail = { ticket: Ticket; messages: Message[] };
@@ -58,12 +59,14 @@ export default function TicketDetail() {
   const toast = useToast();
   const { data: portalData } = usePortal();
   const [reply, setReply] = useState("");
+  const [attachments, setAttachments] = useState<{ id: string; name: string; url: string }[]>([]);
+  const [uploading, setUploading] = useState(false);
   const query = useQuery<Detail>(
     portalData?.viewer && id ? ["portal", "ticket", id] : null,
     (signal) => api.get(`/portal/tickets/${encodeURIComponent(id!)}`, { signal }),
   );
-  const sendReply = useMutation(({ body, key }: { body: string; key: string }) =>
-    api.post(`/portal/tickets/${encodeURIComponent(id!)}/replies`, { body, client_id: key }, { idempotencyKey: key }),
+  const sendReply = useMutation(({ body, key, fileIDs }: { body: string; key: string; fileIDs: string[] }) =>
+    api.post(`/portal/tickets/${encodeURIComponent(id!)}/replies`, { body, client_id: key, file_ids: fileIDs }, { idempotencyKey: key }),
   );
 
   if (!portalData?.viewer) {
@@ -82,12 +85,30 @@ export default function TicketDetail() {
     if (!body) return;
     const key = idempotencyKey();
     try {
-      await sendReply.mutate({ body, key });
+      await sendReply.mutate({ body, key, fileIDs: attachments.map((attachment) => attachment.id) });
       setReply("");
+      setAttachments([]);
       query.refetch();
       toast.success({ title: "Reply sent", description: "The team has been notified." });
     } catch {
       // useMutation exposes the error state; the composer remains intact for retry.
+    }
+  };
+
+  const chooseFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    try {
+      for (const selected of Array.from(files)) {
+        const body = new FormData();
+        body.append("file", selected);
+        const uploaded = await api.post<{ id: string; name: string; url: string }>(`/portal/tickets/${encodeURIComponent(id!)}/files`, body, { idempotencyKey: idempotencyKey() });
+        setAttachments((current) => [...current, uploaded]);
+      }
+    } catch {
+      toast.error({ title: "Could not attach file", description: "Try the upload again." });
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -113,6 +134,7 @@ export default function TicketDetail() {
               <p className="mb-1 text-2xs text-fg-muted"><span className="text-fg-secondary">{mine ? "You" : message.author_name}</span>{" · "}{formatDateTime(message.created_at)}</p>
               <div className={cn("rounded-lg border px-3.5 py-2.5 text-left", mine ? "border-accent-border bg-accent-subtle" : "border-line bg-surface")}>
                 <p className="whitespace-pre-wrap text-sm leading-normal text-fg">{message.body}</p>
+                {message.attachments && message.attachments.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{message.attachments.map((attachment) => <a key={attachment.id} href={attachment.url} className="inline-flex max-w-full items-center gap-1 rounded-md border border-line px-2 py-1 text-2xs text-accent-text hover:underline"><Paperclip aria-hidden="true" className="size-3" /><span className="max-w-48 truncate">{attachment.name}</span></a>)}</div>}
               </div>
             </div>
           </li>;
@@ -121,8 +143,9 @@ export default function TicketDetail() {
 
       <Card className="mt-8"><CardBody>
         <Textarea autoResize rows={4} value={reply} onChange={(event) => setReply(event.target.value)} placeholder={ticket.status === "resolved" ? "Reply to reopen this request…" : "Add to this request…"} aria-label="Your reply" />
+        {attachments.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5">{attachments.map((attachment) => <span key={attachment.id} className="inline-flex max-w-full items-center gap-1 rounded-md bg-fill px-2 py-1 text-2xs text-fg-secondary"><Paperclip aria-hidden="true" className="size-3" /><span className="max-w-48 truncate">{attachment.name}</span><button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}>×</button></span>)}</div>}
         <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-          <Button variant="ghost" size="sm" leading={<Paperclip />} disabled>Attach a file</Button>
+          <><Button variant="ghost" size="sm" leading={<Paperclip />} loading={uploading} onClick={() => document.getElementById("portal-file-input")?.click()}>Attach a file</Button><input id="portal-file-input" type="file" multiple className="sr-only" onChange={(event) => void chooseFiles(event.target.files)} /></>
           <Button variant="primary" size="sm" disabled={!reply.trim() || sendReply.isPending} onClick={() => void submitReply()}>{sendReply.isPending ? "Sending…" : ticket.status === "resolved" ? "Reply and reopen" : "Send reply"}</Button>
         </div>
         {Boolean(sendReply.error) && <p className="mt-2 text-xs text-danger">Could not send the reply. Try again; your text is still here.</p>}

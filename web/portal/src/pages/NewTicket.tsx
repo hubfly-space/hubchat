@@ -13,15 +13,16 @@ import {
   api,
   idempotencyKey,
   useMutation,
+  useQuery,
   cn,
 } from "@hubchat/shared";
 import { CheckCircle2, Paperclip, TicketCheck, UploadCloud } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { articles } from "../data";
 import { usePortal } from "../portal-context";
 
 type CreatedTicket = { ticket: { id: string; prefix: string; number: number } };
+type SearchResponse = { data: Array<{ article: { id: string; slug: string; title: string; excerpt: string } }> };
 
 export default function NewTicket() {
   const navigate = useNavigate();
@@ -30,6 +31,11 @@ export default function NewTicket() {
   const [description, setDescription] = useState("");
   const [severity, setSeverity] = useState("major");
   const [created, setCreated] = useState<CreatedTicket | null>(null);
+  const suggestionsQuery = useQuery<SearchResponse>(
+    ["portal-ticket-suggestions", portalData?.portal.workspace_id ?? "", summary.trim()],
+    (signal) => api.get(`/public/knowledge-bases/${encodeURIComponent(portalData?.portal.workspace_id ?? "")}/search?q=${encodeURIComponent(summary.trim())}&surface=portal`, { signal }),
+    { enabled: Boolean(portalData?.portal.workspace_id && summary.trim().length >= 4) },
+  );
   const create = useMutation(({ title, body, key }: { title: string; body: string; key: string }) =>
     api.post<CreatedTicket>("/portal/tickets", { title, description: body, priority: severity }, { idempotencyKey: key }),
   );
@@ -38,11 +44,7 @@ export default function NewTicket() {
     return <EmptyState icon={TicketCheck} title="Sign in before sending a request" description="A portal session keeps your request history and replies connected to you." action={<Button variant="primary" size="sm" asChild><Link to="/sign-in">Sign in</Link></Button>} />;
   }
 
-  const suggestions = summary.trim().length >= 4 ? articles.filter((article) => {
-    const words = summary.toLowerCase().split(/\s+/).filter((word) => word.length > 3);
-    const haystack = `${article.title} ${article.excerpt}`.toLowerCase();
-    return words.some((word) => haystack.includes(word));
-  }).slice(0, 3) : [];
+  const suggestions = (suggestionsQuery.data?.data ?? []).map((item) => item.article).slice(0, 3);
 
   if (created) {
     return <div className="mx-auto max-w-lg py-10 text-center"><div className="mx-auto mb-4 grid size-12 place-items-center rounded-xl border border-success-border bg-success-subtle"><CheckCircle2 aria-hidden="true" className="size-6 text-success-text" /></div><h1 className="text-xl font-semibold tracking-tight text-fg">Thanks — we're on it</h1><p className="mt-2 text-sm leading-normal text-fg-muted">Your request is <span className="font-mono text-fg">{created.ticket.prefix}-{created.ticket.number}</span>. You can follow it in your requests.</p><div className="mt-6 flex justify-center gap-2"><Button variant="primary" size="sm" asChild><Link to={`/tickets/${created.ticket.id}`}>View request</Link></Button><Button variant="ghost" size="sm" onClick={() => navigate("/")}>Back to help centre</Button></div></div>;
