@@ -20,8 +20,10 @@ import {
   StatusDot,
   TagChip,
   Toolbar,
+  downloadFile,
   useInfinite,
   useQuery,
+  useToast,
   formatRelativeShort,
   type Column,
   type Company,
@@ -62,7 +64,8 @@ function conditionsToParams(conditions: FilterCondition[]): URLSearchParams {
  */
 export default function CustomerList() {
   const navigate = useNavigate();
-  const { members, tags, tagById } = useWorkspace();
+  const { members, tags, tagById, workspace } = useWorkspace();
+  const toast = useToast();
 
   const [query, setQuery] = useState("");
   const [conditions, setConditions] = useState<FilterCondition[]>([]);
@@ -206,7 +209,7 @@ export default function CustomerList() {
             variant="secondary"
             size="sm"
             leading={<Download />}
-            onClick={() => window.open(`/api/v1/customers?${filterParams}&limit=1000`, "_blank")}
+            onClick={() => void downloadFile(`/customers/export?${filterParams}`, "customers-export.csv", workspace.id).catch((error) => toast.error({ title: "Could not export customers", description: error instanceof Error ? error.message : "Try again." }))}
           >
             Export
           </Button>

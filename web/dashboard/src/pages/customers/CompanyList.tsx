@@ -16,8 +16,10 @@ import {
   Pagination,
   SearchInput,
   Toolbar,
+  downloadFile,
   useInfinite,
   useMutation,
+  useToast,
   formatCompact,
   type Column,
   type Company,
@@ -31,7 +33,8 @@ import { useWorkspace } from "../../app/workspace-context";
 /** Company directory (§6.9) — the account layer above individual contacts. */
 export default function CompanyList() {
   const navigate = useNavigate();
-  const { members } = useWorkspace();
+  const { members, workspace } = useWorkspace();
+  const toast = useToast();
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
 
@@ -111,7 +114,7 @@ export default function CompanyList() {
               variant="secondary"
               size="sm"
               leading={<Download />}
-              onClick={() => window.open(`/api/v1/companies?q=${encodeURIComponent(query)}&limit=1000`, "_blank")}
+              onClick={() => void downloadFile(`/companies/export?q=${encodeURIComponent(query)}`, "companies-export.csv", workspace.id).catch((error) => toast.error({ title: "Could not export companies", description: error instanceof Error ? error.message : "Try again." }))}
             >
               Export
             </Button>
