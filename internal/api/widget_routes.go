@@ -35,6 +35,7 @@ import (
 // this router deliberately stays same-origin only.
 func registerWidgetRoutes(mux *http.ServeMux, deps Deps) {
 	idempotent := Idempotency(deps)
+	widgetIdempotent := WidgetIdempotency(deps)
 	mux.HandleFunc("GET /v1/widgets",
 		requireCapability(deps, authorization.WidgetManage, handleListWidgets(deps)))
 	mux.HandleFunc("POST /v1/widgets",
@@ -42,9 +43,9 @@ func registerWidgetRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/widgets/{id}",
 		requireCapability(deps, authorization.WidgetManage, handleGetWidget(deps)))
 	mux.HandleFunc("PUT /v1/widgets/{id}",
-		requireCapability(deps, authorization.WidgetManage, handleUpdateWidget(deps)))
+		requireCapability(deps, authorization.WidgetManage, idempotent(handleUpdateWidget(deps))))
 	mux.HandleFunc("DELETE /v1/widgets/{id}",
-		requireCapability(deps, authorization.WidgetManage, handleDeleteWidget(deps)))
+		requireCapability(deps, authorization.WidgetManage, idempotent(handleDeleteWidget(deps))))
 
 	mux.HandleFunc("GET /v1/widgets/{id}/versions",
 		requireCapability(deps, authorization.WidgetManage, handleListWidgetVersions(deps)))
@@ -54,11 +55,11 @@ func registerWidgetRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/widgets/{id}/domains",
 		requireCapability(deps, authorization.WidgetManage, handleListWidgetDomains(deps)))
 	mux.HandleFunc("PUT /v1/widgets/{id}/domains",
-		requireCapability(deps, authorization.WidgetManage, handleReplaceWidgetDomains(deps)))
+		requireCapability(deps, authorization.WidgetManage, idempotent(handleReplaceWidgetDomains(deps))))
 	mux.HandleFunc("POST /v1/widgets/{id}/domains",
 		requireCapability(deps, authorization.WidgetManage, idempotent(handleAddWidgetDomain(deps))))
 	mux.HandleFunc("DELETE /v1/widgets/{id}/domains/{domainID}",
-		requireCapability(deps, authorization.WidgetManage, handleRemoveWidgetDomain(deps)))
+		requireCapability(deps, authorization.WidgetManage, idempotent(handleRemoveWidgetDomain(deps))))
 
 	mux.HandleFunc("GET /v1/widgets/{id}/identity-secret",
 		requireCapability(deps, authorization.WidgetManage, handleWidgetIdentitySecret(deps)))
@@ -67,44 +68,44 @@ func registerWidgetRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/widget/config", withPublicCORS(handleWidgetConfig(deps)))
 	mux.HandleFunc("OPTIONS /v1/widget/config", corsPreflight)
 
-	mux.HandleFunc("POST /v1/widget/visitors", withPublicCORS(handleIssueVisitor(deps)))
+	mux.HandleFunc("POST /v1/widget/visitors", withPublicCORS(widgetIdempotent(handleIssueVisitor(deps))))
 	mux.HandleFunc("OPTIONS /v1/widget/visitors", corsPreflight)
 
-	mux.HandleFunc("POST /v1/widget/identify", withPublicCORS(handleWidgetIdentify(deps)))
+	mux.HandleFunc("POST /v1/widget/identify", withPublicCORS(widgetIdempotent(handleWidgetIdentify(deps))))
 	mux.HandleFunc("OPTIONS /v1/widget/identify", corsPreflight)
 
-	mux.HandleFunc("POST /v1/widget/events", withPublicCORS(handleWidgetTrack(deps)))
+	mux.HandleFunc("POST /v1/widget/events", withPublicCORS(widgetIdempotent(handleWidgetTrack(deps))))
 	mux.HandleFunc("OPTIONS /v1/widget/events", corsPreflight)
 	mux.HandleFunc("GET /v1/widget/forms", withPublicCORS(handleWidgetListForms(deps)))
 	mux.HandleFunc("OPTIONS /v1/widget/forms", corsPreflight)
 	mux.HandleFunc("GET /v1/widget/forms/{slug}", withPublicCORS(handleWidgetGetForm(deps)))
 	mux.HandleFunc("OPTIONS /v1/widget/forms/{slug}", corsPreflight)
-	mux.HandleFunc("POST /v1/widget/forms/{slug}/submissions", withPublicCORS(handleWidgetSubmitForm(deps)))
+	mux.HandleFunc("POST /v1/widget/forms/{slug}/submissions", withPublicCORS(widgetIdempotent(handleWidgetSubmitForm(deps))))
 	mux.HandleFunc("OPTIONS /v1/widget/forms/{slug}/submissions", corsPreflight)
 	mux.HandleFunc("GET /v1/widget/feedback/boards", withPublicCORS(handleWidgetFeedbackBoards(deps)))
 	mux.HandleFunc("OPTIONS /v1/widget/feedback/boards", corsPreflight)
 	mux.HandleFunc("GET /v1/widget/feedback/boards/{slug}/items", withPublicCORS(handleWidgetFeedbackItems(deps)))
 	mux.HandleFunc("OPTIONS /v1/widget/feedback/boards/{slug}/items", corsPreflight)
-	mux.HandleFunc("POST /v1/widget/feedback/boards/{slug}/items", withPublicCORS(handleWidgetFeedbackCreate(deps)))
-	mux.HandleFunc("POST /v1/widget/feedback/items/{id}/votes", withPublicCORS(handleWidgetFeedbackVote(deps)))
+	mux.HandleFunc("POST /v1/widget/feedback/boards/{slug}/items", withPublicCORS(widgetIdempotent(handleWidgetFeedbackCreate(deps))))
+	mux.HandleFunc("POST /v1/widget/feedback/items/{id}/votes", withPublicCORS(widgetIdempotent(handleWidgetFeedbackVote(deps))))
 	mux.HandleFunc("OPTIONS /v1/widget/feedback/items/{id}/votes", corsPreflight)
-	mux.HandleFunc("POST /v1/widget/feedback/items/{id}/subscription", withPublicCORS(handleWidgetFeedbackSubscription(deps)))
-	mux.HandleFunc("DELETE /v1/widget/feedback/items/{id}/subscription", withPublicCORS(handleWidgetFeedbackSubscription(deps)))
+	mux.HandleFunc("POST /v1/widget/feedback/items/{id}/subscription", withPublicCORS(widgetIdempotent(handleWidgetFeedbackSubscription(deps))))
+	mux.HandleFunc("DELETE /v1/widget/feedback/items/{id}/subscription", withPublicCORS(widgetIdempotent(handleWidgetFeedbackSubscription(deps))))
 	mux.HandleFunc("OPTIONS /v1/widget/feedback/items/{id}/subscription", corsPreflight)
 	mux.HandleFunc("GET /v1/widget/articles", withPublicCORS(handleWidgetArticleSearch(deps)))
 	mux.HandleFunc("OPTIONS /v1/widget/articles", corsPreflight)
 	mux.HandleFunc("GET /v1/widget/articles/{slug}", withPublicCORS(handleWidgetArticle(deps)))
 	mux.HandleFunc("OPTIONS /v1/widget/articles/{slug}", corsPreflight)
-	mux.HandleFunc("POST /v1/widget/articles/{slug}/feedback", withPublicCORS(handleWidgetArticleFeedback(deps)))
+	mux.HandleFunc("POST /v1/widget/articles/{slug}/feedback", withPublicCORS(widgetIdempotent(handleWidgetArticleFeedback(deps))))
 	mux.HandleFunc("OPTIONS /v1/widget/articles/{slug}/feedback", corsPreflight)
 
-	mux.HandleFunc("POST /v1/widget/conversations", withPublicCORS(handleWidgetStartConversation(deps)))
+	mux.HandleFunc("POST /v1/widget/conversations", withPublicCORS(widgetIdempotent(handleWidgetStartConversation(deps))))
 	mux.HandleFunc("OPTIONS /v1/widget/conversations", corsPreflight)
 
 	mux.HandleFunc("GET /v1/widget/conversations/{id}/messages", withPublicCORS(handleWidgetListMessages(deps)))
-	mux.HandleFunc("POST /v1/widget/conversations/{id}/messages", withPublicCORS(handleWidgetPostMessage(deps)))
+	mux.HandleFunc("POST /v1/widget/conversations/{id}/messages", withPublicCORS(widgetIdempotent(handleWidgetPostMessage(deps))))
 	mux.HandleFunc("OPTIONS /v1/widget/conversations/{id}/messages", corsPreflight)
-	mux.HandleFunc("POST /v1/widget/conversations/{id}/files", withPublicCORS(handleWidgetFileUpload(deps)))
+	mux.HandleFunc("POST /v1/widget/conversations/{id}/files", withPublicCORS(widgetIdempotent(handleWidgetFileUpload(deps))))
 	mux.HandleFunc("OPTIONS /v1/widget/conversations/{id}/files", corsPreflight)
 	mux.HandleFunc("GET /v1/widget/conversations/{id}/files/{fileID}", withPublicCORS(handleWidgetFileDownload(deps)))
 }

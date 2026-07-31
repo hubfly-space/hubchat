@@ -183,7 +183,8 @@ export async function uploadFile(
   body.append("url", location.href);
   body.append("token", token);
   body.append("message_id", messageId);
-  const response = await fetch(endpoint(host, `/conversations/${conversationId}/files`), { method: "POST", credentials: "omit", body });
+  const params = new URLSearchParams({ key: publicKey, url: location.href, token });
+  const response = await fetch(`${endpoint(host, `/conversations/${conversationId}/files`)}?${params.toString()}`, { method: "POST", credentials: "omit", body });
   return parse(response);
 }
 
