@@ -359,11 +359,23 @@ func TestExportBundleAndDeleteAnonymises(t *testing.T) {
 	ctx := dbtest.Context(t)
 
 	svc := newTestService(t, pool)
-	wsID, memberID := seedWorkspace(t, ctx, pool)
+	wsID, _ := seedWorkspace(t, ctx, pool)
 	cust := seedCustomer(t, ctx, pool, wsID, "Ada")
 
 	if _, err := pool.Exec(ctx, `UPDATE customers SET email = 'ada@example.com' WHERE id = $1`, cust); err != nil {
 		t.Fatalf("seed email: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO customer_emails (id,workspace_id,customer_id,email) VALUES ('ce_export_test',$1,$2,'alternate@example.com')`, wsID, cust); err != nil {
+		t.Fatalf("seed customer email: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO customer_phones (id,workspace_id,customer_id,phone) VALUES ('cp_export_test',$1,$2,'+250780000000')`, wsID, cust); err != nil {
+		t.Fatalf("seed customer phone: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO portal_identities (id,workspace_id,customer_id,sso_subject) VALUES ('pi_export_test',$1,$2,'subject-to-remove')`, wsID, cust); err != nil {
+		t.Fatalf("seed portal identity: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO customer_notification_preferences (customer_id,workspace_id,feedback_updates) VALUES ($2,$1,false)`, wsID, cust); err != nil {
+		t.Fatalf("seed linked customer identity: %v", err)
 	}
 	if _, err := svc.IngestEvent(ctx, wsID, cust, "page.viewed", "rest_api", nil, nil); err != nil {
 		t.Fatalf("ingest: %v", err)
@@ -380,7 +392,7 @@ func TestExportBundleAndDeleteAnonymises(t *testing.T) {
 		t.Fatalf("expected 1 event in the export bundle, got %d", len(bundle.Events))
 	}
 
-	if err := svc.Delete(ctx, wsID, memberID, cust); err != nil {
+	if err := svc.DeleteAsCustomer(ctx, wsID, cust); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	anonymised, err := svc.Get(ctx, wsID, cust)
@@ -389,6 +401,18 @@ func TestExportBundleAndDeleteAnonymises(t *testing.T) {
 	}
 	if anonymised.Email != nil || anonymised.Name != nil {
 		t.Fatalf("expected name/email cleared, got %+v", anonymised)
+	}
+	var linked int
+	if err := pool.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM customer_emails WHERE workspace_id=$1 AND customer_id=$2)
+		     + (SELECT count(*) FROM customer_phones WHERE workspace_id=$1 AND customer_id=$2)
+		     + (SELECT count(*) FROM portal_identities WHERE workspace_id=$1 AND customer_id=$2)
+		     + (SELECT count(*) FROM customer_notification_preferences WHERE workspace_id=$1 AND customer_id=$2)
+	`, wsID, cust).Scan(&linked); err != nil {
+		t.Fatalf("count linked identity rows: %v", err)
+	}
+	if linked != 0 {
+		t.Fatalf("expected linked identity rows removed, got %d", linked)
 	}
 	remaining, err := svc.Timeline(ctx, wsID, cust, time.Time{}, "", 50)
 	if err != nil || len(remaining) != 0 {

@@ -501,6 +501,20 @@ func (s *Service) Logout(ctx context.Context, raw string) error {
 	return err
 }
 
+// RevokeCustomerSessions invalidates every portal session for a customer.
+// Account deletion calls this before anonymisation so another browser or
+// device cannot continue using the now-anonymised customer record.
+func (s *Service) RevokeCustomerSessions(ctx context.Context, workspaceID, customerID string) error {
+	_, err := s.pool.Exec(ctx, `
+		DELETE FROM portal_sessions
+		WHERE workspace_id=$1 AND customer_id=$2
+	`, workspaceID, customerID)
+	if err != nil {
+		return fmt.Errorf("portal: revoke customer sessions: %w", err)
+	}
+	return nil
+}
+
 // Preferences returns defaults even when a customer has never changed a
 // setting. The left join keeps onboarding friction at zero while making every
 // read workspace- and customer-scoped.

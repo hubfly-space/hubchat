@@ -423,6 +423,8 @@ func (s *Service) processEvent(ctx context.Context, record events.Record) error 
 		return s.NotifySLA(ctx, record.WorkspaceID, record.EntityType, record.EntityID, kind, record.ID)
 	case events.FeedbackStatusChanged:
 		return s.NotifyFeedbackSubscribers(ctx, record.WorkspaceID, record.EntityID, record.ID)
+	case events.TicketCreated, events.TicketStateSet:
+		return s.NotifyTicketCustomer(ctx, record.WorkspaceID, record.EntityID, record.ID, record.Type)
 	default:
 		return nil
 	}
@@ -556,4 +558,56 @@ func (s *Service) NotifyFeedbackSubscribers(ctx context.Context, workspaceID, it
 		}
 	}
 	return rows.Err()
+}
+
+// NotifyTicketCustomer queues one email for the customer attached to a ticket
+// after creation or a status transition. The preference is resolved at
+// consumption time, and the event/customer pair is the dedupe key so replaying
+// an event cannot create a second delivery while later changes still notify.
+func (s *Service) NotifyTicketCustomer(ctx context.Context, workspaceID, ticketID, sourceEventID string, eventType events.Type) error {
+	if s.jobs == nil {
+		return nil
+	}
+	var customerID, address, name, number, title, status string
+	err := s.pool.QueryRow(ctx, `
+		SELECT c.id, NULLIF(c.email::text,''), coalesce(c.name,''),
+		       t.prefix || '-' || t.number::text, t.title, t.status
+		FROM tickets t
+		JOIN customers c ON c.id=t.customer_id AND c.workspace_id=t.workspace_id
+		LEFT JOIN customer_notification_preferences preferences
+		  ON preferences.customer_id=c.id AND preferences.workspace_id=c.workspace_id
+		WHERE t.workspace_id=$1 AND t.id=$2
+		  AND NULLIF(c.email::text,'') IS NOT NULL
+		  AND coalesce(preferences.ticket_status,true)
+	`, workspaceID, ticketID).Scan(&customerID, &address, &name, &number, &title, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("notification: resolve ticket customer: %w", err)
+	}
+
+	subject, body := ticketCustomerMessage(eventType, name, number, title, status)
+	_, err = s.jobs.Enqueue(ctx, jobs.Spec{
+		WorkspaceID: workspaceID,
+		Queue:       "email",
+		Type:        "email.send",
+		Payload:     emailPayload{To: address, Subject: subject, Body: body},
+		DedupeKey:   "ticket-status-email:" + sourceEventID + ":" + customerID,
+	})
+	if errors.Is(err, jobs.ErrDuplicate) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("notification: queue ticket customer email: %w", err)
+	}
+	return nil
+}
+
+func ticketCustomerMessage(eventType events.Type, name, number, title, status string) (string, string) {
+	statusLabel := strings.ReplaceAll(status, "_", " ")
+	if eventType == events.TicketCreated {
+		return "Ticket " + number + " received", "Hi " + strings.TrimSpace(name) + ",\n\nWe received your request “" + title + "”. Its current status is " + statusLabel + "."
+	}
+	return "Ticket " + number + " update", "Hi " + strings.TrimSpace(name) + ",\n\nYour ticket “" + title + "” is now " + statusLabel + "."
 }
