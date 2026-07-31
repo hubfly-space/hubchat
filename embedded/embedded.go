@@ -34,6 +34,12 @@ var migrationsFS embed.FS
 //go:embed templates
 var templatesFS embed.FS
 
+// The checked-in OpenAPI document is served by the binary so the contract
+// users download is always from the same build as the handlers.
+//
+//go:embed openapi.json
+var openAPIFS embed.FS
+
 // Dashboard returns the agent and admin bundle, rooted at its index.html.
 func Dashboard() (fs.FS, error) { return fs.Sub(assetsFS, "assets/dashboard") }
 
@@ -48,3 +54,12 @@ func Migrations() (fs.FS, error) { return fs.Sub(migrationsFS, "migrations") }
 
 // Templates returns the default email and page templates.
 func Templates() (fs.FS, error) { return fs.Sub(templatesFS, "templates") }
+
+// OpenAPI returns the versioned public API contract.
+func OpenAPI() []byte {
+	data, err := fs.ReadFile(openAPIFS, "openapi.json")
+	if err != nil {
+		return nil
+	}
+	return data
+}

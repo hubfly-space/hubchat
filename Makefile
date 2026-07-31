@@ -100,7 +100,7 @@ checksums: ## Produce SHA256 checksums for release artifacts
 ## ---------------------------------------------------------------- quality
 
 .PHONY: check
-check: typecheck lint vet test ## Run every check the CI pipeline runs
+check: typecheck lint vet test openapi-check ## Run every check the CI pipeline runs
 
 .PHONY: typecheck
 typecheck: ## TypeScript project-wide typecheck
@@ -117,6 +117,11 @@ vet: ## go vet
 .PHONY: test
 test: ## Go unit tests
 	$(GO) test ./... -race -count=1
+
+.PHONY: openapi-check
+openapi-check: ## Validate the checked-in public API contract
+	node scripts/generate-openapi.mjs
+	node scripts/check-openapi.mjs
 
 # Deliberately a separate variable from HUBCHAT_DATABASE_URL: these tests
 # truncate tenant data, so pointing them at a database has to be a choice
