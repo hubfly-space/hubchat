@@ -10,6 +10,7 @@ import {
   type Customer,
   type Inbox,
   type Paginated,
+  type SavedView,
 } from "@hubchat/shared";
 import { MessagesSquare } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -36,9 +37,14 @@ export default function InboxPage() {
   const [showContext, setShowContext] = useState(true);
 
   const inboxes = useQuery<{ data: Inbox[] }>(["inboxes"], (signal) => api.get("/inboxes", { signal }));
+  const savedViews = useInfinite<SavedView>(["saved-views", "conversation"], (cursor, signal) => {
+    const params = new URLSearchParams({ entity_type: "conversation", limit: "50" });
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<SavedView>>(`/saved-views?${params.toString()}`, { signal });
+  });
   const filterParams = useMemo(
-    () => viewFilterParams(viewId, viewer.id, inboxes.data?.data ?? []),
-    [viewId, viewer.id, inboxes.data],
+    () => viewFilterParams(viewId, viewer.id, inboxes.data?.data ?? [], savedViews.items),
+    [viewId, viewer.id, inboxes.data, savedViews.items],
   );
 
   const list = useInfinite<Conversation>(
@@ -110,7 +116,7 @@ export default function InboxPage() {
         customersById={customersById}
         activeId={conversation?.id ?? null}
         onSelect={open}
-        viewName={viewLabel(viewId, inboxes.data?.data ?? [])}
+        viewName={viewLabel(viewId, inboxes.data?.data ?? [], savedViews.items)}
         onBulkAssignToMe={(ids) => void bulkAssignToMe(ids)}
         onBulkResolve={(ids) => void bulkResolve(ids)}
         bulkPending={bulkPending}
@@ -151,7 +157,7 @@ export default function InboxPage() {
 }
 
 /** Builds the conversations query string a sidebar view id maps to. */
-function viewFilterParams(viewId: string, viewerId: string, inboxes: Inbox[]): string {
+function viewFilterParams(viewId: string, viewerId: string, inboxes: Inbox[], savedViews: SavedView[]): string {
   const params = new URLSearchParams();
 
   switch (viewId) {
@@ -189,7 +195,12 @@ function viewFilterParams(viewId: string, viewerId: string, inboxes: Inbox[]): s
       break;
     default: {
       const inbox = inboxes.find((item) => item.slug === viewId);
-      if (inbox) params.set("inbox_id", inbox.id);
+      if (inbox) {
+        params.set("inbox_id", inbox.id);
+        break;
+      }
+      const savedView = savedViews.find((item) => item.id === viewId);
+      if (savedView) applySavedView(params, savedView);
       break;
     }
   }
@@ -197,7 +208,7 @@ function viewFilterParams(viewId: string, viewerId: string, inboxes: Inbox[]): s
   return params.toString();
 }
 
-function viewLabel(viewId: string, inboxes: Inbox[]): string {
+function viewLabel(viewId: string, inboxes: Inbox[], savedViews: SavedView[]): string {
   const labels: Record<string, string> = {
     all: "All active",
     unassigned: "Unassigned",
@@ -210,5 +221,38 @@ function viewLabel(viewId: string, inboxes: Inbox[]): string {
     spam: "Spam",
   };
 
-  return labels[viewId] ?? inboxes.find((inbox) => inbox.slug === viewId)?.name ?? "Inbox";
+  return labels[viewId] ?? inboxes.find((inbox) => inbox.slug === viewId)?.name ?? savedViews.find((view) => view.id === viewId)?.name ?? "Inbox";
+}
+
+function applySavedView(params: URLSearchParams, view: SavedView) {
+  const conditions = Array.isArray(view.filters?.conditions) ? view.filters.conditions : [];
+  const states: string[] = [];
+  for (const condition of conditions) {
+    if (condition.operator !== "is" && condition.operator !== "in") continue;
+    const values = Array.isArray(condition.value) ? condition.value.map(String) : [String(condition.value)];
+    switch (condition.field) {
+      case "state":
+        states.push(...values);
+        break;
+      case "assignee_id":
+        if (values[0]) params.set("assignee_id", values[0]);
+        break;
+      case "team_id":
+        if (values[0]) params.set("team_id", values[0]);
+        break;
+      case "inbox_id":
+        if (values[0]) params.set("inbox_id", values[0]);
+        break;
+      case "priority":
+        if (values[0]) params.set("priority", values[0]);
+        break;
+      case "tag_id":
+        if (values[0]) params.set("tag_id", values[0]);
+        break;
+      case "follower_id":
+        if (values[0]) params.set("follower_id", values[0]);
+        break;
+    }
+  }
+  if (states.length > 0) params.set("state", states.join(","));
 }

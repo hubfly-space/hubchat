@@ -206,6 +206,9 @@ function useWorkspaceInvalidation() {
       case "team":
         invalidate(["bootstrap"]);
         break;
+      case "saved_view":
+        invalidate(["saved-views", "conversation"]);
+        break;
     }
   });
 }

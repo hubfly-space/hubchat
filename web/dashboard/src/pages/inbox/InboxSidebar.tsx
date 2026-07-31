@@ -1,5 +1,24 @@
-import { api, Button, Eyebrow, Tooltip, useQuery, type Inbox } from "@hubchat/shared";
 import {
+  api,
+  Button,
+  Dialog,
+  DialogClose,
+  DialogContent,
+  Eyebrow,
+  Field,
+  Input,
+  Select,
+  Tooltip,
+  idempotencyKey,
+  useInfinite,
+  useMutation,
+  useQuery,
+  type Inbox,
+  type Paginated,
+  type SavedView,
+} from "@hubchat/shared";
+import {
+  Bookmark,
   BellRing,
   CheckCircle2,
   Clock,
@@ -9,6 +28,7 @@ import {
   UserCheck,
   Users,
 } from "lucide-react";
+import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { SidebarItem } from "../../app/shell/SectionSidebar";
 
@@ -29,17 +49,37 @@ type Counts = {
  *
  * Counts arrive as one aggregate call (`GET /v1/conversations/counts`)
  * rather than one query per badge. Mentions, breached/approaching SLA, and
- * saved views from the original design have no backend yet (there is no
- * @mention concept anywhere in the schema, SLA is Stage 8, saved filter sets
- * are Stage 3) and are left out rather than shown as permanently-empty
- * buttons.
+ * Mentions and breached/approaching SLA shortcuts remain outside this sidebar
+ * until their dedicated notification queues exist. Saved views are live API
+ * resources and are rendered only when the server returns them.
  */
 export function InboxSidebar() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [scope, setScope] = useState<"personal" | "workspace">("personal");
+  const [state, setState] = useState("");
 
   const counts = useQuery<Counts>(["conversation-counts"], (signal) => api.get("/conversations/counts", { signal }));
   const inboxes = useQuery<{ data: Inbox[] }>(["inboxes"], (signal) => api.get("/inboxes", { signal }));
+  const savedViews = useInfinite<SavedView>(["saved-views", "conversation"], (cursor, signal) => {
+    const params = new URLSearchParams({ entity_type: "conversation", limit: "50" });
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<SavedView>>(`/saved-views?${params.toString()}`, { signal });
+  });
+  const create = useMutation<{ name: string; entity_type: string; scope: string; filters: Record<string, unknown>; sort: Record<string, unknown> }, SavedView>(
+    (input) => api.post("/saved-views", input, { idempotencyKey: idempotencyKey() }),
+    {
+      invalidates: [["saved-views", "conversation"]],
+      onSuccess: () => {
+        setCreateOpen(false);
+        setName("");
+        setScope("personal");
+        setState("");
+      },
+    },
+  );
 
   const activeView = pathname.split("/")[2] ?? "all";
   const c = counts.data;
@@ -147,6 +187,23 @@ export function InboxSidebar() {
         </div>
 
         <div>
+          <div className="flex items-center justify-between px-2 pb-1.5">
+            <Eyebrow>Saved views</Eyebrow>
+            <Tooltip content="New saved view">
+              <Button variant="ghost" size="xs" iconOnly aria-label="New saved view" leading={<Plus />} onClick={() => setCreateOpen(true)} />
+            </Tooltip>
+          </div>
+          <ul className="flex flex-col gap-px">
+            {savedViews.items.map((view) => (
+              <li key={view.id}>
+                <SidebarItem to={`/inbox/${view.id}`} label={view.name} icon={<Bookmark />} active={activeView === view.id} />
+              </li>
+            ))}
+            {!savedViews.isLoading && savedViews.items.length === 0 && <li className="px-2 text-2xs text-fg-disabled">Save a filter for quick access.</li>}
+          </ul>
+        </div>
+
+        <div>
           <Eyebrow className="px-2 pb-1.5">Inboxes</Eyebrow>
           <ul className="flex flex-col gap-px">
             {(inboxes.data?.data ?? []).map((inbox) => (
@@ -163,6 +220,21 @@ export function InboxSidebar() {
           </ul>
         </div>
       </div>
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent
+          title="New saved view"
+          description="Save a named conversation filter for yourself or the whole workspace."
+          footer={<><DialogClose asChild><Button variant="ghost" size="sm">Cancel</Button></DialogClose><Button variant="primary" size="sm" loading={create.isPending} disabled={!name.trim()} onClick={() => void create.mutate({ name: name.trim(), entity_type: "conversation", scope, filters: { match: "all", conditions: state ? [{ field: "state", operator: "is", value: state }] : [] }, sort: { field: "last_message_at", direction: "desc" } }).catch(() => {})}>Create view</Button></>}
+        >
+          <div className="space-y-4 pb-2">
+            <Field label="Name" required><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Urgent conversations" /></Field>
+            <Field label="Visibility"><Select value={scope} onValueChange={(value) => setScope(value as "personal" | "workspace")} options={[{ value: "personal", label: "Only me" }, { value: "workspace", label: "Everyone in the workspace" }]} /></Field>
+            <Field label="State" description="Leave empty to include all active states."><Select value={state} onValueChange={setState} options={[{ value: "", label: "All active" }, { value: "new", label: "New" }, { value: "open", label: "Open" }, { value: "pending", label: "Pending" }, { value: "waiting_for_support", label: "Waiting on us" }, { value: "waiting_for_customer", label: "Waiting on customer" }, { value: "resolved", label: "Resolved" }]} /></Field>
+            {Boolean(create.error) && <p className="text-sm text-danger">Could not create this saved view. Try again.</p>}
+          </div>
+        </DialogContent>
+      </Dialog>
     </nav>
   );
 }
