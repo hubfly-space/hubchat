@@ -135,9 +135,12 @@ const JobEmailSend = "email.send"
 
 // EmailPayload is what the email.send job carries.
 type EmailPayload struct {
-	To      string `json:"to"`
-	Subject string `json:"subject"`
-	Body    string `json:"body"`
+	To             string `json:"to"`
+	Subject        string `json:"subject"`
+	Body           string `json:"body"`
+	ReplyTo        string `json:"reply_to,omitempty"`
+	WorkspaceID    string `json:"workspace_id,omitempty"`
+	EmailMessageID string `json:"email_message_id,omitempty"`
 }
 
 // recordUserAudit writes an audit entry for an account-level action.

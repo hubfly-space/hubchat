@@ -185,6 +185,8 @@ func writeFormError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, err.Error())
 	case errors.Is(err, form.ErrSubmissionLimit):
 		httpserver.WriteError(w, r, http.StatusConflict, httpserver.CodeConflict, "This form is no longer accepting submissions.")
+	case errors.Is(err, form.ErrRateLimited):
+		httpserver.WriteError(w, r, http.StatusTooManyRequests, httpserver.CodeRateLimited, "Please wait before submitting this form again.")
 	default:
 		writeFormInternalError(w, r)
 	}

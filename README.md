@@ -17,15 +17,15 @@ PostgreSQL  ──▶  hubchat (one binary)  ──▶  browsers
 
 ## Status
 
-This repository contains a working production-backed support core alongside
-fixture-driven screens that are being migrated module by module. Authentication,
-workspaces, inboxes, conversations, realtime messaging, customers, companies,
-tickets, metadata, search, widget identity, audit logging, jobs, and migrations
-are implemented. Feedback, knowledge base, surveys, forms, automation, SLA,
-email ingestion, analytics, and portability remain in active delivery. Files,
-portal sessions/attachments, forms, API keys, and signed webhook delivery now
-have production-backed slices; the remaining pages for those modules are still
-being migrated from the explicit `/dev/live` demos.
+This repository contains a production-backed support core and explicit demo
+fixtures only under `/dev/live`. Authentication, workspaces, inboxes,
+conversations, realtime messaging, customers, companies, tickets, metadata,
+search, widget identity, audit logging, jobs, files, portals, forms, feedback,
+knowledge base, surveys, API keys, signed webhooks, email channel threading,
+SLA runtime evaluation, automation execution, analytics rollups, and workspace
+archive operations have live service/API slices. Advanced reporting, provider
+adapters, import/export breadth, and several management screens remain under
+active delivery; production pages do not silently fall back to fixtures.
 
 What runs today:
 

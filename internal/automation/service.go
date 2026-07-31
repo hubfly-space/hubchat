@@ -10,9 +10,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hubchat/hubchat/internal/conversation"
 	"github.com/hubchat/hubchat/internal/database"
 	"github.com/hubchat/hubchat/internal/events"
 	"github.com/hubchat/hubchat/internal/ids"
+	"github.com/hubchat/hubchat/internal/jobs"
+	"github.com/hubchat/hubchat/internal/ticket"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -28,11 +31,25 @@ var (
 var triggers = map[string]bool{"conversation.created": true, "message.received": true, "ticket.created": true, "ticket.updated": true, "customer.identified": true, "customer.updated": true, "event.received": true, "form.submitted": true, "feedback.submitted": true, "sla.approaching": true, "sla.breached": true, "conversation.idle": true, "business_hours.changed": true, "schedule": true}
 var actions = map[string]bool{"assign_member": true, "assign_team": true, "add_tag": true, "remove_tag": true, "set_priority": true, "set_field": true, "set_state": true, "send_message": true, "send_email": true, "invoke_webhook": true, "move_inbox": true, "start_sla": true, "pause_sla": true, "close_after_inactivity": true, "create_task": true}
 
+const JobRunScheduled = "automation.scheduled_actions"
+
 type Service struct {
-	pool     *database.Pool
-	maxDepth int
-	seenMu   sync.Mutex
-	seen     map[string]int64
+	pool         *database.Pool
+	conversation *conversation.Service
+	ticket       *ticket.Service
+	jobs         *jobs.Client
+	maxDepth     int
+	seenMu       sync.Mutex
+	seen         map[string]int64
+}
+
+// Options contains the domain adapters used by live rule execution. The
+// services remain optional for isolated rule/condition tests and for a
+// read-only installation that has not enabled automation workers.
+type Options struct {
+	Conversation *conversation.Service
+	Ticket       *ticket.Service
+	Jobs         *jobs.Client
 }
 type Action struct {
 	ID     string         `json:"id"`
@@ -85,8 +102,12 @@ type Execution struct {
 	OccurredAt     time.Time `json:"occurred_at"`
 }
 
-func New(pool *database.Pool) *Service {
-	return &Service{pool: pool, maxDepth: 8, seen: make(map[string]int64)}
+func New(pool *database.Pool, options ...Options) *Service {
+	var opts Options
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	return &Service{pool: pool, conversation: opts.Conversation, ticket: opts.Ticket, jobs: opts.Jobs, maxDepth: 8, seen: make(map[string]int64)}
 }
 func (s *Service) Create(ctx context.Context, workspaceID, memberID string, input Input) (*Rule, error) {
 	if strings.TrimSpace(input.Name) == "" {
@@ -185,7 +206,14 @@ func (s *Service) execute(ctx context.Context, workspaceID, ruleID, eventID, sub
 	if !matched {
 		return s.recordExecution(ctx, workspaceID, rule, eventID, subjectType, subjectID, causationID, depth, "skipped", nil, nil, dryRun, started)
 	}
-	return s.recordExecution(ctx, workspaceID, rule, eventID, subjectType, subjectID, causationID, depth, "matched", rule.Actions, nil, dryRun, started)
+	if dryRun {
+		return s.recordExecution(ctx, workspaceID, rule, eventID, subjectType, subjectID, causationID, depth, "matched", rule.Actions, nil, true, started)
+	}
+	applied, actionErr := s.applyActions(ctx, workspaceID, subjectType, subjectID, rule.Actions, "")
+	if actionErr != nil {
+		return s.recordExecution(ctx, workspaceID, rule, eventID, subjectType, subjectID, causationID, depth, "failed", applied, actionErr, false, started)
+	}
+	return s.recordExecution(ctx, workspaceID, rule, eventID, subjectType, subjectID, causationID, depth, "matched", applied, nil, false, started)
 }
 
 // RunEventConsumer evaluates enabled rules from committed events. It starts
@@ -260,11 +288,327 @@ func (s *Service) processEvent(ctx context.Context, record events.Record) error 
 		if !rule.Enabled || rule.Trigger != trigger {
 			continue
 		}
-		if _, err := s.execute(ctx, record.WorkspaceID, rule.ID, record.ID, record.EntityType, record.EntityID, record.ID, 0, false, subject); err != nil {
+		if _, err := s.executeWithActor(ctx, record.WorkspaceID, rule.ID, record.ID, record.EntityType, record.EntityID, record.ID, 0, false, subject, record.ActorID); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (s *Service) executeWithActor(ctx context.Context, workspaceID, ruleID, eventID, subjectType, subjectID, causationID string, depth int, dryRun bool, subject map[string]any, actorID string) (*Execution, error) {
+	started := time.Now()
+	rule, err := s.Get(ctx, workspaceID, ruleID)
+	if err != nil {
+		return nil, err
+	}
+	if depth > s.maxDepth {
+		return s.recordExecution(ctx, workspaceID, rule, eventID, subjectType, subjectID, causationID, depth, "depth_exceeded", nil, ErrDepthExceeded, dryRun, started)
+	}
+	if !dryRun && rule.MaxRunsPerHour != nil {
+		var count int
+		if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM automation_executions WHERE workspace_id=$1 AND rule_id=$2 AND outcome='matched' AND dry_run=false AND occurred_at>now()-interval '1 hour'`, workspaceID, ruleID).Scan(&count); err != nil {
+			return nil, err
+		}
+		if count >= *rule.MaxRunsPerHour {
+			return s.recordExecution(ctx, workspaceID, rule, eventID, subjectType, subjectID, causationID, depth, "rate_limited", nil, ErrRateLimited, dryRun, started)
+		}
+	}
+	if !matchesData(rule.Conditions, subject) {
+		return s.recordExecution(ctx, workspaceID, rule, eventID, subjectType, subjectID, causationID, depth, "skipped", nil, nil, dryRun, started)
+	}
+	if dryRun {
+		return s.recordExecution(ctx, workspaceID, rule, eventID, subjectType, subjectID, causationID, depth, "matched", rule.Actions, nil, true, started)
+	}
+	applied, actionErr := s.applyActions(ctx, workspaceID, subjectType, subjectID, rule.Actions, actorID)
+	if actionErr != nil {
+		return s.recordExecution(ctx, workspaceID, rule, eventID, subjectType, subjectID, causationID, depth, "failed", applied, actionErr, false, started)
+	}
+	return s.recordExecution(ctx, workspaceID, rule, eventID, subjectType, subjectID, causationID, depth, "matched", applied, nil, false, started)
+}
+
+type automationEmailPayload struct {
+	WorkspaceID string `json:"workspace_id"`
+	To          string `json:"to"`
+	Subject     string `json:"subject"`
+	Body        string `json:"body"`
+}
+
+func (s *Service) applyActions(ctx context.Context, workspaceID, subjectType, subjectID string, values []Action, actorID string) ([]Action, error) {
+	applied := make([]Action, 0, len(values))
+	for _, action := range values {
+		params := action.Params
+		if params == nil {
+			params = map[string]any{}
+		}
+		var err error
+		switch action.Type {
+		case "assign_member":
+			var member string
+			member, err = requiredString(params, "member_id", "assignee_id")
+			if err == nil {
+				err = s.applyAssignee(ctx, workspaceID, actorID, subjectType, subjectID, member)
+			}
+		case "assign_team":
+			var team string
+			team, err = requiredString(params, "team_id")
+			if err == nil {
+				err = s.applyTeam(ctx, workspaceID, actorID, subjectType, subjectID, team)
+			}
+		case "move_inbox":
+			var inboxID string
+			inboxID, err = requiredString(params, "inbox_id")
+			if err == nil {
+				err = s.applyInbox(ctx, workspaceID, actorID, subjectType, subjectID, inboxID)
+			}
+		case "set_priority":
+			var priority string
+			priority, err = requiredString(params, "priority")
+			if err == nil {
+				err = s.applyPriority(ctx, workspaceID, actorID, subjectType, subjectID, priority)
+			}
+		case "set_state":
+			var state string
+			state, err = requiredString(params, "state", "status")
+			if err == nil {
+				err = s.applyState(ctx, workspaceID, actorID, subjectType, subjectID, state)
+			}
+		case "add_tag", "remove_tag":
+			var tagID string
+			tagID, err = requiredString(params, "tag_id")
+			if err == nil {
+				err = s.applyTag(ctx, workspaceID, actorID, subjectType, subjectID, tagID, action.Type == "add_tag")
+			}
+		case "set_field":
+			key, keyErr := requiredString(params, "key", "field")
+			if keyErr != nil {
+				err = keyErr
+			} else if s.ticket == nil || subjectType != "ticket" {
+				err = errors.New("automation: set_field requires a ticket subject")
+			} else {
+				err = s.ticket.SetFieldValue(ctx, workspaceID, "ticket", subjectID, key, params["value"])
+			}
+		case "send_message":
+			body, bodyErr := requiredString(params, "body", "message")
+			if bodyErr != nil {
+				err = bodyErr
+			} else if s.conversation == nil || subjectType != "conversation" {
+				err = errors.New("automation: send_message requires a conversation subject")
+			} else {
+				var authorID *string
+				if actorID != "" {
+					authorID = &actorID
+				}
+				_, err = s.conversation.PostMessage(ctx, workspaceID, subjectID, nil, "reply", "automation", authorID, "Automation", body)
+			}
+		case "send_email":
+			err = s.queueEmail(ctx, workspaceID, params)
+		case "close_after_inactivity":
+			err = s.scheduleClose(ctx, workspaceID, subjectType, subjectID, actorID, params)
+		default:
+			err = fmt.Errorf("automation: action %q is not executable", action.Type)
+		}
+		if err != nil {
+			return applied, err
+		}
+		applied = append(applied, action)
+	}
+	return applied, nil
+}
+
+func (s *Service) applyAssignee(ctx context.Context, workspaceID, actorID, subjectType, subjectID, memberID string) error {
+	if subjectType == "conversation" && s.conversation != nil {
+		_, err := s.conversation.SetAssignee(ctx, workspaceID, actorID, subjectID, &memberID)
+		return err
+	}
+	if subjectType == "ticket" && s.ticket != nil {
+		_, err := s.ticket.SetAssignee(ctx, workspaceID, actorID, subjectID, &memberID)
+		return err
+	}
+	return errors.New("automation: assign_member requires a conversation or ticket subject")
+}
+
+func (s *Service) applyTeam(ctx context.Context, workspaceID, actorID, subjectType, subjectID, teamID string) error {
+	if subjectType == "conversation" && s.conversation != nil {
+		_, err := s.conversation.SetTeam(ctx, workspaceID, actorID, subjectID, &teamID)
+		return err
+	}
+	if subjectType == "ticket" && s.ticket != nil {
+		_, err := s.ticket.SetTeam(ctx, workspaceID, actorID, subjectID, &teamID)
+		return err
+	}
+	return errors.New("automation: assign_team requires a conversation or ticket subject")
+}
+
+func (s *Service) applyInbox(ctx context.Context, workspaceID, actorID, subjectType, subjectID, inboxID string) error {
+	if subjectType == "conversation" && s.conversation != nil {
+		_, err := s.conversation.SetInbox(ctx, workspaceID, actorID, subjectID, inboxID)
+		return err
+	}
+	if subjectType == "ticket" && s.ticket != nil {
+		_, err := s.ticket.SetInbox(ctx, workspaceID, actorID, subjectID, inboxID)
+		return err
+	}
+	return errors.New("automation: move_inbox requires a conversation or ticket subject")
+}
+
+func (s *Service) applyPriority(ctx context.Context, workspaceID, actorID, subjectType, subjectID, priority string) error {
+	if subjectType == "conversation" && s.conversation != nil {
+		_, err := s.conversation.SetPriority(ctx, workspaceID, actorID, subjectID, priority)
+		return err
+	}
+	if subjectType == "ticket" && s.ticket != nil {
+		_, err := s.ticket.SetPriority(ctx, workspaceID, actorID, subjectID, priority)
+		return err
+	}
+	return errors.New("automation: set_priority requires a conversation or ticket subject")
+}
+
+func (s *Service) applyState(ctx context.Context, workspaceID, actorID, subjectType, subjectID, state string) error {
+	if subjectType == "conversation" && s.conversation != nil {
+		_, err := s.conversation.SetState(ctx, workspaceID, actorID, subjectID, state)
+		return err
+	}
+	if subjectType == "ticket" && s.ticket != nil {
+		_, err := s.ticket.SetStatus(ctx, workspaceID, actorID, subjectID, state)
+		return err
+	}
+	return errors.New("automation: set_state requires a conversation or ticket subject")
+}
+
+func (s *Service) applyTag(ctx context.Context, workspaceID, actorID, subjectType, subjectID, tagID string, add bool) error {
+	if subjectType == "conversation" && s.conversation != nil {
+		if add {
+			return s.conversation.AddTag(ctx, workspaceID, actorID, subjectID, tagID)
+		}
+		return s.conversation.RemoveTag(ctx, workspaceID, actorID, subjectID, tagID)
+	}
+	if subjectType == "ticket" && s.ticket != nil {
+		if add {
+			return s.ticket.AddTag(ctx, workspaceID, actorID, subjectID, tagID)
+		}
+		return s.ticket.RemoveTag(ctx, workspaceID, actorID, subjectID, tagID)
+	}
+	return errors.New("automation: tag actions require a conversation or ticket subject")
+}
+
+func (s *Service) queueEmail(ctx context.Context, workspaceID string, params map[string]any) error {
+	if s.jobs == nil {
+		return errors.New("automation: email queue is unavailable")
+	}
+	to, err := requiredString(params, "to")
+	if err != nil {
+		return err
+	}
+	subject, err := requiredString(params, "subject")
+	if err != nil {
+		return err
+	}
+	body, err := requiredString(params, "body", "message")
+	if err != nil {
+		return err
+	}
+	_, err = s.jobs.Enqueue(ctx, jobs.Spec{WorkspaceID: workspaceID, Queue: "email", Type: "email.send", Payload: automationEmailPayload{WorkspaceID: workspaceID, To: to, Subject: subject, Body: body}})
+	return err
+}
+
+func (s *Service) scheduleClose(ctx context.Context, workspaceID, subjectType, subjectID, actorID string, params map[string]any) error {
+	minutes := intParam(params, "after_minutes", 60)
+	if minutes <= 0 {
+		return errors.New("automation: close_after_inactivity requires positive after_minutes")
+	}
+	_, err := s.pool.Exec(ctx, `INSERT INTO scheduled_actions(id,workspace_id,kind,subject_type,subject_id,payload,scheduled_for,created_by) VALUES($1,$2,'close_after_inactivity',$3,$4,$5::jsonb,now()+make_interval(mins=>$6),NULLIF($7,''))`, ids.New(ids.PrefixScheduledAction), workspaceID, subjectType, subjectID, `{"inactive_minutes":`+fmt.Sprint(minutes)+`}`, minutes, actorID)
+	return err
+}
+
+// RunScheduledActions claims due domain actions atomically, then applies them
+// through the owning service. Claiming before execution prevents two workers
+// from closing the same subject; a failed action is made visible and does not
+// disappear into an unbounded retry loop.
+func (s *Service) RunScheduledActions(ctx context.Context) (executed, failed int, err error) {
+	rows, err := s.pool.Query(ctx, `SELECT id,workspace_id,kind,subject_type,subject_id,payload,coalesce(created_by,'') FROM scheduled_actions WHERE state='pending' AND scheduled_for<=now() ORDER BY scheduled_for,id LIMIT 100`)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+	type dueAction struct {
+		id, workspaceID, kind, subjectType, subjectID, createdBy string
+		payload                                                  []byte
+	}
+	items := make([]dueAction, 0)
+	for rows.Next() {
+		var item dueAction
+		if err := rows.Scan(&item.id, &item.workspaceID, &item.kind, &item.subjectType, &item.subjectID, &item.payload, &item.createdBy); err != nil {
+			return executed, failed, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return executed, failed, err
+	}
+	for _, item := range items {
+		var claimed bool
+		if err := s.pool.QueryRow(ctx, `UPDATE scheduled_actions SET state='executed',executed_at=now() WHERE id=$1 AND state='pending' RETURNING true`, item.id).Scan(&claimed); errors.Is(err, pgx.ErrNoRows) {
+			continue
+		} else if err != nil {
+			return executed, failed, err
+		}
+		if err := s.executeScheduled(ctx, item); err != nil {
+			failed++
+			_, _ = s.pool.Exec(ctx, `UPDATE scheduled_actions SET state='failed' WHERE id=$1`, item.id)
+			continue
+		}
+		executed++
+	}
+	return executed, failed, nil
+}
+
+func (s *Service) executeScheduled(ctx context.Context, item struct {
+	id, workspaceID, kind, subjectType, subjectID, createdBy string
+	payload                                                  []byte
+}) error {
+	if item.kind != "close_after_inactivity" || item.subjectType != "conversation" || s.conversation == nil {
+		return fmt.Errorf("automation: scheduled action %q is not executable", item.kind)
+	}
+	var inactiveMinutes int
+	var state string
+	var lastCustomerAt *time.Time
+	if err := s.pool.QueryRow(ctx, `SELECT state,last_customer_at FROM conversations WHERE workspace_id=$1 AND id=$2`, item.workspaceID, item.subjectID).Scan(&state, &lastCustomerAt); err != nil {
+		return err
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(item.payload, &payload); err != nil {
+		return err
+	}
+	inactiveMinutes = intParam(payload, "inactive_minutes", 60)
+	if state == "resolved" || state == "closed" || lastCustomerAt == nil || time.Since(lastCustomerAt.UTC()) < time.Duration(inactiveMinutes)*time.Minute {
+		return nil
+	}
+	_, err := s.conversation.SetState(ctx, item.workspaceID, item.createdBy, item.subjectID, "resolved")
+	return err
+}
+
+func requiredString(params map[string]any, keys ...string) (string, error) {
+	for _, key := range keys {
+		if value, ok := params[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value), nil
+		}
+	}
+	return "", errors.New("automation: action parameter is required")
+}
+
+func intParam(params map[string]any, key string, fallback int) int {
+	switch value := params[key].(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	case string:
+		var parsed int
+		if _, err := fmt.Sscanf(value, "%d", &parsed); err == nil {
+			return parsed
+		}
+	}
+	return fallback
 }
 
 func triggerForEvent(eventType events.Type) string {
