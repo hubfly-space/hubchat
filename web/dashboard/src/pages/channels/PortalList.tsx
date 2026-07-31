@@ -79,7 +79,7 @@ export default function PortalList() {
       <Dialog open={creating} onOpenChange={setCreating}>
         <DialogContent title="New portal" description="Create the customer-facing shell first; branding and sections can be customised next." footer={<Button variant="primary" size="sm" loading={create.isPending} disabled={!name.trim() || !subdomain.trim()} onClick={() => void create.mutate().catch(() => {})}>Create portal</Button>}>
           {Boolean(create.error) && <Callout tone="danger" className="mb-3">{create.error instanceof ApiError ? create.error.message : "Could not create this portal."}</Callout>}
-          <div className="flex flex-col gap-3 pb-4"><Field label="Name"><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Northwind Help Centre" autoFocus /></Field><Field label="Subdomain" description="Lowercase letters, numbers, and hyphens."><Input value={subdomain} onChange={(event) => setSubdomain(event.target.value.toLowerCase())} placeholder="northwind" /></Field></div>
+          <div className="flex flex-col gap-3 pb-4"><Field label="Name"><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Acme Help Centre" autoFocus /></Field><Field label="Subdomain" description="Lowercase letters, numbers, and hyphens."><Input value={subdomain} onChange={(event) => setSubdomain(event.target.value.toLowerCase())} placeholder="acme" /></Field></div>
         </DialogContent>
       </Dialog>
     </Page>

@@ -37,6 +37,8 @@ const SDK_METHODS = [
 /** SDK and installation reference (§6.16). */
 export default function SdkGuide() {
   const [tab, setTab] = useState("install");
+  const deploymentOrigin = window.location.origin;
+  const websocketOrigin = deploymentOrigin.replace(/^http/, "ws");
 
   const widgets = useQuery<{ data: Widget[] }>(["widgets"], (signal) => api.get("/widgets", { signal }));
   const widget = widgets.data?.data[0];
@@ -79,7 +81,7 @@ export default function SdkGuide() {
                 code={`<script>
   (function(h,u,b){h.Hubchat=h.Hubchat||function(){(h.Hubchat.q=h.Hubchat.q||[]).push(arguments)};
   var s=u.createElement('script');s.async=1;s.src=b;u.head.appendChild(s)})
-  (window,document,'https://support.northwind.cloud/widget/v1.js');
+  (window,document,'${deploymentOrigin}/widget/v1.js');
 
   Hubchat('boot', { key: '${publicKey}' });
 </script>`}
@@ -115,9 +117,9 @@ export function App() {
               </p>
               <CodeBlock
                 language="text"
-                code={`script-src  https://support.northwind.cloud
-connect-src https://support.northwind.cloud wss://support.northwind.cloud
-img-src     https://support.northwind.cloud data:
+                code={`script-src  ${deploymentOrigin}
+connect-src ${deploymentOrigin} ${websocketOrigin}
+img-src     ${deploymentOrigin} data:
 style-src   'unsafe-inline'   # widget styles are injected into a shadow root`}
               />
             </Section>
@@ -263,7 +265,7 @@ Hubchat('on', 'unread:changed',     ({ count }) => {});`}
             <Section title="Example">
               <CodeBlock
                 language="bash"
-                code={`curl -X POST https://support.northwind.cloud/api/v1/tickets \\
+                code={`curl -X POST ${deploymentOrigin}/api/v1/tickets \\
   -H "Authorization: Bearer hc_live_9f2a…" \\
   -H "Idempotency-Key: 0d4f1a2c-9b3e-4f10-a5c2-77b1de3a9e04" \\
   -H "Content-Type: application/json" \\

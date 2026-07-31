@@ -78,6 +78,7 @@ export default function WidgetBuilder() {
   const { widgetId } = useParams();
   const navigate = useNavigate();
   const toast = useToast();
+  const deploymentOrigin = window.location.origin;
   const { inboxes } = useWorkspace();
 
   const widgetQuery = useQuery<Widget>(
@@ -750,7 +751,7 @@ export default function WidgetBuilder() {
                     code={`<script>
   (function(h,u,b){h.Hubchat=h.Hubchat||function(){(h.Hubchat.q=h.Hubchat.q||[]).push(arguments)};
   var s=u.createElement('script');s.async=1;s.src=b;u.head.appendChild(s)})
-  (window,document,'https://support.northwind.cloud/widget/v1.js');
+  (window,document,'${deploymentOrigin}/widget/v1.js');
 
   Hubchat('boot', { key: '${draft.public_key}' });
 </script>`}
@@ -770,7 +771,7 @@ export function App() {
       <YourApp />
       <HubchatWidget
         publicKey="${draft.public_key}"
-        host="https://support.northwind.cloud"
+        host="${deploymentOrigin}"
         identity={{ token: identityToken }}
       />
     </>
@@ -797,7 +798,7 @@ export function App() {
                         }
                         aria-label="Allowed domains"
                       />
-                      <p className="mt-2 text-xs text-fg-muted">One per line. Wildcards allowed on subdomains: <code className="font-mono">*.northwind.cloud</code></p>
+                      <p className="mt-2 text-xs text-fg-muted">One per line. Wildcards are allowed for subdomains, for example <code className="font-mono">*.example.com</code>.</p>
                     </CardBody>
                   </Card>
                 </Section>

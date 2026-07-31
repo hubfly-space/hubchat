@@ -46,6 +46,7 @@ const SCOPES = [
 /** API keys (§6.16). */
 export default function ApiKeys() {
   const { memberById } = useWorkspace();
+  const deploymentOrigin = window.location.origin;
   const [revoking, setRevoking] = useState<ApiKey | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
@@ -226,7 +227,7 @@ export default function ApiKeys() {
         <Section title="Using a key">
           <CodeBlock
             language="bash"
-            code={`curl https://support.northwind.cloud/api/v1/conversations \\
+            code={`curl ${deploymentOrigin}/api/v1/conversations \\
   -H "Authorization: Bearer hc_live_9f2a…" \\
   -H "Idempotency-Key: $(uuidgen)" \\
   -H "Content-Type: application/json"`}
