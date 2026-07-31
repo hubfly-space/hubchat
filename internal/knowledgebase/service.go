@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/hubchat/hubchat/internal/database"
+	"github.com/hubchat/hubchat/internal/events"
 	"github.com/hubchat/hubchat/internal/ids"
 )
 
@@ -25,12 +26,20 @@ var (
 	ErrInvalidState            = errors.New("knowledgebase: invalid article state")
 	ErrInvalidLanguage         = errors.New("knowledgebase: language is required")
 	ErrInvalidArticle          = errors.New("knowledgebase: article title and knowledge base are required")
+	ErrInvalidChangelog        = errors.New("knowledgebase: invalid changelog entry")
 	ErrFeedbackAlreadyRecorded = errors.New("knowledgebase: article feedback already recorded")
 )
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
-type Service struct{ pool *database.Pool }
+type Options struct {
+	Events *events.Log
+}
+
+type Service struct {
+	pool   *database.Pool
+	events *events.Log
+}
 
 type KnowledgeBase struct {
 	ID              string    `json:"id"`
@@ -82,6 +91,19 @@ type Article struct {
 	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
+type ChangelogEntry struct {
+	ID             string     `json:"id"`
+	WorkspaceID    string     `json:"workspace_id"`
+	Title          string     `json:"title"`
+	Body           string     `json:"body"`
+	Kind           string     `json:"kind"`
+	FeedbackItemID *string    `json:"feedback_item_id,omitempty"`
+	PublishedAt    *time.Time `json:"published_at,omitempty"`
+	CreatedBy      *string    `json:"created_by,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
 type KnowledgeBaseInput struct {
 	Name            string   `json:"name"`
 	Slug            string   `json:"slug"`
@@ -110,12 +132,25 @@ type ArticleInput struct {
 	ScheduledAt     *time.Time     `json:"scheduled_at"`
 }
 
+type ChangelogInput struct {
+	Title          string  `json:"title"`
+	Body           string  `json:"body"`
+	Kind           string  `json:"kind"`
+	FeedbackItemID *string `json:"feedback_item_id"`
+}
+
 type SearchResult struct {
 	Article Article `json:"article"`
 	Rank    float32 `json:"rank"`
 }
 
-func New(pool *database.Pool) *Service { return &Service{pool: pool} }
+func New(pool *database.Pool, options ...Options) *Service {
+	service := &Service{pool: pool}
+	if len(options) > 0 {
+		service.events = options[0].Events
+	}
+	return service
+}
 
 func (s *Service) CreateKnowledgeBase(ctx context.Context, workspaceID string, input KnowledgeBaseInput) (*KnowledgeBase, error) {
 	name, slug := strings.TrimSpace(input.Name), strings.ToLower(strings.TrimSpace(input.Slug))
@@ -342,6 +377,162 @@ func (s *Service) PublishArticle(ctx context.Context, workspaceID, id string) (*
 		return nil, err
 	}
 	return s.GetArticle(ctx, workspaceID, id)
+}
+
+func (s *Service) SaveChangelog(ctx context.Context, workspaceID, memberID, id string, input ChangelogInput) (*ChangelogEntry, error) {
+	title := strings.TrimSpace(input.Title)
+	if title == "" {
+		return nil, ErrInvalidName
+	}
+	kind := strings.ToLower(strings.TrimSpace(input.Kind))
+	if kind == "" {
+		kind = "added"
+	}
+	if !validChangelogKind(kind) {
+		return nil, ErrInvalidChangelog
+	}
+	if input.FeedbackItemID != nil && strings.TrimSpace(*input.FeedbackItemID) != "" {
+		var exists bool
+		if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM feedback_items WHERE workspace_id=$1 AND id=$2)`, workspaceID, strings.TrimSpace(*input.FeedbackItemID)).Scan(&exists); err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, ErrNotFound
+		}
+	}
+	if id == "" {
+		id = ids.New(ids.PrefixChangelogEntry)
+		if _, err := s.pool.Exec(ctx, `INSERT INTO changelog_entries(id,workspace_id,title,body,kind,feedback_item_id,created_by) VALUES($1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,''))`, id, workspaceID, title, strings.TrimSpace(input.Body), kind, nullableString(input.FeedbackItemID), memberID); err != nil {
+			return nil, fmt.Errorf("knowledgebase: create changelog entry: %w", err)
+		}
+	} else {
+		result, err := s.pool.Exec(ctx, `UPDATE changelog_entries SET title=$3,body=$4,kind=$5,feedback_item_id=NULLIF($6,''),updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, id, title, strings.TrimSpace(input.Body), kind, nullableString(input.FeedbackItemID))
+		if err != nil {
+			return nil, fmt.Errorf("knowledgebase: update changelog entry: %w", err)
+		}
+		if result.RowsAffected() == 0 {
+			return nil, ErrNotFound
+		}
+	}
+	return s.GetChangelog(ctx, workspaceID, id)
+}
+
+func (s *Service) ListChangelog(ctx context.Context, workspaceID string, limit int) ([]ChangelogEntry, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id,workspace_id,title,body,kind,feedback_item_id,published_at,created_by,created_at,updated_at
+		FROM changelog_entries WHERE workspace_id=$1
+		ORDER BY coalesce(published_at,created_at) DESC,id DESC LIMIT $2
+	`, workspaceID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanChangelog(rows)
+}
+
+func (s *Service) GetChangelog(ctx context.Context, workspaceID, id string) (*ChangelogEntry, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT id,workspace_id,title,body,kind,feedback_item_id,published_at,created_by,created_at,updated_at
+		FROM changelog_entries WHERE workspace_id=$1 AND id=$2
+	`, workspaceID, id)
+	item, err := scanOneChangelog(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return item, err
+}
+
+func (s *Service) ListPublishedChangelog(ctx context.Context, workspaceID string, limit int) ([]ChangelogEntry, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id,workspace_id,title,body,kind,feedback_item_id,published_at,created_by,created_at,updated_at
+		FROM changelog_entries
+		WHERE workspace_id=$1 AND published_at IS NOT NULL AND published_at <= now()
+		ORDER BY published_at DESC,id DESC LIMIT $2
+	`, workspaceID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanChangelog(rows)
+}
+
+func (s *Service) PublishChangelog(ctx context.Context, workspaceID, memberID, id string) (*ChangelogEntry, error) {
+	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		var publishedAt *time.Time
+		if err := tx.QueryRow(ctx, `SELECT published_at FROM changelog_entries WHERE workspace_id=$1 AND id=$2 FOR UPDATE`, workspaceID, id).Scan(&publishedAt); errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		if publishedAt != nil {
+			return nil
+		}
+		if _, err := tx.Exec(ctx, `UPDATE changelog_entries SET published_at=now(),updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, id); err != nil {
+			return err
+		}
+		if s.events == nil {
+			return nil
+		}
+		_, err := s.events.Append(ctx, tx, events.Event{
+			WorkspaceID: workspaceID,
+			Type:        events.ChangelogPublished,
+			EntityType:  "changelog_entry",
+			EntityID:    id,
+			ActorType:   events.ActorUser,
+			ActorID:     memberID,
+			Data:        map[string]any{"id": id},
+		})
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.GetChangelog(ctx, workspaceID, id)
+}
+
+func validChangelogKind(kind string) bool {
+	switch kind {
+	case "added", "improved", "fixed", "removed":
+		return true
+	default:
+		return false
+	}
+}
+
+func nullableString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
+type changelogScanner interface{ Scan(...any) error }
+
+func scanOneChangelog(row changelogScanner) (*ChangelogEntry, error) {
+	var item ChangelogEntry
+	err := row.Scan(&item.ID, &item.WorkspaceID, &item.Title, &item.Body, &item.Kind, &item.FeedbackItemID, &item.PublishedAt, &item.CreatedBy, &item.CreatedAt, &item.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func scanChangelog(rows pgx.Rows) ([]ChangelogEntry, error) {
+	result := make([]ChangelogEntry, 0)
+	for rows.Next() {
+		item, err := scanOneChangelog(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, *item)
+	}
+	return result, rows.Err()
 }
 
 func (s *Service) SearchPublished(ctx context.Context, workspaceID, kbSlug, query, language, surface string, limit int) ([]SearchResult, error) {

@@ -74,6 +74,7 @@ const (
 
 	FeedbackCreated       Type = "feedback.created"
 	FeedbackStatusChanged Type = "feedback.status_changed"
+	ChangelogPublished    Type = "changelog.published"
 	SurveyResponseCreated Type = "survey.response_created"
 
 	SLAApproaching Type = "sla.approaching"

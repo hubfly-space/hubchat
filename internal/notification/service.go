@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -20,10 +21,18 @@ var ErrNotFound = errors.New("notification: not found")
 var ErrInvalidPreference = errors.New("notification: invalid preference")
 
 type Service struct {
-	pool   *database.Pool
-	jobs   *jobs.Client
-	seenMu sync.Mutex
-	seen   map[string]int64
+	pool      *database.Pool
+	jobs      *jobs.Client
+	surveys   SurveyDispatcher
+	publicURL *url.URL
+	seenMu    sync.Mutex
+	seen      map[string]int64
+}
+
+// SurveyDispatcher is deliberately a small boundary so notification delivery
+// can react to ticket lifecycle events without owning survey persistence.
+type SurveyDispatcher interface {
+	NotifyTicketResolution(context.Context, string, string, string, string) error
 }
 
 type Notification struct {
@@ -75,6 +84,14 @@ func New(pool *database.Pool, queue ...*jobs.Client) *Service {
 		jobClient = queue[0]
 	}
 	return &Service{pool: pool, jobs: jobClient, seen: make(map[string]int64)}
+}
+
+func (s *Service) SetSurveyDispatcher(dispatcher SurveyDispatcher) {
+	s.surveys = dispatcher
+}
+
+func (s *Service) SetPublicURL(publicURL *url.URL) {
+	s.publicURL = publicURL
 }
 
 func (s *Service) Preferences(ctx context.Context, workspaceID, memberID string) ([]Preference, error) {
@@ -423,11 +440,97 @@ func (s *Service) processEvent(ctx context.Context, record events.Record) error 
 		return s.NotifySLA(ctx, record.WorkspaceID, record.EntityType, record.EntityID, kind, record.ID)
 	case events.FeedbackStatusChanged:
 		return s.NotifyFeedbackSubscribers(ctx, record.WorkspaceID, record.EntityID, record.ID)
-	case events.TicketCreated, events.TicketStateSet:
+	case events.ChangelogPublished:
+		return s.NotifyChangelogSubscribers(ctx, record.WorkspaceID, record.EntityID, record.ID)
+	case events.TicketCreated:
 		return s.NotifyTicketCustomer(ctx, record.WorkspaceID, record.EntityID, record.ID, record.Type)
+	case events.TicketStateSet:
+		if err := s.NotifyTicketCustomer(ctx, record.WorkspaceID, record.EntityID, record.ID, record.Type); err != nil {
+			return err
+		}
+		if s.surveys == nil {
+			return nil
+		}
+		var state struct {
+			To string `json:"to"`
+		}
+		if err := json.Unmarshal(record.Data, &state); err != nil {
+			return fmt.Errorf("notification: decode ticket state event: %w", err)
+		}
+		if state.To != "resolved" && state.To != "closed" {
+			return nil
+		}
+		return s.surveys.NotifyTicketResolution(ctx, record.WorkspaceID, record.EntityID, record.ID, state.To)
 	default:
 		return nil
 	}
+}
+
+// NotifyChangelogSubscribers queues one email per opted-in customer for a
+// newly published entry. Preference resolution happens at event-consumption
+// time, and the source event/customer pair is the durable dedupe key.
+func (s *Service) NotifyChangelogSubscribers(ctx context.Context, workspaceID, entryID, sourceEventID string) error {
+	if s.jobs == nil {
+		return nil
+	}
+	var title, body string
+	if err := s.pool.QueryRow(ctx, `
+		SELECT title,body FROM changelog_entries
+		WHERE workspace_id=$1 AND id=$2 AND published_at IS NOT NULL
+	`, workspaceID, entryID).Scan(&title, &body); errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("notification: resolve changelog entry: %w", err)
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT c.id,NULLIF(c.email::text,''),coalesce(c.name,'')
+		FROM customers c
+		LEFT JOIN customer_notification_preferences preferences
+		  ON preferences.customer_id=c.id AND preferences.workspace_id=c.workspace_id
+		WHERE c.workspace_id=$1 AND NULLIF(c.email::text,'') IS NOT NULL
+		  AND coalesce(preferences.changelog,false)
+	`, workspaceID)
+	if err != nil {
+		return fmt.Errorf("notification: resolve changelog subscribers: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var customerID, address, name string
+		if err := rows.Scan(&customerID, &address, &name); err != nil {
+			return err
+		}
+		link := s.changelogLink(entryID)
+		message := "Hi " + strings.TrimSpace(name) + ",\n\n" + body
+		if link != "" {
+			message += "\n\nRead the update: " + link
+		}
+		_, err := s.jobs.Enqueue(ctx, jobs.Spec{
+			WorkspaceID: workspaceID,
+			Queue:       "email",
+			Type:        "email.send",
+			Payload:     emailPayload{To: address, Subject: title, Body: message},
+			DedupeKey:   "changelog-email:" + sourceEventID + ":" + customerID,
+		})
+		if errors.Is(err, jobs.ErrDuplicate) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("notification: queue changelog email: %w", err)
+		}
+	}
+	return rows.Err()
+}
+
+func (s *Service) changelogLink(entryID string) string {
+	path := "/portal/changelog#" + url.PathEscape(entryID)
+	if s.publicURL == nil {
+		return path
+	}
+	base := *s.publicURL
+	base.Path = strings.TrimRight(base.Path, "/") + "/portal/changelog"
+	base.Fragment = entryID
+	base.RawQuery = ""
+	return base.String()
 }
 
 func (s *Service) UnreadCount(ctx context.Context, workspaceID, memberID string) (int, error) {
