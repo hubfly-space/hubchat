@@ -13,10 +13,11 @@ import (
 )
 
 func registerInviteRoutes(mux *http.ServeMux, deps Deps) {
+	idempotent := Idempotency(deps)
 	mux.HandleFunc("GET /v1/invites",
 		requireCapability(deps, authorization.MemberManage, handleListInvites(deps)))
 	mux.HandleFunc("POST /v1/invites",
-		requireCapability(deps, authorization.MemberManage, handleCreateInvite(deps)))
+		requireCapability(deps, authorization.MemberManage, idempotent(handleCreateInvite(deps))))
 	mux.HandleFunc("DELETE /v1/invites/{id}",
 		requireCapability(deps, authorization.MemberManage, handleRevokeInvite(deps)))
 

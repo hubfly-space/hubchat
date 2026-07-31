@@ -14,16 +14,17 @@ import (
 // assignment, and deletion. Listing inboxes for the nav sidebar is served by
 // the bootstrap payload; this is the settings screen's CRUD surface.
 func registerInboxRoutes(mux *http.ServeMux, deps Deps) {
+	idempotent := Idempotency(deps)
 	mux.HandleFunc("GET /v1/inboxes",
 		requireActor(deps, handleListInboxes(deps)))
 	mux.HandleFunc("POST /v1/inboxes",
-		requireCapability(deps, authorization.WorkspaceManage, handleCreateInbox(deps)))
+		requireCapability(deps, authorization.WorkspaceManage, idempotent(handleCreateInbox(deps))))
 	mux.HandleFunc("GET /v1/inboxes/{id}",
 		requireActor(deps, handleGetInbox(deps)))
 	mux.HandleFunc("PATCH /v1/inboxes/{id}",
 		requireCapability(deps, authorization.WorkspaceManage, handleUpdateInbox(deps)))
 	mux.HandleFunc("PUT /v1/inboxes/{id}/default",
-		requireCapability(deps, authorization.WorkspaceManage, handleSetDefaultInbox(deps)))
+		requireCapability(deps, authorization.WorkspaceManage, idempotent(handleSetDefaultInbox(deps))))
 	mux.HandleFunc("DELETE /v1/inboxes/{id}",
 		requireCapability(deps, authorization.WorkspaceManage, handleDeleteInbox(deps)))
 }

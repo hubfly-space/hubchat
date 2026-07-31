@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -64,6 +65,17 @@ func Idempotency(deps Deps) func(http.HandlerFunc) http.HandlerFunc {
 						actor = &authorization.Actor{WorkspaceID: session.WorkspaceID, Role: "portal"}
 						r = r.WithContext(authorization.WithActor(r.Context(), actor))
 					}
+				}
+			}
+			if actor == nil {
+				// Public workspace-scoped routes (forms, feedback, surveys, and
+				// knowledge-base feedback) have no agent session, but they still
+				// have a tenant in the URL. Use that tenant only for the
+				// idempotency ledger; the owning service remains responsible for
+				// validating that the resource belongs to it.
+				if workspaceID := strings.TrimSpace(r.PathValue("workspaceID")); workspaceID != "" {
+					actor = &authorization.Actor{WorkspaceID: workspaceID, Role: "public"}
+					r = r.WithContext(authorization.WithActor(r.Context(), actor))
 				}
 			}
 			if actor == nil {
@@ -127,6 +139,68 @@ func Idempotency(deps Deps) func(http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 			releaseIdempotencyKey(r.Context(), deps, actor.WorkspaceID, key, endpoint)
+		}
+	}
+}
+
+// UserIdempotency is the onboarding counterpart to Idempotency. Workspace
+// creation is authenticated by a user session but has no workspace id yet, so
+// it uses the separate user-scoped ledger rather than weakening the tenant FK
+// on idempotency_keys.
+func UserIdempotency(deps Deps) func(http.HandlerFunc) http.HandlerFunc {
+	return func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			key := r.Header.Get("Idempotency-Key")
+			if key == "" || len(key) > 255 {
+				next(w, r)
+				return
+			}
+			token := httpserver.SessionToken(r)
+			if token == "" || deps.Auth == nil {
+				next(w, r)
+				return
+			}
+			user, err := deps.Auth.UserForSession(r.Context(), token)
+			if err != nil || user == nil {
+				next(w, r)
+				return
+			}
+
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "The request body could not be read.")
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			endpoint := r.Method + " " + r.URL.Path
+			fingerprint := sha256.Sum256(body)
+			stored, err := claimUserIdempotencyKey(r.Context(), deps.Pool, user.ID, key, endpoint, fingerprint[:])
+			switch {
+			case errors.Is(err, errIdempotencyMismatch):
+				httpserver.WriteError(w, r, http.StatusUnprocessableEntity, "idempotency_key_reused", "This Idempotency-Key was already used with a different request body.")
+				return
+			case errors.Is(err, errIdempotencyInFlight):
+				w.Header().Set("Retry-After", "1")
+				httpserver.WriteError(w, r, http.StatusConflict, "idempotency_in_flight", "An earlier request with this Idempotency-Key is still being processed.")
+				return
+			case err != nil:
+				deps.Logger.Error("user idempotency claim failed", "error", err, "request_id", httpserver.RequestIDFrom(r.Context()))
+				next(w, r)
+				return
+			}
+			if stored != nil {
+				w.Header().Set("Idempotent-Replay", "true")
+				httpserver.WriteJSON(w, stored.status, json.RawMessage(stored.body))
+				return
+			}
+
+			recorder := &bodyRecorder{ResponseWriter: w, status: http.StatusOK}
+			next(recorder, r)
+			if recorder.status >= 200 && recorder.status < 300 {
+				completeUserIdempotencyKey(r.Context(), deps, user.ID, key, endpoint, recorder.status, recorder.buf.Bytes())
+				return
+			}
+			releaseUserIdempotencyKey(r.Context(), deps, user.ID, key, endpoint)
 		}
 	}
 }
@@ -232,6 +306,56 @@ func releaseIdempotencyKey(ctx context.Context, deps Deps, workspaceID, key, end
 		  AND response_status IS NULL
 	`, workspaceID, endpoint, key); err != nil {
 		deps.Logger.Error("releasing idempotency key failed", "error", err)
+	}
+}
+
+func claimUserIdempotencyKey(ctx context.Context, pool *database.Pool, userID, key, endpoint string, fingerprint []byte) (*storedResponse, error) {
+	var inserted string
+	err := pool.QueryRow(ctx, `
+		INSERT INTO user_idempotency_keys
+			(id, user_id, key, endpoint, request_fingerprint, expires_at)
+		VALUES ($1, $2, $3, $4, $5, now() + $6::interval)
+		ON CONFLICT (user_id, endpoint, key) DO NOTHING
+		RETURNING id
+	`, ids.New(ids.PrefixIdempotency), userID, key, endpoint, fingerprint, idempotencyWindow.String()).Scan(&inserted)
+	if err == nil {
+		return nil, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("api: claim user idempotency key: %w", err)
+	}
+	var existingFingerprint []byte
+	var status *int
+	var body []byte
+	err = pool.QueryRow(ctx, `SELECT request_fingerprint, response_status, response_body FROM user_idempotency_keys WHERE user_id=$1 AND endpoint=$2 AND key=$3`, userID, endpoint, key).Scan(&existingFingerprint, &status, &body)
+	if err != nil {
+		return nil, fmt.Errorf("api: read user idempotency key: %w", err)
+	}
+	if !bytes.Equal(existingFingerprint, fingerprint) {
+		return nil, errIdempotencyMismatch
+	}
+	if status == nil {
+		return nil, errIdempotencyInFlight
+	}
+	return &storedResponse{status: *status, body: body}, nil
+}
+
+func completeUserIdempotencyKey(ctx context.Context, deps Deps, userID, key, endpoint string, status int, body []byte) {
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if !json.Valid(body) {
+		body = []byte("null")
+	}
+	if _, err := deps.Pool.Exec(writeCtx, `UPDATE user_idempotency_keys SET response_status=$4,response_body=$5 WHERE user_id=$1 AND endpoint=$2 AND key=$3`, userID, endpoint, key, status, body); err != nil {
+		deps.Logger.Error("recording user idempotent response failed", "error", err)
+	}
+}
+
+func releaseUserIdempotencyKey(ctx context.Context, deps Deps, userID, key, endpoint string) {
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if _, err := deps.Pool.Exec(writeCtx, `DELETE FROM user_idempotency_keys WHERE user_id=$1 AND endpoint=$2 AND key=$3 AND response_status IS NULL`, userID, endpoint, key); err != nil {
+		deps.Logger.Error("releasing user idempotency key failed", "error", err)
 	}
 }
 
