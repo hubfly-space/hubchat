@@ -107,6 +107,16 @@ type ResponseInput struct {
 	AgentID        string         `json:"agent_id"`
 }
 
+type Summary struct {
+	SurveyID      string           `json:"survey_id"`
+	Type          string           `json:"type"`
+	ResponseCount int64            `json:"response_count"`
+	AverageScore  *float64         `json:"average_score,omitempty"`
+	NPS           *float64         `json:"nps,omitempty"`
+	CommentCount  int64            `json:"comment_count"`
+	Distribution  map[string]int64 `json:"distribution"`
+}
+
 func New(pool *database.Pool) *Service { return &Service{pool: pool} }
 
 func (s *Service) Create(ctx context.Context, workspaceID string, input Input) (*Survey, error) {
@@ -299,6 +309,53 @@ func (s *Service) ListResponses(ctx context.Context, workspaceID, surveyID strin
 		result = append(result, item)
 	}
 	return result, rows.Err()
+}
+
+func (s *Service) Summary(ctx context.Context, workspaceID, surveyID string) (*Summary, error) {
+	survey, err := s.Get(ctx, workspaceID, surveyID)
+	if err != nil {
+		return nil, err
+	}
+	result := &Summary{SurveyID: survey.ID, Type: survey.Type, Distribution: map[string]int64{}}
+	if err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE submitted_at IS NOT NULL), avg(score) FILTER (WHERE submitted_at IS NOT NULL),
+		       count(*) FILTER (WHERE submitted_at IS NOT NULL AND comment IS NOT NULL AND comment <> '')
+		FROM survey_responses WHERE workspace_id=$1 AND survey_id=$2
+	`, workspaceID, surveyID).Scan(&result.ResponseCount, &result.AverageScore, &result.CommentCount); err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT score::text, count(*) FROM survey_responses WHERE workspace_id=$1 AND survey_id=$2 AND submitted_at IS NOT NULL AND score IS NOT NULL GROUP BY score ORDER BY score`, workspaceID, surveyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var promoters, detractors, scored int64
+	for rows.Next() {
+		var score string
+		var count int64
+		if err := rows.Scan(&score, &count); err != nil {
+			return nil, err
+		}
+		result.Distribution[score] = count
+		scored += count
+		var numeric float64
+		if _, scanErr := fmt.Sscan(score, &numeric); scanErr == nil {
+			switch {
+			case numeric >= 9:
+				promoters += count
+			case numeric <= 6:
+				detractors += count
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if survey.Type == "nps" && scored > 0 {
+		value := float64(promoters-detractors) * 100 / float64(scored)
+		result.NPS = &value
+	}
+	return result, nil
 }
 
 func (s *Service) questions(ctx context.Context, surveyID string) ([]Question, error) {

@@ -258,6 +258,81 @@ func (s *Service) SetPolicyEnabled(ctx context.Context, workspaceID, id string, 
 	return s.GetPolicy(ctx, workspaceID, id)
 }
 
+// UpdatePolicy replaces the mutable policy configuration in one transaction.
+// Targets are replaced together with the policy row so a failed validation or
+// insert cannot leave a policy with only part of its priority matrix.
+func (s *Service) UpdatePolicy(ctx context.Context, workspaceID, id string, input PolicyInput) (*Policy, error) {
+	if strings.TrimSpace(input.Name) == "" {
+		return nil, ErrInvalidName
+	}
+	if input.WarningThresholdPercent < 1 || input.WarningThresholdPercent > 100 {
+		return nil, ErrInvalidTarget
+	}
+	if input.PauseStates == nil {
+		input.PauseStates = []string{}
+	}
+	for _, target := range input.Targets {
+		if !priorities[target.Priority] {
+			return nil, ErrInvalidTarget
+		}
+		if (target.FirstResponseMinutes != nil && *target.FirstResponseMinutes < 0) ||
+			(target.NextResponseMinutes != nil && *target.NextResponseMinutes < 0) ||
+			(target.ResolutionMinutes != nil && *target.ResolutionMinutes < 0) {
+			return nil, ErrInvalidTarget
+		}
+	}
+	actions, err := json.Marshal(input.EscalationActions)
+	if err != nil {
+		return nil, fmt.Errorf("sla: encode escalation actions: %w", err)
+	}
+	applies, err := json.Marshal(input.AppliesTo)
+	if err != nil {
+		return nil, fmt.Errorf("sla: encode policy scope: %w", err)
+	}
+	var calendar any
+	if strings.TrimSpace(input.CalendarID) != "" {
+		calendar = strings.TrimSpace(input.CalendarID)
+	}
+	err = database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		if calendar != nil {
+			var exists bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM business_hour_calendars WHERE workspace_id=$1 AND id=$2)`, workspaceID, calendar).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				return ErrNotFound
+			}
+		}
+		result, err := tx.Exec(ctx, `
+			UPDATE sla_policies SET name=$3,description=NULLIF($4,''),calendar_id=$5,
+				pause_states=$6,warning_threshold_percent=$7,escalation_actions=$8::jsonb,
+				applies_to=$9::jsonb,enabled=COALESCE($10,enabled),updated_at=now()
+			WHERE workspace_id=$1 AND id=$2
+		`, workspaceID, id, strings.TrimSpace(input.Name), strings.TrimSpace(input.Description), calendar, input.PauseStates, input.WarningThresholdPercent, actions, applies, input.Enabled)
+		if err != nil {
+			return err
+		}
+		if result.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		if input.Targets != nil {
+			if _, err := tx.Exec(ctx, `DELETE FROM sla_policy_targets WHERE policy_id=$1`, id); err != nil {
+				return err
+			}
+			for _, target := range input.Targets {
+				if _, err := tx.Exec(ctx, `INSERT INTO sla_policy_targets(id,policy_id,priority,first_response_minutes,next_response_minutes,resolution_minutes) VALUES($1,$2,$3,$4,$5,$6)`, ids.New(ids.PrefixSLATarget), id, target.Priority, target.FirstResponseMinutes, target.NextResponseMinutes, target.ResolutionMinutes); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("sla: update policy: %w", err)
+	}
+	return s.GetPolicy(ctx, workspaceID, id)
+}
+
 func (s *Service) holidays(ctx context.Context, calendarID string) ([]Holiday, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id,name,date::text FROM calendar_holidays WHERE calendar_id=$1 ORDER BY date`, calendarID)
 	if err != nil {

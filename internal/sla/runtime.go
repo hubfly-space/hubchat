@@ -42,6 +42,147 @@ type Instance struct {
 	RunningSince   *time.Time `json:"running_since,omitempty"`
 }
 
+// SubjectSLA is the compact SLA view embedded in conversation and ticket
+// responses. The durable instances remain the source of truth; this shape is
+// deliberately limited to the fields the inbox and ticket list need to render
+// countdowns without exposing internal timer columns.
+type SubjectSLA struct {
+	PolicyID               string
+	State                  string
+	FirstResponseRemaining *int64
+	NextResponseRemaining  *int64
+	ResolutionRemaining    *int64
+}
+
+type subjectSLARow struct {
+	SubjectID      string
+	PolicyID       string
+	Kind           string
+	State          string
+	TargetMinutes  int
+	ElapsedMinutes int
+	DeadlineAt     *time.Time
+	WarnedAt       *time.Time
+}
+
+// ConversationSLAs returns the currently outstanding timers for a page of
+// conversations. The subject IDs and workspace are both part of the query so
+// this helper cannot accidentally leak another tenant's timers.
+func (s *Service) ConversationSLAs(ctx context.Context, workspaceID string, ids []string) (map[string]*SubjectSLA, error) {
+	return s.subjectSLAs(ctx, workspaceID, "conversation_id", ids)
+}
+
+// TicketSLAs returns the currently outstanding timers for a page of tickets.
+func (s *Service) TicketSLAs(ctx context.Context, workspaceID string, ids []string) (map[string]*SubjectSLA, error) {
+	return s.subjectSLAs(ctx, workspaceID, "ticket_id", ids)
+}
+
+func (s *Service) ConversationSLA(ctx context.Context, workspaceID, id string) (*SubjectSLA, error) {
+	items, err := s.ConversationSLAs(ctx, workspaceID, []string{id})
+	if err != nil {
+		return nil, err
+	}
+	return items[id], nil
+}
+
+func (s *Service) TicketSLA(ctx context.Context, workspaceID, id string) (*SubjectSLA, error) {
+	items, err := s.TicketSLAs(ctx, workspaceID, []string{id})
+	if err != nil {
+		return nil, err
+	}
+	return items[id], nil
+}
+
+func (s *Service) subjectSLAs(ctx context.Context, workspaceID, subjectColumn string, ids []string) (map[string]*SubjectSLA, error) {
+	result := make(map[string]*SubjectSLA)
+	if len(ids) == 0 {
+		return result, nil
+	}
+
+	// subjectColumn is selected only from the two literals above; it is not
+	// caller input and is safe to interpolate into this otherwise parameterized
+	// query.
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
+		SELECT %s,policy_id,kind,state,target_minutes,elapsed_minutes,deadline_at,warned_at
+		FROM sla_instances
+		WHERE workspace_id=$1 AND %s=ANY($2::text[])
+		  AND state IN ('active','paused','breached')
+		ORDER BY %s,id`, subjectColumn, subjectColumn, subjectColumn), workspaceID, ids)
+	if err != nil {
+		return nil, fmt.Errorf("sla: list subject timers: %w", err)
+	}
+	defer rows.Close()
+
+	now := time.Now().UTC()
+	for rows.Next() {
+		var row subjectSLARow
+		if err := rows.Scan(&row.SubjectID, &row.PolicyID, &row.Kind, &row.State,
+			&row.TargetMinutes, &row.ElapsedMinutes, &row.DeadlineAt, &row.WarnedAt); err != nil {
+			return nil, fmt.Errorf("sla: scan subject timer: %w", err)
+		}
+		mergeSubjectSLA(result, row, now)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sla: list subject timers: %w", err)
+	}
+	return result, nil
+}
+
+func mergeSubjectSLA(result map[string]*SubjectSLA, row subjectSLARow, now time.Time) {
+	state := subjectSLAState(row)
+	item := result[row.SubjectID]
+	if item == nil {
+		item = &SubjectSLA{PolicyID: row.PolicyID, State: state}
+		result[row.SubjectID] = item
+	} else {
+		if slaStateRank(state) > slaStateRank(item.State) {
+			item.State = state
+		}
+		if item.PolicyID == "" {
+			item.PolicyID = row.PolicyID
+		}
+	}
+
+	remaining := subjectSLARemaining(row, now)
+	switch row.Kind {
+	case "first_response":
+		item.FirstResponseRemaining = &remaining
+	case "next_response":
+		item.NextResponseRemaining = &remaining
+	case "resolution":
+		item.ResolutionRemaining = &remaining
+	}
+}
+
+func subjectSLAState(row subjectSLARow) string {
+	if row.State == "active" && row.WarnedAt != nil {
+		return "approaching"
+	}
+	return row.State
+}
+
+func subjectSLARemaining(row subjectSLARow, now time.Time) int64 {
+	if row.DeadlineAt != nil && row.State != "paused" {
+		return int64(row.DeadlineAt.Sub(now).Seconds())
+	}
+	return int64(row.TargetMinutes-row.ElapsedMinutes) * 60
+}
+
+func slaStateRank(state string) int {
+	switch state {
+	case "breached":
+		return 4
+	case "approaching":
+		return 3
+	case "active":
+		return 2
+	case "paused":
+		return 1
+	default:
+		return 0
+	}
+}
+
 type runtimePolicy struct {
 	pauseStates []string
 	warning     int
@@ -50,21 +191,26 @@ type runtimePolicy struct {
 }
 
 // ListInstances is intentionally a bounded operational read. The dashboard
-// can filter state and subject without ever receiving another workspace's
-// timers.
-func (s *Service) ListInstances(ctx context.Context, workspaceID, state string, limit int) ([]Instance, error) {
-	if limit <= 0 || limit > 200 {
+// can filter state and page through one workspace's timers without ever
+// receiving another workspace's timers.
+func (s *Service) ListInstances(ctx context.Context, workspaceID, state string, before time.Time, beforeID string, limit int) ([]Instance, error) {
+	if limit <= 0 || limit > 201 {
 		limit = 100
 	}
-	rows, err := s.pool.Query(ctx, `
+	query := `
 		SELECT id,workspace_id,policy_id,conversation_id,ticket_id,kind,state,
 		       target_minutes,elapsed_minutes,deadline_at,paused_at,paused_reason,
 		       started_at,satisfied_at,breached_at,warned_at,running_since
 		FROM sla_instances
-		WHERE workspace_id=$1 AND ($2='' OR state=$2)
-		ORDER BY CASE WHEN state='breached' THEN 0 WHEN state='active' THEN 1 ELSE 2 END,
-		         COALESCE(deadline_at, started_at), id
-		LIMIT $3`, workspaceID, state, limit)
+		WHERE workspace_id=$1 AND ($2='' OR state=$2)`
+	args := []any{workspaceID, state}
+	if !before.IsZero() {
+		query += ` AND (started_at,id)<($3,$4)`
+		args = append(args, before, beforeID)
+	}
+	query += ` ORDER BY started_at DESC,id DESC LIMIT $` + fmt.Sprint(len(args)+1)
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("sla: list instances: %w", err)
 	}
