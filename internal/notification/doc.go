@@ -2,7 +2,9 @@
 //
 // # Responsibilities
 //
-// Preference resolution, digest batching, quiet hours, and fan-out to in-app, email, and browser channels.
+// Preference resolution and event-backed fan-out to the durable notification
+// inbox. Email-enabled alerts are also handed to the durable email job queue;
+// browser adapters and digest/quiet-hour policies remain separate work.
 //
 // # Boundary
 //

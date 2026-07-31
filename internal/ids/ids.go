@@ -125,6 +125,7 @@ const (
 	PrefixIntegration     = "itg"
 	PrefixMailbox         = "mbx"
 	PrefixEmailMessage    = "eml"
+	PrefixEmailDelivery   = "edl"
 	PrefixFile            = "fil"
 	PrefixJob             = "job"
 	PrefixJobAttempt      = "jat"

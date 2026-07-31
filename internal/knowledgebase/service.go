@@ -373,6 +373,21 @@ func (s *Service) SearchPublished(ctx context.Context, workspaceID, kbSlug, quer
 	return result, nil
 }
 
+// ListPublished returns the small ordered article set used by surface
+// bootstraps. Unlike SearchPublished it does not write a search analytics row
+// for an empty query on every widget or portal load.
+func (s *Service) ListPublished(ctx context.Context, workspaceID, language string, limit int) ([]Article, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	rows, err := s.pool.Query(ctx, `SELECT id,workspace_id,knowledge_base_id,collection_id,title,slug,excerpt,body,state,language,author_id,seo,view_count,helpful_count,unhelpful_count,version,scheduled_at,published_at,created_at,updated_at FROM articles WHERE workspace_id=$1 AND state='published' AND ($2='' OR language=$2) ORDER BY published_at DESC,id DESC LIMIT $3`, workspaceID, language, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanArticles(rows)
+}
+
 func scanArticles(rows pgx.Rows) ([]Article, error) {
 	result := make([]Article, 0)
 	for rows.Next() {

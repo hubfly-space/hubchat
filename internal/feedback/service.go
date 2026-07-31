@@ -26,6 +26,7 @@ var (
 	ErrInvalidType      = errors.New("feedback: invalid item type")
 	ErrVotingDisabled   = errors.New("feedback: voting is disabled")
 	ErrAlreadyVoted     = errors.New("feedback: customer has already voted for this item")
+	ErrCustomerRequired = errors.New("feedback: customer authentication is required")
 	ErrVoteLimit        = errors.New("feedback: customer vote limit reached")
 	ErrCommentsDisabled = errors.New("feedback: comments are disabled")
 	ErrInvalidComment   = errors.New("feedback: comment must not be empty")
@@ -58,25 +59,26 @@ type Board struct {
 	UpdatedAt        time.Time `json:"updated_at"`
 }
 type Item struct {
-	ID              string    `json:"id"`
-	WorkspaceID     string    `json:"workspace_id"`
-	BoardID         string    `json:"board_id"`
-	Title           string    `json:"title"`
-	Description     string    `json:"description"`
-	Type            string    `json:"type"`
-	Status          string    `json:"status"`
-	Visibility      string    `json:"visibility"`
-	SubmitterID     *string   `json:"submitter_id,omitempty"`
-	CompanyID       *string   `json:"company_id,omitempty"`
-	ProductArea     *string   `json:"product_area,omitempty"`
-	Priority        *string   `json:"priority,omitempty"`
-	VoteCount       int       `json:"vote_count"`
-	CommentCount    int       `json:"comment_count"`
-	SubscriberCount int       `json:"subscriber_count"`
-	ViewerHasVoted  bool      `json:"viewer_has_voted"`
-	MergedIntoID    *string   `json:"merged_into_id,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID               string    `json:"id"`
+	WorkspaceID      string    `json:"workspace_id"`
+	BoardID          string    `json:"board_id"`
+	Title            string    `json:"title"`
+	Description      string    `json:"description"`
+	Type             string    `json:"type"`
+	Status           string    `json:"status"`
+	Visibility       string    `json:"visibility"`
+	SubmitterID      *string   `json:"submitter_id,omitempty"`
+	CompanyID        *string   `json:"company_id,omitempty"`
+	ProductArea      *string   `json:"product_area,omitempty"`
+	Priority         *string   `json:"priority,omitempty"`
+	VoteCount        int       `json:"vote_count"`
+	CommentCount     int       `json:"comment_count"`
+	SubscriberCount  int       `json:"subscriber_count"`
+	ViewerHasVoted   bool      `json:"viewer_has_voted"`
+	ViewerSubscribed bool      `json:"viewer_subscribed"`
+	MergedIntoID     *string   `json:"merged_into_id,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 type Comment struct {
 	ID             string    `json:"id"`
@@ -233,7 +235,7 @@ func (s *Service) ListItems(ctx context.Context, workspaceID, boardID, status, s
 	if sort == "recent" {
 		order = `created_at DESC`
 	}
-	rows, err := s.pool.Query(ctx, `SELECT i.id,i.workspace_id,i.board_id,i.title,i.description,i.type,i.status,i.visibility,i.submitter_id,i.company_id,i.product_area,i.priority,i.vote_count,i.comment_count,i.subscriber_count,i.merged_into_id,EXISTS(SELECT 1 FROM feedback_votes v WHERE v.item_id=i.id AND v.customer_id=$5),i.created_at,i.updated_at FROM feedback_items i WHERE i.workspace_id=$1 AND i.board_id=$2 AND i.merged_into_id IS NULL AND ($3='' OR i.status=$3) AND ($4='' OR i.title ILIKE '%'||$4||'%' OR i.description ILIKE '%'||$4||'%') ORDER BY `+order+` LIMIT $6`, workspaceID, boardID, status, strings.TrimSpace(query), customerID, limit)
+	rows, err := s.pool.Query(ctx, `SELECT i.id,i.workspace_id,i.board_id,i.title,i.description,i.type,i.status,i.visibility,i.submitter_id,i.company_id,i.product_area,i.priority,i.vote_count,i.comment_count,i.subscriber_count,i.merged_into_id,EXISTS(SELECT 1 FROM feedback_votes v WHERE v.item_id=i.id AND v.customer_id=$5),EXISTS(SELECT 1 FROM feedback_subscriptions fs WHERE fs.item_id=i.id AND fs.customer_id=$5),i.created_at,i.updated_at FROM feedback_items i WHERE i.workspace_id=$1 AND i.board_id=$2 AND i.merged_into_id IS NULL AND ($3='' OR i.status=$3) AND ($4='' OR i.title ILIKE '%'||$4||'%' OR i.description ILIKE '%'||$4||'%') ORDER BY `+order+` LIMIT $6`, workspaceID, boardID, status, strings.TrimSpace(query), customerID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +247,7 @@ func (s *Service) ListRoadmapItems(ctx context.Context, workspaceID, status stri
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
-	rows, err := s.pool.Query(ctx, `SELECT i.id,i.workspace_id,i.board_id,i.title,i.description,i.type,i.status,i.visibility,i.submitter_id,i.company_id,i.product_area,i.priority,i.vote_count,i.comment_count,i.subscriber_count,i.merged_into_id,false,i.created_at,i.updated_at FROM feedback_items i JOIN feedback_boards b ON b.id=i.board_id AND b.workspace_id=i.workspace_id WHERE i.workspace_id=$1 AND b.visibility='public' AND i.merged_into_id IS NULL AND ($2='' OR i.status=$2) ORDER BY CASE i.status WHEN 'in_progress' THEN 1 WHEN 'planned' THEN 2 WHEN 'completed' THEN 3 ELSE 4 END,i.vote_count DESC,i.created_at DESC LIMIT $3`, workspaceID, status, limit)
+	rows, err := s.pool.Query(ctx, `SELECT i.id,i.workspace_id,i.board_id,i.title,i.description,i.type,i.status,i.visibility,i.submitter_id,i.company_id,i.product_area,i.priority,i.vote_count,i.comment_count,i.subscriber_count,i.merged_into_id,false,false,i.created_at,i.updated_at FROM feedback_items i JOIN feedback_boards b ON b.id=i.board_id AND b.workspace_id=i.workspace_id WHERE i.workspace_id=$1 AND b.visibility='public' AND i.merged_into_id IS NULL AND ($2='' OR i.status=$2) ORDER BY CASE i.status WHEN 'in_progress' THEN 1 WHEN 'planned' THEN 2 WHEN 'completed' THEN 3 ELSE 4 END,i.vote_count DESC,i.created_at DESC LIMIT $3`, workspaceID, status, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -254,7 +256,7 @@ func (s *Service) ListRoadmapItems(ctx context.Context, workspaceID, status stri
 }
 
 func (s *Service) GetItem(ctx context.Context, workspaceID, id, customerID string) (*Item, error) {
-	rows, err := s.pool.Query(ctx, `SELECT i.id,i.workspace_id,i.board_id,i.title,i.description,i.type,i.status,i.visibility,i.submitter_id,i.company_id,i.product_area,i.priority,i.vote_count,i.comment_count,i.subscriber_count,i.merged_into_id,EXISTS(SELECT 1 FROM feedback_votes v WHERE v.item_id=i.id AND v.customer_id=$3),i.created_at,i.updated_at FROM feedback_items i WHERE i.workspace_id=$1 AND i.id=$2`, workspaceID, id, customerID)
+	rows, err := s.pool.Query(ctx, `SELECT i.id,i.workspace_id,i.board_id,i.title,i.description,i.type,i.status,i.visibility,i.submitter_id,i.company_id,i.product_area,i.priority,i.vote_count,i.comment_count,i.subscriber_count,i.merged_into_id,EXISTS(SELECT 1 FROM feedback_votes v WHERE v.item_id=i.id AND v.customer_id=$3),EXISTS(SELECT 1 FROM feedback_subscriptions fs WHERE fs.item_id=i.id AND fs.customer_id=$3),i.created_at,i.updated_at FROM feedback_items i WHERE i.workspace_id=$1 AND i.id=$2`, workspaceID, id, customerID)
 	if err != nil {
 		return nil, err
 	}
@@ -267,6 +269,56 @@ func (s *Service) GetItem(ctx context.Context, workspaceID, id, customerID strin
 		return nil, ErrNotFound
 	}
 	return &items[0], nil
+}
+
+// Subscribe follows a public feedback item for the authenticated customer.
+// The customer/workspace join is deliberately checked while the item row is
+// locked so a customer from another workspace cannot create a cross-tenant
+// subscription or affect the denormalized counter.
+func (s *Service) Subscribe(ctx context.Context, workspaceID, itemID, customerID string) error {
+	if strings.TrimSpace(customerID) == "" {
+		return ErrCustomerRequired
+	}
+	return database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		var lockedID string
+		if err := tx.QueryRow(ctx, `SELECT i.id FROM feedback_items i JOIN customers c ON c.id=$3 AND c.workspace_id=i.workspace_id WHERE i.workspace_id=$1 AND i.id=$2 FOR UPDATE`, workspaceID, itemID, customerID).Scan(&lockedID); errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		result, err := tx.Exec(ctx, `INSERT INTO feedback_subscriptions(item_id,customer_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, itemID, customerID)
+		if err != nil {
+			return err
+		}
+		if result.RowsAffected() == 1 {
+			_, err = tx.Exec(ctx, `UPDATE feedback_items SET subscriber_count=subscriber_count+1,updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, itemID)
+		}
+		return err
+	})
+}
+
+// Unsubscribe stops feedback status notifications for the authenticated
+// customer. It is idempotent so retries cannot make the counter negative.
+func (s *Service) Unsubscribe(ctx context.Context, workspaceID, itemID, customerID string) error {
+	if strings.TrimSpace(customerID) == "" {
+		return ErrCustomerRequired
+	}
+	return database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		var lockedID string
+		if err := tx.QueryRow(ctx, `SELECT i.id FROM feedback_items i JOIN customers c ON c.id=$3 AND c.workspace_id=i.workspace_id WHERE i.workspace_id=$1 AND i.id=$2 FOR UPDATE`, workspaceID, itemID, customerID).Scan(&lockedID); errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		result, err := tx.Exec(ctx, `DELETE FROM feedback_subscriptions WHERE item_id=$1 AND customer_id=$2`, itemID, customerID)
+		if err != nil {
+			return err
+		}
+		if result.RowsAffected() == 1 {
+			_, err = tx.Exec(ctx, `UPDATE feedback_items SET subscriber_count=GREATEST(0,subscriber_count-1),updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, itemID)
+		}
+		return err
+	})
 }
 
 func (s *Service) SetStatus(ctx context.Context, workspaceID, itemID, memberID, status, note string) (*Item, error) {
@@ -286,7 +338,7 @@ func (s *Service) SetStatus(ctx context.Context, workspaceID, itemID, memberID, 
 		if _, err := tx.Exec(ctx, `INSERT INTO feedback_status_history(id,item_id,from_status,to_status,note,actor_id) VALUES($1,$2,NULLIF($3,''),$4,NULLIF($5,''),NULLIF($6,''))`, ids.New(ids.PrefixStatusHistory), itemID, from, status, note, memberID); err != nil {
 			return err
 		}
-		if s.events != nil {
+		if s.events != nil && from != status {
 			if _, err := s.events.Append(ctx, tx, events.Event{WorkspaceID: workspaceID, Type: events.FeedbackStatusChanged, EntityType: "feedback_item", EntityID: itemID, ActorType: events.ActorUser, ActorID: memberID, Data: map[string]any{"from": from, "to": status}}); err != nil {
 				return err
 			}
@@ -394,7 +446,7 @@ func scanItems(rows pgx.Rows) ([]Item, error) {
 	result := make([]Item, 0)
 	for rows.Next() {
 		var item Item
-		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.BoardID, &item.Title, &item.Description, &item.Type, &item.Status, &item.Visibility, &item.SubmitterID, &item.CompanyID, &item.ProductArea, &item.Priority, &item.VoteCount, &item.CommentCount, &item.SubscriberCount, &item.MergedIntoID, &item.ViewerHasVoted, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.BoardID, &item.Title, &item.Description, &item.Type, &item.Status, &item.Visibility, &item.SubmitterID, &item.CompanyID, &item.ProductArea, &item.Priority, &item.VoteCount, &item.CommentCount, &item.SubscriberCount, &item.MergedIntoID, &item.ViewerHasVoted, &item.ViewerSubscribed, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, item)
