@@ -1,0 +1,241 @@
+{
+  "openapi": "3.1.0",
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "info": {
+    "title": "Hubchat API",
+    "version": "1.0.0",
+    "description": "The versioned, workspace-scoped REST contract for Hubchat. Browser sessions use cookies; server integrations use a workspace-scoped API key as a Bearer token."
+  },
+  "servers": [{ "url": "/api", "description": "The Hubchat API mounted by the application" }],
+  "externalDocs": { "description": "API conventions and compatibility policy", "url": "/docs/api-conventions.md" },
+  "security": [{ "bearerAuth": [] }],
+  "tags": [
+    { "name": "Conversations", "description": "Shared inbox conversations and messages" },
+    { "name": "Tickets", "description": "Tracked support requests" },
+    { "name": "Customers", "description": "Customer records and events" },
+    { "name": "Files", "description": "Authorized attachment storage" },
+    { "name": "Forms", "description": "Structured forms and submissions" },
+    { "name": "Feedback", "description": "Boards, ideas, votes, and subscriptions" },
+    { "name": "Knowledge base", "description": "Articles, collections, and public search" },
+    { "name": "Surveys", "description": "Survey delivery and response collection" },
+    { "name": "Automation", "description": "Deterministic rules, macros, and saved replies" },
+    { "name": "SLA", "description": "Calendars, policies, and timer instances" },
+    { "name": "Integrations", "description": "API keys, webhooks, and event delivery" },
+    { "name": "Analytics", "description": "Metric definitions, rollups, and reports" },
+    { "name": "Portability", "description": "Workspace export and import jobs" },
+    { "name": "Portal", "description": "Customer portal sessions and profile" }
+  ],
+  "paths": {
+    "/v1/meta": {
+      "get": { "operationId": "getMeta", "security": [], "tags": ["Integrations"], "responses": { "200": { "$ref": "#/components/responses/Json" } } }
+    },
+    "/v1/conversations": {
+      "get": { "$ref": "#/components/operations/list" , "operationId": "listConversations", "tags": ["Conversations"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createConversation", "tags": ["Conversations"] }
+    },
+    "/v1/conversations/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/get", "operationId": "getConversation", "tags": ["Conversations"] },
+      "patch": { "$ref": "#/components/operations/update", "operationId": "updateConversation", "tags": ["Conversations"] }
+    },
+    "/v1/conversations/{id}/messages": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/list", "operationId": "listConversationMessages", "tags": ["Conversations"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createConversationMessage", "tags": ["Conversations"] }
+    },
+    "/v1/tickets": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listTickets", "tags": ["Tickets"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createTicket", "tags": ["Tickets"] }
+    },
+    "/v1/tickets/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/get", "operationId": "getTicket", "tags": ["Tickets"] },
+      "patch": { "$ref": "#/components/operations/update", "operationId": "updateTicket", "tags": ["Tickets"] }
+    },
+    "/v1/customers": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listCustomers", "tags": ["Customers"] }
+    },
+    "/v1/customers/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/get", "operationId": "getCustomer", "tags": ["Customers"] },
+      "patch": { "$ref": "#/components/operations/update", "operationId": "updateCustomer", "tags": ["Customers"] }
+    },
+    "/v1/events": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listEvents", "tags": ["Customers"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createEvent", "tags": ["Customers"] }
+    },
+    "/v1/files": {
+      "post": {
+        "operationId": "uploadFile", "tags": ["Files"], "requestBody": { "required": true, "content": { "multipart/form-data": { "schema": { "type": "object", "required": ["file"], "properties": { "file": { "type": "string", "format": "binary" }, "owner_type": { "type": "string" }, "owner_id": { "$ref": "#/components/schemas/Id" } } } } } },
+        "responses": { "201": { "$ref": "#/components/responses/Json" }, "default": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/v1/files/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "operationId": "downloadFile", "tags": ["Files"], "responses": { "200": { "description": "Binary file contents", "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } } }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/forms": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listForms", "tags": ["Forms"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createForm", "tags": ["Forms"] }
+    },
+    "/v1/forms/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/get", "operationId": "getForm", "tags": ["Forms"] },
+      "patch": { "$ref": "#/components/operations/update", "operationId": "updateForm", "tags": ["Forms"] },
+      "delete": { "$ref": "#/components/operations/delete", "operationId": "deleteForm", "tags": ["Forms"] }
+    },
+    "/v1/public/forms/{workspaceID}/{slug}": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceID" }, { "$ref": "#/components/parameters/Slug" }],
+      "get": { "$ref": "#/components/operations/publicGet", "operationId": "getPublicForm", "security": [], "tags": ["Forms"] }
+    },
+    "/v1/public/forms/{workspaceID}/{slug}/submissions": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceID" }, { "$ref": "#/components/parameters/Slug" }],
+      "post": { "$ref": "#/components/operations/publicCreate", "operationId": "submitPublicForm", "security": [], "tags": ["Forms"] }
+    },
+    "/v1/feedback/boards": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listFeedbackBoards", "tags": ["Feedback"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createFeedbackBoard", "tags": ["Feedback"] }
+    },
+    "/v1/feedback/boards/{id}/items": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/list", "operationId": "listFeedbackItems", "tags": ["Feedback"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createFeedbackItem", "tags": ["Feedback"] }
+    },
+    "/v1/public/feedback/{workspaceID}/boards/{slug}/items": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceID" }, { "$ref": "#/components/parameters/Slug" }],
+      "get": { "$ref": "#/components/operations/publicList", "operationId": "listPublicFeedbackItems", "security": [], "tags": ["Feedback"] },
+      "post": { "$ref": "#/components/operations/publicCreate", "operationId": "createPublicFeedbackItem", "security": [], "tags": ["Feedback"] }
+    },
+    "/v1/public/feedback/{workspaceID}/items/{id}/subscription": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceID" }, { "$ref": "#/components/parameters/Id" }],
+      "post": { "$ref": "#/components/operations/publicCreate", "operationId": "subscribeToFeedbackItem", "security": [], "tags": ["Feedback"] },
+      "delete": { "$ref": "#/components/operations/publicDelete", "operationId": "unsubscribeFromFeedbackItem", "security": [], "tags": ["Feedback"] }
+    },
+    "/v1/knowledge-bases": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listKnowledgeBases", "tags": ["Knowledge base"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createKnowledgeBase", "tags": ["Knowledge base"] }
+    },
+    "/v1/articles": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listArticles", "tags": ["Knowledge base"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createArticle", "tags": ["Knowledge base"] }
+    },
+    "/v1/articles/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/get", "operationId": "getArticle", "tags": ["Knowledge base"] },
+      "patch": { "$ref": "#/components/operations/update", "operationId": "updateArticle", "tags": ["Knowledge base"] }
+    },
+    "/v1/public/knowledge-bases/{workspaceID}/search": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceID" }],
+      "get": { "$ref": "#/components/operations/publicList", "operationId": "searchPublicArticles", "security": [], "tags": ["Knowledge base"] }
+    },
+    "/v1/surveys": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listSurveys", "tags": ["Surveys"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createSurvey", "tags": ["Surveys"] }
+    },
+    "/v1/surveys/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/get", "operationId": "getSurvey", "tags": ["Surveys"] },
+      "patch": { "$ref": "#/components/operations/update", "operationId": "updateSurvey", "tags": ["Surveys"] }
+    },
+    "/v1/public/surveys/{workspaceID}/{id}/responses": {
+      "parameters": [{ "$ref": "#/components/parameters/WorkspaceID" }, { "$ref": "#/components/parameters/Id" }],
+      "post": { "$ref": "#/components/operations/publicCreate", "operationId": "submitSurveyResponse", "security": [], "tags": ["Surveys"] }
+    },
+    "/v1/automation/rules": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listAutomationRules", "tags": ["Automation"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createAutomationRule", "tags": ["Automation"] }
+    },
+    "/v1/automation/rules/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/get", "operationId": "getAutomationRule", "tags": ["Automation"] },
+      "patch": { "$ref": "#/components/operations/update", "operationId": "updateAutomationRule", "tags": ["Automation"] }
+    },
+    "/v1/automation/executions": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listAutomationExecutions", "tags": ["Automation"] }
+    },
+    "/v1/sla/calendars": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listSLACalendars", "tags": ["SLA"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createSLACalendar", "tags": ["SLA"] }
+    },
+    "/v1/sla/policies": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listSLAPolicies", "tags": ["SLA"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createSLAPolicy", "tags": ["SLA"] }
+    },
+    "/v1/sla/instances": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listSLAInstances", "tags": ["SLA"] }
+    },
+    "/v1/api-keys": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listAPIKeys", "tags": ["Integrations"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createAPIKey", "tags": ["Integrations"] }
+    },
+    "/v1/webhooks": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listWebhooks", "tags": ["Integrations"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createWebhook", "tags": ["Integrations"] }
+    },
+    "/v1/analytics/metrics": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listMetricDefinitions", "tags": ["Analytics"] }
+    },
+    "/v1/analytics/summary": {
+      "get": { "$ref": "#/components/operations/get", "operationId": "getAnalyticsSummary", "tags": ["Analytics"] }
+    },
+    "/v1/analytics/rollups": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listAnalyticsRollups", "tags": ["Analytics"] }
+    },
+    "/v1/reports": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listReports", "tags": ["Analytics"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createReport", "tags": ["Analytics"] }
+    },
+    "/v1/portability/exports": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listExports", "tags": ["Portability"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createExport", "tags": ["Portability"] }
+    },
+    "/v1/portability/imports": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listImports", "tags": ["Portability"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createImport", "tags": ["Portability"] }
+    },
+    "/v1/portal/me": {
+      "get": { "operationId": "getPortalProfile", "security": [{ "portalCookie": [] }], "tags": ["Portal"], "responses": { "200": { "$ref": "#/components/responses/Json" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "patch": { "$ref": "#/components/operations/portalUpdate", "operationId": "updatePortalProfile", "security": [{ "portalCookie": [] }], "tags": ["Portal"] }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "hc_live_...", "description": "Workspace-scoped API key. The complete token is shown only once." },
+      "portalCookie": { "type": "apiKey", "in": "cookie", "name": "hubchat_portal_session", "description": "HttpOnly customer portal session cookie." }
+    },
+    "parameters": {
+      "Id": { "name": "id", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Id" } },
+      "WorkspaceID": { "name": "workspaceID", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Id" } },
+      "Slug": { "name": "slug", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$" } },
+      "Cursor": { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Opaque cursor returned as next_cursor." },
+      "Limit": { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } },
+      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": false, "schema": { "type": "string", "minLength": 8 }, "description": "Recommended for every retryable create or action." }
+    },
+    "operations": {
+      "list": { "summary": "List resources", "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/Limit" }], "responses": { "200": { "$ref": "#/components/responses/Json" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "get": { "summary": "Get a resource", "responses": { "200": { "$ref": "#/components/responses/Json" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "create": { "summary": "Create a resource", "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "201": { "$ref": "#/components/responses/Json" }, "202": { "$ref": "#/components/responses/Json" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "update": { "summary": "Update a resource", "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "200": { "$ref": "#/components/responses/Json" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "delete": { "summary": "Delete a resource", "responses": { "204": { "description": "Deleted" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "publicGet": { "summary": "Read a published resource", "responses": { "200": { "$ref": "#/components/responses/Json" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "publicList": { "summary": "List published resources", "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/Limit" }], "responses": { "200": { "$ref": "#/components/responses/Json" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "publicCreate": { "summary": "Create or submit a public resource", "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }], "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "200": { "$ref": "#/components/responses/Json" }, "201": { "$ref": "#/components/responses/Json" }, "202": { "$ref": "#/components/responses/Json" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "publicDelete": { "summary": "Remove a public subscription", "responses": { "200": { "$ref": "#/components/responses/Json" }, "default": { "$ref": "#/components/responses/Error" } } },
+      "portalUpdate": { "summary": "Update customer profile or communication preferences", "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "200": { "$ref": "#/components/responses/Json" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "requestBodies": {
+      "Json": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } }
+    },
+    "responses": {
+      "Json": { "description": "JSON response", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } },
+      "Error": { "description": "The standard Hubchat error envelope", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+    },
+    "schemas": {
+      "Id": { "type": "string", "pattern": "^[a-z][a-z0-9]*_[0-9a-z]+$", "description": "Opaque prefixed Hubchat identifier; never parse it." },
+      "Error": { "type": "object", "required": ["error"], "properties": { "error": { "$ref": "#/components/schemas/ErrorBody" } } },
+      "ErrorBody": { "type": "object", "required": ["code", "message", "request_id"], "properties": { "code": { "type": "string" }, "message": { "type": "string" }, "request_id": { "$ref": "#/components/schemas/Id" }, "details": { "type": "object", "additionalProperties": true } } },
+      "Page": { "type": "object", "required": ["data", "has_more", "next_cursor"], "properties": { "data": { "type": "array", "items": {} }, "has_more": { "type": "boolean" }, "next_cursor": { "type": ["string", "null"] } } },
+      "EventEnvelope": { "type": "object", "required": ["id", "type", "workspace_id", "occurred_at", "sequence", "data"], "properties": { "id": { "$ref": "#/components/schemas/Id" }, "type": { "type": "string" }, "workspace_id": { "$ref": "#/components/schemas/Id" }, "occurred_at": { "type": "string", "format": "date-time" }, "sequence": { "type": "integer", "format": "int64" }, "data": { "type": "object", "additionalProperties": true } } }
+    }
+  }
+}

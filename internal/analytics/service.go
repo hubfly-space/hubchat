@@ -17,6 +17,34 @@ import (
 var ErrInvalidReportName = errors.New("analytics: report name is required")
 
 type Service struct{ pool *database.Pool }
+type MetricDefinition struct {
+	Metric     string `json:"metric"`
+	Label      string `json:"label"`
+	Definition string `json:"definition"`
+	Unit       string `json:"unit,omitempty"`
+}
+
+type Summary struct {
+	ConversationsCreated  int64     `json:"conversations_created"`
+	TicketsCreated        int64     `json:"tickets_created"`
+	MessagesReceived      int64     `json:"messages_received"`
+	MessagesSent          int64     `json:"messages_sent"`
+	ConversationsResolved int64     `json:"conversations_resolved"`
+	TicketsResolved       int64     `json:"tickets_resolved"`
+	TicketsReopened       int64     `json:"tickets_reopened"`
+	BacklogConversations  int64     `json:"backlog_conversations"`
+	BacklogTickets        int64     `json:"backlog_tickets"`
+	FirstResponseSeconds  float64   `json:"first_response_seconds"`
+	ResolutionSeconds     float64   `json:"resolution_seconds"`
+	SLACompliancePercent  float64   `json:"sla_compliance_percent"`
+	SLAInstances          int64     `json:"sla_instances"`
+	SLAMet                int64     `json:"sla_met"`
+	SLABreached           int64     `json:"sla_breached"`
+	From                  time.Time `json:"from"`
+	To                    time.Time `json:"to"`
+	Timezone              string    `json:"timezone"`
+	ComputedAt            time.Time `json:"computed_at"`
+}
 type Rollup struct {
 	Metric     string         `json:"metric"`
 	Grain      string         `json:"grain"`
@@ -49,6 +77,90 @@ type ReportInput struct {
 }
 
 func New(pool *database.Pool) *Service { return &Service{pool: pool} }
+
+var metricDefinitions = []MetricDefinition{
+	{Metric: "conversations.created", Label: "Conversations created", Definition: "Conversations created in the selected period, grouped by channel."},
+	{Metric: "tickets.created", Label: "Tickets created", Definition: "Tickets created in the selected period."},
+	{Metric: "messages.received", Label: "Messages received", Definition: "Customer replies recorded in the selected period."},
+	{Metric: "messages.sent", Label: "Messages sent", Definition: "Agent and automation replies recorded in the selected period."},
+	{Metric: "conversations.resolved", Label: "Conversations resolved", Definition: "Conversations transitioned to resolved in the selected period."},
+	{Metric: "tickets.resolved", Label: "Tickets resolved", Definition: "Tickets transitioned to resolved or closed in the selected period."},
+	{Metric: "support.first_response_seconds", Label: "First response", Definition: "Average elapsed wall-clock time from the first customer reply to the first agent reply in each conversation.", Unit: "seconds"},
+	{Metric: "support.resolution_seconds", Label: "Resolution time", Definition: "Average elapsed wall-clock time from ticket creation to its first resolution timestamp.", Unit: "seconds"},
+	{Metric: "sla.compliance_percent", Label: "SLA compliance", Definition: "SLA instances satisfied divided by all met or breached instances in the selected period.", Unit: "percent"},
+	{Metric: "support.backlog", Label: "Backlog", Definition: "Open conversations and tickets at the end of the selected period."},
+}
+
+func (s *Service) MetricDefinitions() []MetricDefinition {
+	result := make([]MetricDefinition, len(metricDefinitions))
+	copy(result, metricDefinitions)
+	return result
+}
+
+func (s *Service) Summary(ctx context.Context, workspaceID string, from, to time.Time) (*Summary, error) {
+	if to.IsZero() {
+		to = time.Now().UTC()
+	}
+	if from.IsZero() {
+		from = to.AddDate(0, 0, -30)
+	}
+	if !from.Before(to) {
+		return nil, errors.New("analytics: from must be before to")
+	}
+	result := &Summary{From: from, To: to, Timezone: "UTC", ComputedAt: time.Now().UTC()}
+	queries := []struct {
+		dest  *int64
+		query string
+	}{
+		{&result.ConversationsCreated, `SELECT count(*) FROM conversations WHERE workspace_id=$1 AND created_at >= $2 AND created_at < $3`},
+		{&result.TicketsCreated, `SELECT count(*) FROM tickets WHERE workspace_id=$1 AND created_at >= $2 AND created_at < $3`},
+		{&result.MessagesReceived, `SELECT count(*) FROM messages WHERE workspace_id=$1 AND kind='reply' AND author_type='customer' AND created_at >= $2 AND created_at < $3`},
+		{&result.MessagesSent, `SELECT count(*) FROM messages WHERE workspace_id=$1 AND kind='reply' AND author_type IN ('agent','automation') AND created_at >= $2 AND created_at < $3`},
+		{&result.ConversationsResolved, `SELECT count(*) FROM conversation_status_history h JOIN conversations c ON c.id=h.conversation_id AND c.workspace_id=$1 WHERE h.to_state='resolved' AND h.occurred_at >= $2 AND h.occurred_at < $3`},
+		{&result.TicketsResolved, `SELECT count(*) FROM ticket_status_history h JOIN tickets t ON t.id=h.ticket_id AND t.workspace_id=$1 WHERE h.to_status IN ('resolved','closed') AND h.occurred_at >= $2 AND h.occurred_at < $3`},
+		{&result.TicketsReopened, `SELECT count(*) FROM ticket_status_history h JOIN tickets t ON t.id=h.ticket_id AND t.workspace_id=$1 WHERE h.from_status IN ('resolved','closed') AND h.to_status NOT IN ('resolved','closed') AND h.occurred_at >= $2 AND h.occurred_at < $3`},
+		{&result.BacklogConversations, `SELECT count(*) FROM conversations WHERE workspace_id=$1 AND created_at < $3 AND state NOT IN ('resolved','closed','spam')`},
+		{&result.BacklogTickets, `SELECT count(*) FROM tickets WHERE workspace_id=$1 AND created_at < $3 AND status NOT IN ('resolved','closed')`},
+	}
+	for _, item := range queries {
+		if err := s.pool.QueryRow(ctx, item.query, workspaceID, from, to).Scan(item.dest); err != nil {
+			return nil, fmt.Errorf("analytics: summary count: %w", err)
+		}
+	}
+	if err := s.pool.QueryRow(ctx, `
+		SELECT COALESCE(avg(extract(epoch FROM (reply.created_at - first_message.created_at))),0)::float8
+		FROM (
+			SELECT conversation_id, min(created_at) AS created_at
+			FROM messages
+			WHERE workspace_id=$1 AND kind='reply' AND author_type='customer' AND created_at >= $2 AND created_at < $3
+			GROUP BY conversation_id
+		) first_message
+		JOIN LATERAL (
+			SELECT created_at FROM messages m
+			WHERE m.workspace_id=$1 AND m.conversation_id=first_message.conversation_id AND m.kind='reply' AND m.author_type IN ('agent','automation') AND m.created_at > first_message.created_at
+			ORDER BY m.created_at, m.id LIMIT 1
+		) reply ON true
+	`, workspaceID, from, to).Scan(&result.FirstResponseSeconds); err != nil {
+		return nil, fmt.Errorf("analytics: first response: %w", err)
+	}
+	if err := s.pool.QueryRow(ctx, `
+		SELECT COALESCE(avg(extract(epoch FROM (first_resolved_at - created_at))),0)::float8
+		FROM tickets WHERE workspace_id=$1 AND first_resolved_at >= $2 AND first_resolved_at < $3 AND first_resolved_at IS NOT NULL
+	`, workspaceID, from, to).Scan(&result.ResolutionSeconds); err != nil {
+		return nil, fmt.Errorf("analytics: resolution: %w", err)
+	}
+	if err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE state='met'), count(*) FILTER (WHERE state='breached')
+		FROM sla_instances WHERE workspace_id=$1 AND COALESCE(satisfied_at, breached_at) >= $2 AND COALESCE(satisfied_at, breached_at) < $3
+	`, workspaceID, from, to).Scan(&result.SLAMet, &result.SLABreached); err != nil {
+		return nil, fmt.Errorf("analytics: sla: %w", err)
+	}
+	result.SLAInstances = result.SLAMet + result.SLABreached
+	if result.SLAInstances > 0 {
+		result.SLACompliancePercent = float64(result.SLAMet) * 100 / float64(result.SLAInstances)
+	}
+	return result, nil
+}
 
 const JobRollup = "analytics.rollup"
 
@@ -111,26 +223,28 @@ func (s *Service) FoldWorkspace(ctx context.Context, workspaceID string, now tim
 			return count, err
 		}
 		last = record.Sequence
-		metric, dimensions, ok := metricForEvent(record)
-		if !ok {
+		metrics := metricsForEvent(record)
+		if len(metrics) == 0 {
 			continue
 		}
 		bucket := time.Date(record.OccurredAt.UTC().Year(), record.OccurredAt.UTC().Month(), record.OccurredAt.UTC().Day(), 0, 0, 0, 0, time.UTC)
-		encoded, err := json.Marshal(dimensions)
-		if err != nil {
-			rows.Close()
-			return count, err
-		}
-		if _, err := tx.Exec(ctx, `
+		for _, metric := range metrics {
+			encoded, err := json.Marshal(metric.dimensions)
+			if err != nil {
+				rows.Close()
+				return count, err
+			}
+			if _, err := tx.Exec(ctx, `
 			INSERT INTO report_rollups(id,workspace_id,metric,grain,bucket,dimensions,value,count,computed_at)
 			VALUES($1,$2,$3,'day',$4,$5::jsonb,1,1,$6)
 			ON CONFLICT (workspace_id,metric,grain,bucket,dimensions) DO UPDATE SET
 				value=report_rollups.value+1,count=report_rollups.count+1,computed_at=EXCLUDED.computed_at`,
-			ids.New(ids.PrefixRollup), workspaceID, metric, bucket, encoded, now); err != nil {
-			rows.Close()
-			return count, err
+				ids.New(ids.PrefixRollup), workspaceID, metric.name, bucket, encoded, now); err != nil {
+				rows.Close()
+				return count, err
+			}
+			count++
 		}
-		count++
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -152,6 +266,19 @@ func (s *Service) FoldWorkspace(ctx context.Context, workspaceID string, now tim
 }
 
 func metricForEvent(record events.Record) (string, map[string]any, bool) {
+	metrics := metricsForEvent(record)
+	if len(metrics) == 0 {
+		return "", nil, false
+	}
+	return metrics[0].name, metrics[0].dimensions, true
+}
+
+type eventMetric struct {
+	name       string
+	dimensions map[string]any
+}
+
+func metricsForEvent(record events.Record) []eventMetric {
 	var data struct {
 		Channel    string `json:"channel"`
 		AuthorType string `json:"author_type"`
@@ -163,26 +290,50 @@ func metricForEvent(record events.Record) (string, map[string]any, bool) {
 		if data.Channel != "" {
 			dimensions["channel"] = data.Channel
 		}
-		return "conversations.created", dimensions, true
+		result := []eventMetric{{name: "conversations.created", dimensions: dimensions}}
+		if data.Channel == "widget" || data.Channel == "portal" {
+			result = append(result, eventMetric{name: "surfaces." + data.Channel + ".conversations_started", dimensions: map[string]any{}})
+		}
+		return result
 	case events.TicketCreated:
-		return "tickets.created", dimensions, true
+		return []eventMetric{{name: "tickets.created", dimensions: dimensions}}
 	case events.MessageCreated:
 		if data.AuthorType == "customer" {
-			return "messages.received", dimensions, true
+			return []eventMetric{{name: "messages.received", dimensions: dimensions}}
 		}
-		return "messages.sent", dimensions, true
+		return []eventMetric{{name: "messages.sent", dimensions: dimensions}}
+	case events.ConversationResolved:
+		return []eventMetric{{name: "conversations.resolved", dimensions: dimensions}}
+	case events.ConversationStateSet:
+		var state struct{ From, To string }
+		_ = json.Unmarshal(record.Data, &state)
+		if state.From == "resolved" && state.To != "resolved" {
+			return []eventMetric{{name: "conversations.reopened", dimensions: dimensions}}
+		}
+		return nil
+	case events.TicketStateSet:
+		var state struct{ From, To string }
+		_ = json.Unmarshal(record.Data, &state)
+		result := []eventMetric{}
+		if state.To == "resolved" || state.To == "closed" {
+			result = append(result, eventMetric{name: "tickets.resolved", dimensions: dimensions})
+		}
+		if (state.From == "resolved" || state.From == "closed") && state.To != "resolved" && state.To != "closed" {
+			result = append(result, eventMetric{name: "tickets.reopened", dimensions: dimensions})
+		}
+		return result
 	case events.FeedbackCreated:
-		return "feedback.created", dimensions, true
+		return []eventMetric{{name: "feedback.created", dimensions: dimensions}}
 	case events.SurveyResponseCreated:
-		return "surveys.responses", dimensions, true
+		return []eventMetric{{name: "surveys.responses", dimensions: dimensions}}
 	case events.FormSubmitted:
-		return "forms.submitted", dimensions, true
+		return []eventMetric{{name: "forms.submitted", dimensions: dimensions}}
 	case events.SLAApproaching:
-		return "sla.approaching", dimensions, true
+		return []eventMetric{{name: "sla.approaching", dimensions: dimensions}}
 	case events.SLABreached:
-		return "sla.breached", dimensions, true
+		return []eventMetric{{name: "sla.breached", dimensions: dimensions}}
 	default:
-		return "", nil, false
+		return nil
 	}
 }
 func (s *Service) Rollups(ctx context.Context, workspaceID, metric, grain string, from, to time.Time) ([]Rollup, error) {

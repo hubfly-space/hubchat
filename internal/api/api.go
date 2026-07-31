@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hubchat/hubchat/embedded"
 	"github.com/hubchat/hubchat/internal/analytics"
 	"github.com/hubchat/hubchat/internal/apikey"
 	"github.com/hubchat/hubchat/internal/audit"
@@ -114,6 +115,11 @@ func New(deps Deps) http.Handler {
 
 	mux.HandleFunc("GET /v1/meta", func(w http.ResponseWriter, r *http.Request) {
 		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"version": "v1", "surface": "api"})
+	})
+	mux.HandleFunc("GET /v1/openapi.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(embedded.OpenAPI())
 	})
 
 	registerAuthRoutes(mux, deps)
