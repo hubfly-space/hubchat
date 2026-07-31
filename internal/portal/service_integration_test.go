@@ -67,9 +67,42 @@ func TestCustomerProfileAndNotificationPreferencesAreScoped(t *testing.T) {
 	if changed.FeedbackUpdates || changed.Changelog || !changed.TicketStatus || !changed.Surveys {
 		t.Fatalf("partial preference update overwrote defaults: %+v", changed)
 	}
-
 	if _, err := svc.Preferences(ctx, ids.New(ids.PrefixWorkspace), customerID); !errors.Is(err, portal.ErrCustomerNotFound) {
 		t.Fatalf("expected wrong-workspace lookup to be hidden, got %v", err)
 	}
+}
 
+func TestUpdateReplacesNavigationWithinWorkspace(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id, name, slug) VALUES ('wrk_portal_update', 'Portal Update', 'portal-update')`); err != nil {
+		t.Fatal(err)
+	}
+
+	service := portal.New(pool, portal.Options{})
+	created, err := service.Create(ctx, "wrk_portal_update", portal.CreateRequest{Name: "Customer help", Subdomain: "help"})
+	if err != nil {
+		t.Fatalf("create portal: %v", err)
+	}
+	navigation := []portal.NavigationItem{
+		{Label: "Requests", Href: "/tickets"},
+		{Label: "Status", Href: "https://status.example.com", External: true},
+	}
+	updated, err := service.Update(ctx, "wrk_portal_update", created.ID, portal.UpdateRequest{Navigation: &navigation})
+	if err != nil {
+		t.Fatalf("update portal: %v", err)
+	}
+	if len(updated.Navigation) != len(navigation) {
+		t.Fatalf("navigation length = %d, want %d", len(updated.Navigation), len(navigation))
+	}
+	for i, item := range navigation {
+		if updated.Navigation[i].Label != item.Label || updated.Navigation[i].Href != item.Href || updated.Navigation[i].External != item.External {
+			t.Fatalf("navigation[%d] = %+v, want %+v", i, updated.Navigation[i], item)
+		}
+	}
+
+	if _, err := service.Update(ctx, "other-workspace", created.ID, portal.UpdateRequest{Navigation: &navigation}); !errors.Is(err, portal.ErrNotFound) {
+		t.Fatalf("cross-workspace update error = %v, want ErrNotFound", err)
+	}
 }

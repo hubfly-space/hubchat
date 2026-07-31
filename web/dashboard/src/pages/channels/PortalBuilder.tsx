@@ -143,14 +143,10 @@ export default function PortalBuilder() {
                         />
                       </SettingsRow>
                       <SettingsRow label="Logo" description="SVG or PNG, at least 128px tall.">
-                        <Button variant="secondary" size="sm">
-                          Upload logo
-                        </Button>
+                        <Input inputSize="sm" value={draft.theme.logo_url ?? ""} onChange={(event) => setTheme("logo_url", event.target.value || null)} placeholder="https://cdn.example.com/logo.svg" aria-label="Logo URL" />
                       </SettingsRow>
                       <SettingsRow label="Favicon">
-                        <Button variant="secondary" size="sm">
-                          Upload favicon
-                        </Button>
+                        <Input inputSize="sm" value={draft.theme.favicon_url ?? ""} onChange={(event) => setTheme("favicon_url", event.target.value || null)} placeholder="https://cdn.example.com/favicon.png" aria-label="Favicon URL" />
                       </SettingsRow>
                     </CardBody>
                   </Card>
@@ -225,18 +221,19 @@ export default function PortalBuilder() {
                       {draft.navigation.map((item) => (
                         <div key={item.id} className="flex items-center gap-2">
                           <GripVertical aria-hidden="true" className="size-3.5 shrink-0 text-fg-disabled" />
-                          <Input inputSize="sm" defaultValue={item.label} aria-label="Link label" />
-                          <Input inputSize="sm" mono defaultValue={item.href} aria-label="Link target" />
+                          <Input inputSize="sm" value={item.label} onChange={(event) => updateNavigation(item.id, { label: event.target.value })} aria-label="Link label" />
+                          <Input inputSize="sm" mono value={item.href} onChange={(event) => updateNavigation(item.id, { href: event.target.value })} aria-label="Link target" />
                           <Button
                             variant="ghost"
                             size="sm"
                             iconOnly
                             aria-label={`Remove ${item.label}`}
                             leading={<Trash2 />}
+                            onClick={() => setDraft((current) => current ? { ...current, navigation: current.navigation.filter((candidate) => candidate.id !== item.id) } : current)}
                           />
                         </div>
                       ))}
-                      <Button variant="secondary" size="sm" leading={<Plus />}>
+                      <Button variant="secondary" size="sm" leading={<Plus />} onClick={() => setDraft((current) => current ? { ...current, navigation: [...current.navigation, { id: `nav_${crypto.randomUUID()}`, label: "New link", href: "/", external: false }] } : current)}>
                         Add link
                       </Button>
                     </CardBody>
@@ -261,7 +258,8 @@ export default function PortalBuilder() {
                           key={method.value}
                           label={method.label}
                           description={method.detail}
-                          defaultChecked={draft.auth_methods.includes(method.value)}
+                          checked={draft.auth_methods.includes(method.value)}
+                          onCheckedChange={(checked) => setAuthMethod(method.value, checked === true)}
                         />
                       ))}
                     </CardBody>
@@ -277,17 +275,19 @@ export default function PortalBuilder() {
                       <Switch
                         label="See every ticket linked to their email"
                         description="Off means they only see tickets created while signed in."
-                        defaultChecked={draft.permissions.view_tickets_by_email}
+                        checked={draft.permissions.view_tickets_by_email}
+                        onCheckedChange={(checked) => setPermission("view_tickets_by_email", checked === true)}
                       />
                       <Switch
                         label="See their company's tickets"
                         description="Anyone at the same verified domain can read the account's tickets. Consider carefully for shared inboxes."
-                        defaultChecked={draft.permissions.view_company_tickets}
+                        checked={draft.permissions.view_company_tickets}
+                        onCheckedChange={(checked) => setPermission("view_company_tickets", checked === true)}
                       />
-                      <Switch label="Reopen resolved tickets" defaultChecked={draft.permissions.reopen_resolved} />
-                      <Switch label="Edit ticket fields" defaultChecked={draft.permissions.edit_fields} />
-                      <Switch label="Add other participants" defaultChecked={draft.permissions.add_participants} />
-                      <Switch label="Download transcripts" defaultChecked={draft.permissions.download_transcript} />
+                      <Switch label="Reopen resolved tickets" checked={draft.permissions.reopen_resolved} onCheckedChange={(checked) => setPermission("reopen_resolved", checked === true)} />
+                      <Switch label="Edit ticket fields" checked={draft.permissions.edit_fields} onCheckedChange={(checked) => setPermission("edit_fields", checked === true)} />
+                      <Switch label="Add other participants" checked={draft.permissions.add_participants} onCheckedChange={(checked) => setPermission("add_participants", checked === true)} />
+                      <Switch label="Download transcripts" checked={draft.permissions.download_transcript} onCheckedChange={(checked) => setPermission("download_transcript", checked === true)} />
                     </CardBody>
                   </Card>
                 </Section>
@@ -298,7 +298,7 @@ export default function PortalBuilder() {
                   <Card>
                     <CardBody>
                       <Field label="Subdomain" description="Always available as a fallback.">
-                        <Input inputSize="md" defaultValue={draft.subdomain} suffix=".hubchat.app" />
+                        <Input inputSize="md" value={draft.subdomain} onChange={(event) => setDraft((current) => current ? { ...current, subdomain: event.target.value } : current)} suffix=".hubchat.app" />
                       </Field>
                     </CardBody>
                   </Card>
@@ -308,20 +308,14 @@ export default function PortalBuilder() {
                   <Card>
                     <CardBody>
                       <Field label="Domain">
-                        <Input inputSize="md" mono defaultValue={draft.custom_domain ?? ""} prefix="https://" />
+                        <Input inputSize="md" mono value={draft.custom_domain ?? ""} prefix="https://" readOnly disabled />
                       </Field>
 
-                      <Callout tone={draft.domain_status === "active" ? "success" : "warning"} className="mt-4">
-                        {draft.domain_status === "active"
-                          ? "DNS verified and a certificate has been issued. Traffic is being served."
-                          : "Add the record below, then verification runs automatically every few minutes."}
+                      <Callout tone="info" className="mt-4">
+                        Custom-domain provisioning is not available through this builder yet. The
+                        Hubchat subdomain above remains the active portal URL; this field is shown
+                        for visibility and does not make DNS changes.
                       </Callout>
-
-                      <CodeBlock
-                        className="mt-3"
-                        language="dns"
-                        code={`CNAME  ${draft.custom_domain ?? "help.example.com"}  →  ${draft.subdomain}.hubchat.app`}
-                      />
                     </CardBody>
                   </Card>
                 </Section>
@@ -332,7 +326,7 @@ export default function PortalBuilder() {
                       title="Disable this portal"
                       description="Customers see a maintenance notice. Ticket data is untouched."
                       actions={
-                        <Button variant="danger" size="sm">
+                        <Button variant="danger" size="sm" onClick={() => setDisableOpen(true)}>
                           Disable
                         </Button>
                       }
@@ -409,6 +403,25 @@ export default function PortalBuilder() {
           </div>
         </aside>
       </div>
+      <ConfirmDialog
+        open={discardOpen}
+        onOpenChange={setDiscardOpen}
+        title="Discard unsaved portal changes?"
+        description="The builder will return to the last version saved on the server. This only discards local edits; it does not remove the portal."
+        confirmLabel="Discard changes"
+        destructive
+        onConfirm={discardChanges}
+      />
+      <ConfirmDialog
+        open={disableOpen}
+        onOpenChange={setDisableOpen}
+        title="Disable this portal?"
+        description="Customers will see a maintenance response until the portal is enabled again. Existing tickets and customer data remain unchanged."
+        confirmLabel="Disable portal"
+        destructive
+        loading={save.isPending}
+        onConfirm={() => void save.mutate({ enabled: false }).then(() => setDisableOpen(false)).catch(() => {})}
+      />
     </Page>
   );
 }
