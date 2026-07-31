@@ -417,12 +417,16 @@ func (s *Service) CreateReport(ctx context.Context, workspaceID, ownerID string,
 		input.DateRange = "last_30_days"
 	}
 	definition, _ := json.Marshal(input.Definition)
+	visibleToRoles := input.VisibleToRoles
+	if visibleToRoles == nil {
+		visibleToRoles = []string{}
+	}
 	var owner any
 	if ownerID != "" {
 		owner = ownerID
 	}
 	id := ids.New(ids.PrefixSavedReport)
-	_, err := s.pool.Exec(ctx, `INSERT INTO saved_reports(id,workspace_id,name,description,definition,date_range,timezone,visible_to_roles,owner_id) VALUES($1,$2,$3,NULLIF($4,''),$5::jsonb,$6,NULLIF($7,''),$8,$9)`, id, workspaceID, strings.TrimSpace(input.Name), strings.TrimSpace(input.Description), definition, input.DateRange, strings.TrimSpace(input.Timezone), input.VisibleToRoles, owner)
+	_, err := s.pool.Exec(ctx, `INSERT INTO saved_reports(id,workspace_id,name,description,definition,date_range,timezone,visible_to_roles,owner_id) VALUES($1,$2,$3,NULLIF($4,''),$5::jsonb,$6,NULLIF($7,''),$8,$9)`, id, workspaceID, strings.TrimSpace(input.Name), strings.TrimSpace(input.Description), definition, input.DateRange, strings.TrimSpace(input.Timezone), visibleToRoles, owner)
 	if err != nil {
 		return nil, err
 	}

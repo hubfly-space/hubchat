@@ -273,9 +273,22 @@
     "/v1/analytics/rollups": {
       "get": { "$ref": "#/components/operations/list", "operationId": "listAnalyticsRollups", "tags": ["Analytics"] }
     },
+    "/v1/analytics/export.csv": {
+      "get": { "operationId": "exportAnalyticsCsv", "tags": ["Analytics"], "responses": { "200": { "description": "Workspace-scoped analytics CSV", "content": { "text/csv": { "schema": { "type": "string" } } } }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
     "/v1/reports": {
       "get": { "$ref": "#/components/operations/list", "operationId": "listReports", "tags": ["Analytics"] },
       "post": { "$ref": "#/components/operations/create", "operationId": "createReport", "tags": ["Analytics"] }
+    },
+    "/v1/reports/{id}/schedules": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/list", "operationId": "listReportSchedules", "tags": ["Analytics"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createReportSchedule", "tags": ["Analytics"] }
+    },
+    "/v1/reports/{id}/schedules/{scheduleID}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }, { "name": "scheduleID", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Id" } }],
+      "patch": { "$ref": "#/components/operations/update", "operationId": "updateReportSchedule", "tags": ["Analytics"] },
+      "delete": { "$ref": "#/components/operations/delete", "operationId": "deleteReportSchedule", "tags": ["Analytics"] }
     },
     "/v1/portability/exports": {
       "get": { "$ref": "#/components/operations/list", "operationId": "listExports", "tags": ["Portability"] },
