@@ -16,6 +16,11 @@ should send an `Idempotency-Key`. Successful replays include
 `Idempotent-Replay: true`; reuse with a different body is rejected, and
 concurrent attempts return `409 idempotency_in_flight`.
 
+The `GET /api/v1/customers/export` and `GET /api/v1/companies/export` endpoints
+return authenticated, workspace-scoped CSV snapshots. Customer exports require
+the `customer.read_sensitive` capability and are capped at 10,000 rows; use the
+background portability archive for larger or complete workspace transfers.
+
 The checked-in document is generated from
 [`openapi.template.json`](../embedded/openapi.template.json) with
 `node scripts/generate-openapi.mjs`; `make openapi-check` validates the

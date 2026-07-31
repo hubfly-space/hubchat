@@ -357,6 +357,30 @@
         ]
       }
     },
+    "/v1/customers/export": {
+      "get": {
+        "summary": "Export customers as CSV",
+        "operationId": "exportCustomers",
+        "tags": [
+          "Customers"
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace-scoped customer CSV",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/v1/customers/{id}": {
       "parameters": [
         {
@@ -446,6 +470,30 @@
         "tags": [
           "Customers"
         ]
+      }
+    },
+    "/v1/companies/export": {
+      "get": {
+        "summary": "Export companies as CSV",
+        "operationId": "exportCompanies",
+        "tags": [
+          "Customers"
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace-scoped company CSV",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/v1/files": {

@@ -55,6 +55,9 @@
     "/v1/customers": {
       "get": { "$ref": "#/components/operations/list", "operationId": "listCustomers", "tags": ["Customers"] }
     },
+    "/v1/customers/export": {
+      "get": { "summary": "Export customers as CSV", "operationId": "exportCustomers", "tags": ["Customers"], "responses": { "200": { "description": "Workspace-scoped customer CSV", "content": { "text/csv": { "schema": { "type": "string" } } } }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
     "/v1/customers/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/Id" }],
       "get": { "$ref": "#/components/operations/get", "operationId": "getCustomer", "tags": ["Customers"] },
@@ -63,6 +66,9 @@
     "/v1/events": {
       "get": { "$ref": "#/components/operations/list", "operationId": "listEvents", "tags": ["Customers"] },
       "post": { "$ref": "#/components/operations/create", "operationId": "createEvent", "tags": ["Customers"] }
+    },
+    "/v1/companies/export": {
+      "get": { "summary": "Export companies as CSV", "operationId": "exportCompanies", "tags": ["Customers"], "responses": { "200": { "description": "Workspace-scoped company CSV", "content": { "text/csv": { "schema": { "type": "string" } } } }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/v1/files": {
       "post": {

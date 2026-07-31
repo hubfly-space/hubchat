@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/csv"
 	"net/http"
 	"strconv"
 	"strings"
@@ -16,6 +17,8 @@ func registerCompanyRoutes(mux *http.ServeMux, deps Deps) {
 	idempotent := Idempotency(deps)
 	mux.HandleFunc("GET /v1/companies",
 		requireCapability(deps, authorization.CustomerRead, handleListCompanies(deps)))
+	mux.HandleFunc("GET /v1/companies/export",
+		requireCapability(deps, authorization.CustomerRead, handleExportCompanies(deps)))
 	mux.HandleFunc("POST /v1/companies",
 		requireCapability(deps, authorization.CompanyManage, idempotent(handleCreateCompany(deps))))
 	mux.HandleFunc("GET /v1/companies/{id}",
@@ -37,6 +40,31 @@ func registerCompanyRoutes(mux *http.ServeMux, deps Deps) {
 		requireCapability(deps, authorization.CompanyManage, idempotent(handleLinkCompanyCustomer(deps))))
 	mux.HandleFunc("DELETE /v1/companies/{id}/customers/{customerID}",
 		requireCapability(deps, authorization.CompanyManage, idempotent(handleUnlinkCompanyCustomer(deps))))
+}
+
+func handleExportCompanies(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		companies, err := deps.Customer.ListCompanies(r.Context(), actor.WorkspaceID, r.URL.Query().Get("q"), 10000)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not export companies.")
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="companies-export.csv"`)
+		writer := csv.NewWriter(w)
+		_ = writer.Write([]string{"ID", "Name", "Domain", "External ID", "Tier", "Owner ID", "Customer Count", "Open Ticket Count", "Created"})
+		for _, item := range companies {
+			_ = writer.Write([]string{
+				item.ID, item.Name, derefOrEmpty(item.Domain), derefOrEmpty(item.ExternalID),
+				derefOrEmpty(item.Tier), derefOrEmpty(item.OwnerID),
+				strconv.Itoa(item.CustomerCount), strconv.Itoa(item.OpenTicketCount),
+				item.CreatedAt.Format(timeFormat),
+			})
+		}
+		writer.Flush()
+	}
 }
 
 func companyJSON(c customer.Company, tagIDs []string) map[string]any {
