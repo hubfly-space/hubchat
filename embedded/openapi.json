@@ -94,6 +94,23 @@
         }
       }
     },
+    "/v1/workspace/usage": {
+      "get": {
+        "summary": "Get a resource",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "getWorkspaceUsage",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
     "/v1/conversations": {
       "get": {
         "summary": "List resources",
@@ -1589,6 +1606,88 @@
           }
         },
         "operationId": "createSLACalendar",
+        "tags": [
+          "SLA"
+        ]
+      }
+    },
+    "/v1/jobs": {
+      "get": {
+        "summary": "List resources",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "listJobs",
+        "tags": [
+          "Integrations"
+        ]
+      }
+    },
+    "/v1/jobs/summary": {
+      "get": {
+        "summary": "Get a resource",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "getJobSummary",
+        "tags": [
+          "Integrations"
+        ]
+      }
+    },
+    "/v1/sla/calendars/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        }
+      ],
+      "get": {
+        "summary": "Get a resource",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "getSLACalendar",
+        "tags": [
+          "SLA"
+        ]
+      },
+      "patch": {
+        "summary": "Update a resource",
+        "requestBody": {
+          "$ref": "#/components/requestBodies/Json"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "updateSLACalendar",
         "tags": [
           "SLA"
         ]

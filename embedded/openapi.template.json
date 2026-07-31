@@ -29,6 +29,9 @@
     "/v1/meta": {
       "get": { "operationId": "getMeta", "security": [], "tags": ["Integrations"], "responses": { "200": { "$ref": "#/components/responses/Json" } } }
     },
+    "/v1/workspace/usage": {
+      "get": { "$ref": "#/components/operations/get", "operationId": "getWorkspaceUsage", "tags": ["Analytics"] }
+    },
     "/v1/conversations": {
       "get": { "$ref": "#/components/operations/list" , "operationId": "listConversations", "tags": ["Conversations"] },
       "post": { "$ref": "#/components/operations/create", "operationId": "createConversation", "tags": ["Conversations"] }
@@ -179,6 +182,17 @@
     "/v1/sla/calendars": {
       "get": { "$ref": "#/components/operations/list", "operationId": "listSLACalendars", "tags": ["SLA"] },
       "post": { "$ref": "#/components/operations/create", "operationId": "createSLACalendar", "tags": ["SLA"] }
+    },
+    "/v1/jobs": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listJobs", "tags": ["Integrations"] }
+    },
+    "/v1/jobs/summary": {
+      "get": { "$ref": "#/components/operations/get", "operationId": "getJobSummary", "tags": ["Integrations"] }
+    },
+    "/v1/sla/calendars/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/get", "operationId": "getSLACalendar", "tags": ["SLA"] },
+      "patch": { "$ref": "#/components/operations/update", "operationId": "updateSLACalendar", "tags": ["SLA"] }
     },
     "/v1/sla/policies": {
       "get": { "$ref": "#/components/operations/list", "operationId": "listSLAPolicies", "tags": ["SLA"] },

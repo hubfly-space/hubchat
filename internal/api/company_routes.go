@@ -103,22 +103,24 @@ func handleListCompanies(deps Deps) http.HandlerFunc {
 			return
 		}
 
-		limit := 50
-		if raw := query.Get("limit"); raw != "" {
-			if parsed, err := strconv.Atoi(raw); err == nil {
-				limit = parsed
-			}
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
 		}
-		companies, err := deps.Customer.ListCompanies(r.Context(), actor.WorkspaceID, query.Get("q"), limit)
+		companies, err := deps.Customer.ListCompaniesPage(r.Context(), actor.WorkspaceID, query.Get("q"), cursor.Value, cursor.ID, limit+1)
 		if err != nil {
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load companies.")
 			return
 		}
-		out := make([]map[string]any, len(companies))
-		for i, c := range companies {
+		page := NewPage(companies, limit, func(c customer.Company) Cursor {
+			return Cursor{Value: c.Name, ID: c.ID}
+		})
+		out := make([]map[string]any, len(page.Data))
+		for i, c := range page.Data {
 			out[i] = loadCompanyJSON(r, deps, actor.WorkspaceID, c)
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+		httpserver.WriteJSON(w, http.StatusOK, Page[map[string]any]{Data: out, NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
 }
 
