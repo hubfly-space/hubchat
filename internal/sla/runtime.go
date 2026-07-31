@@ -388,6 +388,52 @@ func (s *Service) SetSubjectState(ctx context.Context, workspaceID, subjectType,
 	})
 }
 
+// PauseSubject pauses active timers without changing the conversation or
+// ticket state. Automation uses this for explicit maintenance/wait actions;
+// elapsed time is calculated with the same business-hours calendar as the
+// normal state-transition path.
+func (s *Service) PauseSubject(ctx context.Context, workspaceID, subjectType, subjectID, reason string, now time.Time) error {
+	if subjectType != "conversation" && subjectType != "ticket" {
+		return errors.New("sla: subject must be a conversation or ticket")
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	column := "conversation_id"
+	if subjectType == "ticket" {
+		column = "ticket_id"
+	}
+	return database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, fmt.Sprintf(`SELECT id,policy_id,target_minutes,elapsed_minutes,running_since FROM sla_instances WHERE workspace_id=$1 AND %s=$2 AND state='active' FOR UPDATE`, column), workspaceID, subjectID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id, policyID string
+			var target, elapsed int
+			var runningSince *time.Time
+			if err := rows.Scan(&id, &policyID, &target, &elapsed, &runningSince); err != nil {
+				return err
+			}
+			policy, err := s.loadPolicyForInstance(ctx, tx, workspaceID, policyID, target)
+			if err != nil {
+				return err
+			}
+			if runningSince != nil {
+				elapsed += int(mustElapsed(policy.calendar, *runningSince, now) / time.Minute)
+				if elapsed > target {
+					elapsed = target
+				}
+			}
+			if _, err := tx.Exec(ctx, `UPDATE sla_instances SET state='paused',elapsed_minutes=$2,running_since=NULL,deadline_at=NULL,paused_at=$3,paused_reason=NULLIF($4,'') WHERE id=$1`, id, elapsed, now, reason); err != nil {
+				return err
+			}
+		}
+		return rows.Err()
+	})
+}
+
 func (s *Service) loadPolicyForInstance(ctx context.Context, tx pgx.Tx, workspaceID, policyID string, target int) (*runtimePolicy, error) {
 	var pause []string
 	var warning int

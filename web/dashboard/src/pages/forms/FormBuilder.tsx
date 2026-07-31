@@ -1,7 +1,6 @@
 import {
   Badge,
   Button,
-  Callout,
   Card,
   CardBody,
   CardHeader,
@@ -45,7 +44,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import type { FormField } from "@hubchat/shared";
+import type { FilterCondition, FormField } from "@hubchat/shared";
 
 type LiveForm = {
   id: string;
@@ -279,13 +278,17 @@ export default function FormBuilder() {
                   <Card>
                     <CardBody>
                       {active.condition ? (
-                        <Callout tone="system">
-                          Shown when <code className="font-mono">{active.condition.field}</code>{" "}
-                          {active.condition.operator.replace(/_/g, " ")}{" "}
-                          <code className="font-mono">{String(active.condition.value)}</code>
-                        </Callout>
+                        <div className="space-y-2">
+                          <div className="grid gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
+                            <Select size="sm" aria-label="Condition field" value={active.condition.field} onValueChange={(field) => updateActiveField({ condition: { ...active.condition!, field } })} options={fields.filter((field) => field.id !== active.id).map((field) => ({ value: field.key, label: field.label }))} />
+                            <Select size="sm" aria-label="Condition operator" value={active.condition.operator} onValueChange={(operator) => updateActiveField({ condition: { ...active.condition!, operator: operator as FilterCondition["operator"] } })} options={[{ value: "is", label: "is" }, { value: "is_not", label: "is not" }, { value: "contains", label: "contains" }, { value: "is_set", label: "is set" }, { value: "is_not_set", label: "is not set" }]} />
+                            <Input inputSize="sm" aria-label="Condition value" value={String(active.condition.value ?? "")} onChange={(event) => updateActiveField({ condition: { ...active.condition!, value: event.target.value } })} />
+                            <Button variant="ghost" size="sm" onClick={() => updateActiveField({ condition: null })}>Remove</Button>
+                          </div>
+                          <p className="text-2xs text-fg-muted">Only fields above this one can be used as conditions.</p>
+                        </div>
                       ) : (
-                        <Button variant="secondary" size="sm" leading={<Plus />}>
+                        <Button variant="secondary" size="sm" leading={<Plus />} disabled={!fields.some((field) => field.id !== active.id)} onClick={() => { const source = fields.find((field) => field.id !== active.id); if (source) updateActiveField({ condition: { field: source.key, operator: "is", value: "" } }); }}>
                           Add a condition
                         </Button>
                       )}

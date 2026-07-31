@@ -77,6 +77,7 @@ const ACTION_TYPES: { value: AutomationActionType; label: string; group: string 
   { value: "start_sla", label: "Start the SLA timer", group: "Service level" },
   { value: "pause_sla", label: "Pause the SLA timer", group: "Service level" },
   { value: "close_after_inactivity", label: "Close after inactivity", group: "Lifecycle" },
+  { value: "create_task", label: "Create a task", group: "Lifecycle" },
 ];
 
 const CONDITION_FIELDS = [
@@ -111,6 +112,7 @@ export default function RuleBuilder() {
 
   type Rule = { id: string; name: string; description: string; trigger: string; conditions: { match?: "all" | "any"; conditions?: FilterCondition[] }; actions: AutomationAction[]; enabled: boolean; version: number };
   const ruleQuery = useQuery<Rule>(ruleId ? ["automation-rule", ruleId] : null, (signal) => api.get(`/automation/rules/${encodeURIComponent(ruleId ?? "")}`, { signal }), { enabled: Boolean(ruleId) });
+  const webhookQuery = useQuery<{ data: { id: string; url: string; enabled: boolean }[] }>(["webhooks"], (signal) => api.get("/webhooks", { signal }));
   const source = ruleQuery.data;
   const [name, setName] = useState(source?.name ?? "Untitled rule");
   const [trigger, setTrigger] = useState(source?.trigger ?? "conversation.created");
@@ -342,6 +344,7 @@ export default function RuleBuilder() {
                         teams={teams}
                         inboxes={inboxes}
                         tags={tags}
+                        webhooks={webhookQuery.data?.data ?? []}
                         onChange={(params) => setActions((current) => current.map((item) => item.id === action.id ? { ...item, params } : item))}
                       />
                     </div>
@@ -464,7 +467,7 @@ function Connector() {
   );
 }
 
-function ActionParams({ action, members, teams, inboxes, tags, onChange }: { action: AutomationAction; members: { id: string; name: string }[]; teams: { id: string; name: string }[]; inboxes: { id: string; name: string }[]; tags: { id: string; name: string }[]; onChange: (params: AutomationAction["params"]) => void }) {
+function ActionParams({ action, members, teams, inboxes, tags, webhooks, onChange }: { action: AutomationAction; members: { id: string; name: string }[]; teams: { id: string; name: string }[]; inboxes: { id: string; name: string }[]; tags: { id: string; name: string }[]; webhooks: { id: string; url: string; enabled: boolean }[]; onChange: (params: AutomationAction["params"]) => void }) {
   const set = (key: string, value: string | number | boolean | string[] | null) => onChange({ ...action.params, [key]: value });
   const value = (key: string) => String(action.params[key] ?? "");
   switch (action.type) {
@@ -545,22 +548,13 @@ function ActionParams({ action, members, teams, inboxes, tags, onChange }: { act
     case "send_email":
       return <div className="space-y-2"><Input inputSize="sm" value={value("to")} onChange={(event) => set("to", event.target.value)} placeholder="recipient@example.com" aria-label="Recipient" /><Input inputSize="sm" value={value("subject")} onChange={(event) => set("subject", event.target.value)} placeholder="Email subject" aria-label="Subject" /><Textarea rows={2} value={value("body")} onChange={(event) => set("body", event.target.value)} placeholder="Email body" aria-label="Email body" /></div>;
     case "invoke_webhook":
-      return (
-        <Tooltip content="Endpoints are managed in Developers → Webhooks">
-          <span>
-            <Select
-              size="sm"
-              aria-label="Webhook endpoint"
-              options={[
-                { value: "whk_ops", label: "ops.northwind.cloud/hooks/hubchat" },
-                { value: "whk_crm", label: "crm.internal.northwind.cloud/hubchat" },
-              ]}
-            />
-          </span>
-        </Tooltip>
-      );
+      return <div className="space-y-2"><Tooltip content="Endpoints are managed in Developers → Webhooks"><span><Select size="sm" aria-label="Webhook endpoint" value={value("endpoint_id")} onValueChange={(selected) => set("endpoint_id", selected)} options={webhooks.filter((endpoint) => endpoint.enabled).map((endpoint) => ({ value: endpoint.id, label: endpoint.url }))} /></span></Tooltip><Textarea rows={2} value={value("payload")} onChange={(event) => set("payload", event.target.value)} placeholder='{"source":"automation"}' aria-label="Webhook payload" /></div>;
+    case "pause_sla":
+      return <Input inputSize="sm" value={value("reason")} onChange={(event) => set("reason", event.target.value)} placeholder="Waiting for a dependency" aria-label="Pause reason" />;
     case "close_after_inactivity":
       return <Input inputSize="sm" type="number" suffix="minutes" value={value("after_minutes")} onChange={(event) => set("after_minutes", Number(event.target.value) || 0)} className="max-w-32" />;
+    case "create_task":
+      return <div className="space-y-2"><Input inputSize="sm" value={value("title")} onChange={(event) => set("title", event.target.value)} placeholder="Follow up with the customer" aria-label="Task title" /><Textarea rows={2} value={value("description")} onChange={(event) => set("description", event.target.value)} placeholder="Task details" aria-label="Task description" /><div className="flex gap-2"><Input inputSize="sm" type="number" value={value("due_after_minutes")} onChange={(event) => set("due_after_minutes", Number(event.target.value) || 0)} placeholder="Due after minutes" aria-label="Due after minutes" /><Select size="sm" aria-label="Task assignee" value={value("assignee_id")} onValueChange={(selected) => set("assignee_id", selected)} options={members.map((member) => ({ value: member.id, label: member.name }))} /></div></div>;
     default:
       return <p className="text-2xs text-fg-muted">No parameters.</p>;
   }

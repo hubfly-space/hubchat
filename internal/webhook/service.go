@@ -304,6 +304,42 @@ func (s *Service) DispatchRecord(ctx context.Context, record events.Record) erro
 	return nil
 }
 
+// EnqueueAction creates the same signed, retryable delivery used by the event
+// fan-out path for an explicit automation action. It intentionally does not
+// manufacture a workspace event: the action is already represented by the
+// automation execution, and replaying it must not recursively trigger rules.
+func (s *Service) EnqueueAction(ctx context.Context, workspaceID, endpointID string, payload any) error {
+	if s.jobs == nil {
+		return errors.New("webhook: job queue is unavailable")
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("webhook: marshal automation payload: %w", err)
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var deliveryID string
+	err = tx.QueryRow(ctx, `
+		INSERT INTO webhook_deliveries (id,workspace_id,endpoint_id,event_type,payload,max_attempts,next_attempt_at)
+		SELECT $1,e.workspace_id,'automation.action',$3,$4,$5,now()
+		FROM webhook_endpoints e
+		WHERE e.workspace_id=$2 AND e.id=$5 AND e.enabled AND e.auto_disabled_at IS NULL
+		RETURNING id`, ids.New(ids.PrefixWebhookDelivery), workspaceID, body, maxAttempts, endpointID).Scan(&deliveryID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("webhook: enqueue automation action: %w", err)
+	}
+	if _, err := jobs.EnqueueTx(ctx, tx, jobs.Spec{WorkspaceID: workspaceID, Queue: "webhooks", Type: JobDeliver, Payload: deliveryPayload{DeliveryID: deliveryID}, MaxAttempts: maxAttempts, DedupeKey: "webhook-delivery:" + deliveryID}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // RunEventConsumer follows committed event signals. The first signal starts
 // at that event, avoiding a startup burst of historical deliveries; subsequent
 // signals drain every gap. Delivery uniqueness makes restarts harmless.
