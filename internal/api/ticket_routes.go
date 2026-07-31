@@ -11,6 +11,7 @@ import (
 	"github.com/hubchat/hubchat/internal/audit"
 	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/httpserver"
+	"github.com/hubchat/hubchat/internal/sla"
 	"github.com/hubchat/hubchat/internal/ticket"
 )
 
@@ -129,6 +130,14 @@ func handleListTickets(deps Deps) http.HandlerFunc {
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load tickets.")
 			return
 		}
+		var slaByTicket map[string]*sla.SubjectSLA
+		if deps.SLA != nil {
+			slaByTicket, err = deps.SLA.TicketSLAs(r.Context(), actor.WorkspaceID, ticketIDs)
+			if err != nil {
+				httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load ticket SLA.")
+				return
+			}
+		}
 
 		out := make([]map[string]any, len(page.Data))
 		for i, t := range page.Data {
@@ -143,6 +152,9 @@ func handleListTickets(deps Deps) http.HandlerFunc {
 				return
 			}
 			out[i] = ticketJSON(t, tagsByTicket[t.ID], fieldsByTicket[t.ID], children, linkedIDs(links, t.ID), ticketViewersFor(deps, t.ID))
+			if deps.SLA != nil {
+				out[i]["sla"] = slaJSON(slaByTicket[t.ID])
+			}
 		}
 		httpserver.WriteJSON(w, http.StatusOK, Page[map[string]any]{Data: out, NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
@@ -824,7 +836,15 @@ func singleTicketJSON(r *http.Request, deps Deps, workspaceID string, t ticket.T
 	if err != nil {
 		links = []ticket.TicketLink{}
 	}
-	return ticketJSON(t, tagIDs, fieldValues, children, linkedIDs(links, t.ID), ticketViewersFor(deps, t.ID))
+	out := ticketJSON(t, tagIDs, fieldValues, children, linkedIDs(links, t.ID), ticketViewersFor(deps, t.ID))
+	if deps.SLA != nil {
+		if item, err := deps.SLA.TicketSLA(r.Context(), workspaceID, t.ID); err == nil {
+			out["sla"] = slaJSON(item)
+		} else if deps.Logger != nil {
+			deps.Logger.Warn("could not load ticket SLA", "ticket_id", t.ID, "error", err)
+		}
+	}
+	return out
 }
 
 // linkedIDs flattens ticket_links into the "other ticket" id regardless of
@@ -862,8 +882,7 @@ func ticketJSON(t ticket.Ticket, tagIDs []string, fieldValues map[string]any, ch
 		"assignee_id": t.AssigneeID, "team_id": t.TeamID, "conversation_id": t.ConversationID,
 		"parent_id": t.ParentID, "child_ids": orEmpty(childIDs), "linked_ticket_ids": orEmpty(linkedTicketIDs),
 		"tag_ids": orEmpty(tagIDs), "field_values": fieldValues,
-		// SLA tracking is Stage 8 (automation/sla module) — always null until
-		// that module exists, per the shared contract's `ConversationSla | null`.
+		// The handler attaches the live SLA summary after the base DTO is built.
 		"sla": nil, "viewers": viewers,
 		"due_at": t.DueAt, "version": t.Version, "created_at": t.CreatedAt, "updated_at": t.UpdatedAt,
 		"resolved_at": t.ResolvedAt, "closed_at": t.ClosedAt,

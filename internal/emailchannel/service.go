@@ -5,6 +5,7 @@
 package emailchannel
 
 import (
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -16,7 +17,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/mail"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +46,7 @@ var (
 	ErrSignature         = errors.New("emailchannel: inbound signature is invalid")
 	ErrDuplicateMessage  = errors.New("emailchannel: message was already received")
 	ErrSecretUnavailable = errors.New("emailchannel: mailbox secret is unavailable")
+	ErrInvalidDelivery   = errors.New("emailchannel: delivery event is invalid")
 )
 
 type Service struct {
@@ -127,6 +132,46 @@ type IngestResult struct {
 	ConversationID string `json:"conversation_id"`
 	MessageID      string `json:"message_id"`
 	Created        bool   `json:"created"`
+}
+
+// DeliveryEvent is the normalized provider-independent delivery contract.
+// Providers may retry the same event, so ProviderEventID is retained as the
+// idempotency key in the delivery-event table.
+type DeliveryEvent struct {
+	ProviderEventID string    `json:"provider_event_id"`
+	Type            string    `json:"type"`
+	Recipient       string    `json:"recipient"`
+	MessageID       string    `json:"message_id"`
+	BounceType      string    `json:"bounce_type,omitempty"`
+	Reason          string    `json:"reason,omitempty"`
+	Hard            bool      `json:"hard"`
+	OccurredAt      time.Time `json:"occurred_at"`
+}
+
+type DeliveryEventView struct {
+	ID              string          `json:"id"`
+	WorkspaceID     string          `json:"workspace_id"`
+	MailboxID       string          `json:"mailbox_id"`
+	Provider        string          `json:"provider"`
+	ProviderEventID string          `json:"provider_event_id"`
+	Type            string          `json:"type"`
+	EmailMessageID  *string         `json:"email_message_id,omitempty"`
+	Recipient       *string         `json:"recipient,omitempty"`
+	BounceType      *string         `json:"bounce_type,omitempty"`
+	Reason          *string         `json:"reason,omitempty"`
+	Hard            bool            `json:"hard"`
+	Payload         json.RawMessage `json:"payload"`
+	OccurredAt      time.Time       `json:"occurred_at"`
+	CreatedAt       time.Time       `json:"created_at"`
+}
+
+type Suppression struct {
+	WorkspaceID string    `json:"workspace_id"`
+	Address     string    `json:"address"`
+	Reason      string    `json:"reason"`
+	Source      string    `json:"source"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // outboundPayload is intentionally small and stable: it is persisted in the
@@ -238,7 +283,11 @@ func (s *Service) queueOutbound(ctx context.Context, workspaceID string, message
 			WHERE em.workspace_id=c.workspace_id AND em.conversation_id=c.id AND em.direction='inbound' AND em.message_id_header IS NOT NULL
 			ORDER BY em.created_at DESC, em.id DESC LIMIT 1
 		) previous ON true
+		LEFT JOIN email_suppressions suppression
+			ON suppression.workspace_id=c.workspace_id
+			AND suppression.address::text=coalesce(verified.email::text, CASE WHEN cst.verification='verified' THEN cst.email::text ELSE '' END)
 		WHERE c.workspace_id=$1 AND c.id=$2 AND c.channel='email'
+		  AND suppression.address IS NULL
 		ORDER BY m.created_at, m.id
 		LIMIT 1`, workspaceID, message.ConversationID).Scan(&mailboxAddress, &recipient, &subject, &inReplyTo)
 	if errors.Is(err, pgx.ErrNoRows) || strings.TrimSpace(recipient) == "" {
@@ -540,6 +589,193 @@ func (s *Service) Ingest(ctx context.Context, raw []byte, signature string, inpu
 	return &IngestResult{EmailMessageID: emailID, ConversationID: conversationID, MessageID: messageID, Created: threadID == ""}, nil
 }
 
+// IngestDelivery records a provider delivery callback and projects its result
+// onto the matching outbound email. The mailbox id is part of the public
+// callback URL, while the mailbox secret still authenticates the raw body.
+// Retried callbacks are acknowledged after the unique provider event key is
+// found, without repeating status or suppression side effects.
+func (s *Service) IngestDelivery(ctx context.Context, mailboxID, provider string, raw []byte, signature string, event DeliveryEvent) error {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" || strings.TrimSpace(event.ProviderEventID) == "" || event.Type == "" {
+		return ErrInvalidDelivery
+	}
+	mailbox, secret, err := s.mailboxByID(ctx, mailboxID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if !mailbox.Enabled {
+		return ErrInvalidDelivery
+	}
+	if err := verifySignature(raw, signature, secret); err != nil {
+		return err
+	}
+	if event.OccurredAt.IsZero() {
+		event.OccurredAt = time.Now().UTC()
+	}
+	if event.Recipient != "" {
+		event.Recipient, err = normalizeAddress(event.Recipient)
+		if err != nil {
+			return ErrInvalidDelivery
+		}
+	}
+
+	payload := raw
+	if !json.Valid(payload) {
+		payload, _ = json.Marshal(event)
+	}
+	err = s.pool.QueryRow(ctx, `
+		INSERT INTO email_delivery_events
+			(id,workspace_id,mailbox_id,provider,provider_event_id,event_type,recipient,bounce_type,reason,hard,payload,occurred_at)
+		VALUES($1,$2,$3,$4,$5,$6,NULLIF($7,''),NULLIF($8,''),NULLIF($9,''),$10,$11::jsonb,$12)
+		ON CONFLICT (workspace_id,mailbox_id,provider,provider_event_id) DO NOTHING
+		RETURNING id`, ids.New(ids.PrefixEmailDelivery), mailbox.WorkspaceID, mailbox.ID, provider,
+		event.ProviderEventID, event.Type, event.Recipient, event.BounceType, event.Reason, event.Hard, payload, event.OccurredAt).Scan(new(string))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("emailchannel: record delivery event: %w", err)
+	}
+
+	messageID, err := s.matchOutboundMessage(ctx, mailbox.WorkspaceID, event)
+	if err != nil {
+		return err
+	}
+	status := event.Type
+	if status == "bounced" {
+		_, err = s.pool.Exec(ctx, `UPDATE email_messages SET status='bounced',bounce_type=NULLIF($3,''),error=NULLIF($4,'') WHERE workspace_id=$1 AND id=$2 AND direction='outbound'`, mailbox.WorkspaceID, messageID, event.BounceType, event.Reason)
+	} else if status == "delivered" {
+		_, err = s.pool.Exec(ctx, `UPDATE email_messages SET status='delivered',error=NULL WHERE workspace_id=$1 AND id=$2 AND direction='outbound'`, mailbox.WorkspaceID, messageID)
+	} else if status == "failed" {
+		_, err = s.pool.Exec(ctx, `UPDATE email_messages SET status='failed',error=NULLIF($3,'') WHERE workspace_id=$1 AND id=$2 AND direction='outbound'`, mailbox.WorkspaceID, messageID, event.Reason)
+	}
+	if err != nil {
+		return fmt.Errorf("emailchannel: update delivery status: %w", err)
+	}
+	if event.Hard && event.Recipient != "" {
+		_, err = s.pool.Exec(ctx, `
+			INSERT INTO email_suppressions(workspace_id,address,reason,source)
+			VALUES($1,$2,$3,$4)
+			ON CONFLICT (workspace_id,address) DO UPDATE SET reason=EXCLUDED.reason,source=EXCLUDED.source,updated_at=now()
+		`, mailbox.WorkspaceID, event.Recipient, nonEmpty(event.Reason, event.BounceType), provider)
+		if err != nil {
+			return fmt.Errorf("emailchannel: suppress bounced recipient: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Service) matchOutboundMessage(ctx context.Context, workspaceID string, event DeliveryEvent) (string, error) {
+	if strings.TrimSpace(event.MessageID) != "" {
+		var id string
+		err := s.pool.QueryRow(ctx, `
+			SELECT id FROM email_messages
+			WHERE workspace_id=$1 AND direction='outbound'
+			  AND (id=$2 OR message_id_header=$2)
+			ORDER BY created_at DESC LIMIT 1`, workspaceID, strings.TrimSpace(event.MessageID)).Scan(&id)
+		if err == nil {
+			return id, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return "", err
+		}
+	}
+	if strings.TrimSpace(event.Recipient) == "" {
+		return "", nil
+	}
+	var id string
+	err := s.pool.QueryRow(ctx, `
+		SELECT id FROM email_messages
+		WHERE workspace_id=$1 AND direction='outbound' AND $2=ANY(to_addresses)
+		  AND status IN ('pending','sent','delivered')
+		ORDER BY created_at DESC,id DESC LIMIT 1`, workspaceID, event.Recipient).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
+func (s *Service) ListDeliveryEvents(ctx context.Context, workspaceID, mailboxID string, before time.Time, beforeID string, limit int) ([]DeliveryEventView, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 100
+	}
+	query := `
+		SELECT id,workspace_id,mailbox_id,provider,provider_event_id,event_type,email_message_id,
+		       recipient,bounce_type,reason,hard,payload,occurred_at,created_at
+		FROM email_delivery_events
+		WHERE workspace_id=$1 AND mailbox_id=$2`
+	args := []any{workspaceID, mailboxID}
+	if !before.IsZero() {
+		query += ` AND (occurred_at,id)<($3,$4)`
+		args = append(args, before, beforeID)
+	}
+	query += ` ORDER BY occurred_at DESC,id DESC LIMIT $` + fmt.Sprint(len(args)+1)
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("emailchannel: list delivery events: %w", err)
+	}
+	defer rows.Close()
+	result := make([]DeliveryEventView, 0)
+	for rows.Next() {
+		var item DeliveryEventView
+		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.MailboxID, &item.Provider, &item.ProviderEventID, &item.Type,
+			&item.EmailMessageID, &item.Recipient, &item.BounceType, &item.Reason, &item.Hard, &item.Payload, &item.OccurredAt, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+func (s *Service) ListSuppressions(ctx context.Context, workspaceID string, limit int) ([]Suppression, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT workspace_id,address::text,reason,source,created_at,updated_at
+		FROM email_suppressions WHERE workspace_id=$1 ORDER BY updated_at DESC,address LIMIT $2
+	`, workspaceID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("emailchannel: list suppressions: %w", err)
+	}
+	defer rows.Close()
+	result := make([]Suppression, 0)
+	for rows.Next() {
+		var item Suppression
+		if err := rows.Scan(&item.WorkspaceID, &item.Address, &item.Reason, &item.Source, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+func (s *Service) RemoveSuppression(ctx context.Context, workspaceID, address string) error {
+	address, err := normalizeAddress(address)
+	if err != nil {
+		return ErrInvalidAddress
+	}
+	result, err := s.pool.Exec(ctx, `DELETE FROM email_suppressions WHERE workspace_id=$1 AND address=$2`, workspaceID, address)
+	if err != nil {
+		return fmt.Errorf("emailchannel: remove suppression: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func nonEmpty(primary, fallback string) string {
+	if strings.TrimSpace(primary) != "" {
+		return strings.TrimSpace(primary)
+	}
+	return strings.TrimSpace(fallback)
+}
+
 func (s *Service) threadConversation(ctx context.Context, workspaceID string, input InboundEmail) (string, error) {
 	headerIDs := make([]string, 0, len(input.References)+1)
 	if input.InReplyTo != "" {
@@ -606,6 +842,19 @@ func (s *Service) mailboxByAddress(ctx context.Context, address string) (*Mailbo
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", ErrNotFound
 	}
+	if err != nil {
+		return nil, "", err
+	}
+	if len(encrypted) == 0 {
+		return nil, "", ErrSecretUnavailable
+	}
+	secret, err := s.decrypt(encrypted)
+	return item, secret, err
+}
+
+func (s *Service) mailboxByID(ctx context.Context, id string) (*Mailbox, string, error) {
+	var encrypted []byte
+	item, err := scanMailboxWithSecret(s.pool.QueryRow(ctx, mailboxSelectWithSecret+` WHERE id=$1`, id), &encrypted)
 	if err != nil {
 		return nil, "", err
 	}
@@ -804,37 +1053,294 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
-// UnmarshalProviderPayload accepts the small common denominator used by
-// inbound providers, while keeping provider-specific adapters possible later.
+// UnmarshalProviderPayload accepts the generic JSON shape used by older
+// integrations. Provider-aware callers should use UnmarshalProviderPayloadFor
+// so Postmark JSON and Mailgun/SendGrid form posts retain their headers.
 func UnmarshalProviderPayload(data []byte) (InboundEmail, error) {
+	return UnmarshalProviderPayloadFor("generic", "application/json", data)
+}
+
+// UnmarshalProviderPayloadFor normalizes the common inbound providers without
+// making the rest of the email channel know their wire formats. It accepts the
+// raw body so the caller can authenticate it before parsing and keeps parsing
+// bounded by the HTTP handler's MaxBytesReader.
+func UnmarshalProviderPayloadFor(provider, contentType string, data []byte) (InboundEmail, error) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if strings.HasPrefix(strings.ToLower(contentType), "application/json") || provider == "postmark" || provider == "generic" {
+		return unmarshalJSONInbound(data)
+	}
+	values, err := parseFormValues(contentType, data)
+	if err != nil {
+		return InboundEmail{}, ErrInvalidMessage
+	}
+	return inboundFromValues(values), nil
+}
+
+func unmarshalJSONInbound(data []byte) (InboundEmail, error) {
 	var raw struct {
-		To         json.RawMessage `json:"to"`
-		From       string          `json:"from"`
-		Subject    string          `json:"subject"`
-		Body       string          `json:"body"`
-		Text       string          `json:"text"`
-		MessageID  string          `json:"message_id"`
-		MessageID2 string          `json:"MessageID"`
-		InReplyTo  string          `json:"in_reply_to"`
-		References []string        `json:"references"`
+		To                json.RawMessage `json:"to"`
+		OriginalRecipient string          `json:"OriginalRecipient"`
+		From              string          `json:"from"`
+		FromFull          struct {
+			Email string `json:"Email"`
+		} `json:"FromFull"`
+		Subject           string   `json:"subject"`
+		Body              string   `json:"body"`
+		Text              string   `json:"text"`
+		TextBody          string   `json:"TextBody"`
+		StrippedTextReply string   `json:"StrippedTextReply"`
+		MessageID         string   `json:"message_id"`
+		MessageID2        string   `json:"MessageID"`
+		InReplyTo         string   `json:"in_reply_to"`
+		References        []string `json:"references"`
+		Headers           []struct {
+			Name  string `json:"Name"`
+			Value string `json:"Value"`
+		} `json:"Headers"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return InboundEmail{}, ErrInvalidMessage
 	}
-	to := make([]string, 0)
-	var single string
-	if json.Unmarshal(raw.To, &single) == nil && single != "" {
-		to = append(to, single)
+	to := addressesFromJSON(raw.To)
+	if len(to) == 0 && raw.OriginalRecipient != "" {
+		to = []string{raw.OriginalRecipient}
+	}
+	from := raw.From
+	if from == "" {
+		from = raw.FromFull.Email
+	}
+	body := firstNonEmpty(raw.StrippedTextReply, raw.TextBody, raw.Body, raw.Text)
+	messageID := firstNonEmpty(raw.MessageID, raw.MessageID2)
+	inReplyTo := raw.InReplyTo
+	refs := raw.References
+	for _, header := range raw.Headers {
+		switch strings.ToLower(strings.TrimSpace(header.Name)) {
+		case "message-id":
+			messageID = firstNonEmpty(header.Value, messageID)
+		case "in-reply-to":
+			inReplyTo = firstNonEmpty(header.Value, inReplyTo)
+		case "references":
+			refs = append(refs, strings.Fields(header.Value)...)
+		}
+	}
+	return InboundEmail{To: to, From: from, Subject: raw.Subject, Body: body, MessageID: messageID, InReplyTo: inReplyTo, References: uniqueStrings(refs)}, nil
+}
+
+func parseFormValues(contentType string, data []byte) (url.Values, error) {
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		mediaType = strings.TrimSpace(strings.Split(contentType, ";")[0])
+	}
+	switch strings.ToLower(mediaType) {
+	case "application/x-www-form-urlencoded", "":
+		return url.ParseQuery(string(data))
+	case "multipart/form-data":
+		boundary := params["boundary"]
+		if boundary == "" {
+			return nil, ErrInvalidMessage
+		}
+		reader := multipart.NewReader(bytes.NewReader(data), boundary)
+		values := make(url.Values)
+		for {
+			part, nextErr := reader.NextPart()
+			if errors.Is(nextErr, io.EOF) {
+				break
+			}
+			if nextErr != nil {
+				return nil, nextErr
+			}
+			value, readErr := io.ReadAll(io.LimitReader(part, 2<<20))
+			part.Close()
+			if readErr != nil {
+				return nil, readErr
+			}
+			values.Add(part.FormName(), string(value))
+		}
+		return values, nil
+	default:
+		return nil, ErrInvalidMessage
+	}
+}
+
+func inboundFromValues(values url.Values) InboundEmail {
+	headers := parseHeaderValues(firstNonEmpty(values.Get("headers"), values.Get("message-headers")))
+	messageID := firstNonEmpty(values.Get("message_id"), values.Get("Message-Id"), values.Get("message-id"), headers["message-id"])
+	inReplyTo := firstNonEmpty(values.Get("in_reply_to"), values.Get("In-Reply-To"), values.Get("in-reply-to"), headers["in-reply-to"])
+	refs := append(strings.Fields(values.Get("references")), strings.Fields(headers["references"])...)
+	return InboundEmail{
+		To:         splitAddresses(firstNonEmpty(values.Get("to"), values.Get("recipient"), values.Get("OriginalRecipient"))),
+		From:       firstNonEmpty(values.Get("from"), values.Get("sender")),
+		Subject:    values.Get("subject"),
+		Body:       firstNonEmpty(values.Get("body"), values.Get("body-plain"), values.Get("text"), values.Get("text_body")),
+		MessageID:  messageID,
+		InReplyTo:  inReplyTo,
+		References: uniqueStrings(refs),
+	}
+}
+
+// UnmarshalDeliveryPayload normalizes delivery/bounce callbacks from JSON or
+// provider form posts. The caller still authenticates the raw request with
+// the mailbox secret before applying the normalized event.
+func UnmarshalDeliveryPayload(provider, contentType string, data []byte) (DeliveryEvent, error) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	var values url.Values
+	if strings.HasPrefix(strings.ToLower(contentType), "application/json") || provider == "postmark" {
+		var raw map[string]any
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return DeliveryEvent{}, ErrInvalidDelivery
+		}
+		values = mapToValues(raw)
 	} else {
-		_ = json.Unmarshal(raw.To, &to)
+		parsed, err := parseFormValues(contentType, data)
+		if err != nil {
+			return DeliveryEvent{}, ErrInvalidDelivery
+		}
+		values = parsed
 	}
-	body := raw.Body
-	if body == "" {
-		body = raw.Text
+	typ, hard := normalizeDeliveryType(firstNonEmpty(values.Get("type"), values.Get("event"), values.Get("RecordType"), values.Get("record_type"), values.Get("bounce-type")), values.Get("hard"))
+	if typ == "" {
+		return DeliveryEvent{}, ErrInvalidDelivery
 	}
-	messageID := raw.MessageID
-	if messageID == "" {
-		messageID = raw.MessageID2
+	event := DeliveryEvent{
+		ProviderEventID: firstNonEmpty(values.Get("provider_event_id"), values.Get("MessageID"), values.Get("message_id"), values.Get("id"), values.Get("event-id")),
+		Type:            typ,
+		Recipient:       firstNonEmpty(values.Get("recipient"), values.Get("Email"), values.Get("email"), values.Get("to")),
+		MessageID:       firstNonEmpty(values.Get("message_id"), values.Get("MessageID"), values.Get("message-id")),
+		BounceType:      firstNonEmpty(values.Get("bounce_type"), values.Get("Type"), values.Get("bounce-type")),
+		Reason:          firstNonEmpty(values.Get("reason"), values.Get("Description"), values.Get("description"), values.Get("error")),
+		Hard:            hard,
+		OccurredAt:      parseProviderTime(firstNonEmpty(values.Get("occurred_at"), values.Get("BouncedAt"), values.Get("DeliveredAt"), values.Get("timestamp"))),
 	}
-	return InboundEmail{To: to, From: raw.From, Subject: raw.Subject, Body: body, MessageID: messageID, InReplyTo: raw.InReplyTo, References: raw.References}, nil
+	if event.ProviderEventID == "" {
+		hash := sha256.Sum256(data)
+		event.ProviderEventID = hex.EncodeToString(hash[:])
+	}
+	if event.Type == "bounced" && !event.Hard {
+		event.Hard = strings.Contains(strings.ToLower(event.BounceType), "hard") || strings.Contains(strings.ToLower(event.Reason), "permanent")
+	}
+	return event, nil
+}
+
+func mapToValues(raw map[string]any) url.Values {
+	values := make(url.Values)
+	for key, value := range raw {
+		switch typed := value.(type) {
+		case string:
+			values.Set(key, typed)
+		case bool:
+			values.Set(key, fmt.Sprint(typed))
+		case float64:
+			values.Set(key, fmt.Sprint(typed))
+		}
+	}
+	return values
+}
+
+func normalizeDeliveryType(value, hard string) (string, bool) {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	hardBounce := strings.EqualFold(strings.TrimSpace(hard), "true") || strings.Contains(lower, "hard")
+	switch {
+	case strings.Contains(lower, "deliver") || lower == "sent":
+		return "delivered", false
+	case strings.Contains(lower, "bounce") || strings.Contains(lower, "complaint") || strings.Contains(lower, "spam"):
+		return "bounced", hardBounce || strings.Contains(lower, "complaint") || strings.Contains(lower, "spam")
+	case strings.Contains(lower, "defer") || strings.Contains(lower, "fail"):
+		return "failed", false
+	default:
+		return "", false
+	}
+}
+
+func parseProviderTime(value string) time.Time {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}
+	}
+	if unix, err := parseUnix(value); err == nil && unix > 0 {
+		return time.Unix(unix, 0).UTC()
+	}
+	for _, layout := range []string{time.RFC3339, time.RFC1123Z, "Mon, 2 Jan 2006 15:04:05 -0700"} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed.UTC()
+		}
+	}
+	return time.Time{}
+}
+
+func parseHeaderValues(value string) map[string]string {
+	result := make(map[string]string)
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return result
+	}
+	var pairs []struct {
+		Name  string `json:"Name"`
+		Value string `json:"Value"`
+	}
+	if json.Unmarshal([]byte(value), &pairs) == nil {
+		for _, pair := range pairs {
+			result[strings.ToLower(strings.TrimSpace(pair.Name))] = strings.TrimSpace(pair.Value)
+		}
+		return result
+	}
+	for _, line := range strings.Split(value, "\n") {
+		name, headerValue, ok := strings.Cut(line, ":")
+		if ok {
+			result[strings.ToLower(strings.TrimSpace(name))] = strings.TrimSpace(headerValue)
+		}
+	}
+	return result
+}
+
+func addressesFromJSON(raw json.RawMessage) []string {
+	var single string
+	if json.Unmarshal(raw, &single) == nil {
+		return splitAddresses(single)
+	}
+	var list []string
+	if json.Unmarshal(raw, &list) == nil {
+		result := make([]string, 0, len(list))
+		for _, item := range list {
+			result = append(result, splitAddresses(item)...)
+		}
+		return result
+	}
+	return nil
+}
+
+func splitAddresses(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	addresses, err := mail.ParseAddressList(value)
+	if err != nil {
+		return []string{strings.TrimSpace(value)}
+	}
+	result := make([]string, 0, len(addresses))
+	for _, address := range addresses {
+		result = append(result, address.Address)
+	}
+	return result
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" && !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+	}
+	return result
 }

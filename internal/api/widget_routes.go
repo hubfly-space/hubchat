@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -12,9 +13,11 @@ import (
 
 	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/conversation"
+	"github.com/hubchat/hubchat/internal/feedback"
 	"github.com/hubchat/hubchat/internal/file"
 	formmodule "github.com/hubchat/hubchat/internal/form"
 	"github.com/hubchat/hubchat/internal/httpserver"
+	"github.com/hubchat/hubchat/internal/knowledgebase"
 	"github.com/hubchat/hubchat/internal/widget"
 )
 
@@ -77,6 +80,22 @@ func registerWidgetRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("OPTIONS /v1/widget/forms/{slug}", corsPreflight)
 	mux.HandleFunc("POST /v1/widget/forms/{slug}/submissions", withPublicCORS(handleWidgetSubmitForm(deps)))
 	mux.HandleFunc("OPTIONS /v1/widget/forms/{slug}/submissions", corsPreflight)
+	mux.HandleFunc("GET /v1/widget/feedback/boards", withPublicCORS(handleWidgetFeedbackBoards(deps)))
+	mux.HandleFunc("OPTIONS /v1/widget/feedback/boards", corsPreflight)
+	mux.HandleFunc("GET /v1/widget/feedback/boards/{slug}/items", withPublicCORS(handleWidgetFeedbackItems(deps)))
+	mux.HandleFunc("OPTIONS /v1/widget/feedback/boards/{slug}/items", corsPreflight)
+	mux.HandleFunc("POST /v1/widget/feedback/boards/{slug}/items", withPublicCORS(handleWidgetFeedbackCreate(deps)))
+	mux.HandleFunc("POST /v1/widget/feedback/items/{id}/votes", withPublicCORS(handleWidgetFeedbackVote(deps)))
+	mux.HandleFunc("OPTIONS /v1/widget/feedback/items/{id}/votes", corsPreflight)
+	mux.HandleFunc("POST /v1/widget/feedback/items/{id}/subscription", withPublicCORS(handleWidgetFeedbackSubscription(deps)))
+	mux.HandleFunc("DELETE /v1/widget/feedback/items/{id}/subscription", withPublicCORS(handleWidgetFeedbackSubscription(deps)))
+	mux.HandleFunc("OPTIONS /v1/widget/feedback/items/{id}/subscription", corsPreflight)
+	mux.HandleFunc("GET /v1/widget/articles", withPublicCORS(handleWidgetArticleSearch(deps)))
+	mux.HandleFunc("OPTIONS /v1/widget/articles", corsPreflight)
+	mux.HandleFunc("GET /v1/widget/articles/{slug}", withPublicCORS(handleWidgetArticle(deps)))
+	mux.HandleFunc("OPTIONS /v1/widget/articles/{slug}", corsPreflight)
+	mux.HandleFunc("POST /v1/widget/articles/{slug}/feedback", withPublicCORS(handleWidgetArticleFeedback(deps)))
+	mux.HandleFunc("OPTIONS /v1/widget/articles/{slug}/feedback", corsPreflight)
 
 	mux.HandleFunc("POST /v1/widget/conversations", withPublicCORS(handleWidgetStartConversation(deps)))
 	mux.HandleFunc("OPTIONS /v1/widget/conversations", corsPreflight)
@@ -385,7 +404,122 @@ func handleWidgetConfig(deps Deps) http.HandlerFunc {
 			writeWidgetError(w, r, err)
 			return
 		}
+		if config.Enabled && containsString(config.Modes, "knowledge_base") && deps.Knowledgebase != nil {
+			widgetRecord, lookupErr := deps.Widget.WidgetForOrigin(r.Context(), query.Get("key"), query.Get("url"), r.Header.Get("Origin"))
+			if lookupErr != nil {
+				writeWidgetError(w, r, lookupErr)
+				return
+			}
+			articles, searchErr := deps.Knowledgebase.ListPublished(r.Context(), widgetRecord.WorkspaceID, "", 8)
+			if searchErr != nil {
+				writeKnowledgebaseInternal(w, r)
+				return
+			}
+			config.Articles = widgetArticleSummaries(articles)
+		}
 		httpserver.WriteJSON(w, http.StatusOK, publicConfigJSON(config))
+	}
+}
+
+func containsString(items []string, wanted string) bool {
+	for _, item := range items {
+		if item == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func widgetArticleSummaries(items []knowledgebase.Article) []map[string]any {
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		result = append(result, map[string]any{"slug": item.Slug, "title": item.Title, "excerpt": item.Excerpt})
+	}
+	return result
+}
+
+func widgetArticleJSON(item *knowledgebase.Article, includeBody bool) map[string]any {
+	result := map[string]any{"slug": item.Slug, "title": item.Title, "excerpt": item.Excerpt, "language": item.Language, "helpful_count": item.HelpfulCount, "unhelpful_count": item.UnhelpfulCount}
+	if includeBody {
+		result["body"] = item.Body
+	}
+	return result
+}
+
+func handleWidgetArticleSearch(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		item, err := widgetPublicRecord(deps, r)
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		if deps.Knowledgebase == nil {
+			writeKnowledgebaseInternal(w, r)
+			return
+		}
+		items, err := deps.Knowledgebase.SearchPublished(r.Context(), item.WorkspaceID, "", r.URL.Query().Get("q"), r.URL.Query().Get("language"), "widget", 20)
+		if err != nil {
+			writeKnowledgebaseInternal(w, r)
+			return
+		}
+		result := make([]map[string]any, 0, len(items))
+		for _, searchResult := range items {
+			result = append(result, widgetArticleJSON(&searchResult.Article, false))
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": result})
+	}
+}
+
+func handleWidgetArticle(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		item, err := widgetPublicRecord(deps, r)
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		article, err := deps.Knowledgebase.GetPublishedBySlug(r.Context(), item.WorkspaceID, r.PathValue("slug"))
+		if err != nil {
+			if errors.Is(err, knowledgebase.ErrNotFound) {
+				httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Article not found.")
+				return
+			}
+			writeKnowledgebaseInternal(w, r)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, widgetArticleJSON(article, true))
+	}
+}
+
+func handleWidgetArticleFeedback(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		item, err := widgetPublicRecord(deps, r)
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		var input struct {
+			Helpful bool   `json:"helpful"`
+			Comment string `json:"comment"`
+		}
+		if err := httpserver.DecodeJSON(r, &input); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed article feedback.")
+			return
+		}
+		article, err := deps.Knowledgebase.GetPublishedBySlug(r.Context(), item.WorkspaceID, r.PathValue("slug"))
+		if err != nil {
+			writeKnowledgebaseError(w, r, err)
+			return
+		}
+		fingerprint := sha256.Sum256([]byte(clientIP(r) + "|" + r.UserAgent()))
+		if err := deps.Knowledgebase.RecordArticleFeedback(r.Context(), item.WorkspaceID, article.ID, input.Helpful, input.Comment, "", fingerprint[:]); err != nil {
+			if errors.Is(err, knowledgebase.ErrFeedbackAlreadyRecorded) {
+				httpserver.WriteError(w, r, http.StatusConflict, httpserver.CodeConflict, "Feedback was already recorded for this article.")
+				return
+			}
+			writeKnowledgebaseError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, map[string]any{"status": "recorded"})
 	}
 }
 
@@ -580,6 +714,160 @@ func handleWidgetSubmitForm(deps Deps) http.HandlerFunc {
 			return
 		}
 		httpserver.WriteJSON(w, http.StatusCreated, map[string]any{"id": id, "status": "accepted", "token": issuedToken})
+	}
+}
+
+func widgetPublicRecord(deps Deps, r *http.Request) (*widget.Widget, error) {
+	return deps.Widget.WidgetForOrigin(r.Context(), r.URL.Query().Get("key"), r.URL.Query().Get("url"), r.Header.Get("Origin"))
+}
+
+func handleWidgetFeedbackBoards(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		item, err := widgetPublicRecord(deps, r)
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		boards, err := deps.Feedback.ListBoards(r.Context(), item.WorkspaceID)
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		public := make([]feedback.Board, 0, len(boards))
+		for _, board := range boards {
+			if board.Visibility == "public" {
+				public = append(public, board)
+			}
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": public})
+	}
+}
+
+func handleWidgetFeedbackItems(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		item, err := widgetPublicRecord(deps, r)
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		customerID := ""
+		if token := r.URL.Query().Get("token"); token != "" {
+			if visitor, resolveErr := deps.Widget.ResolveVisitor(r.Context(), item.WorkspaceID, token); resolveErr == nil && visitor.CustomerID != nil {
+				customerID = *visitor.CustomerID
+			}
+		}
+		board, err := deps.Feedback.GetBoard(r.Context(), item.WorkspaceID, r.PathValue("slug"), true)
+		if err != nil {
+			writeWidgetError(w, r, feedback.ErrNotFound)
+			return
+		}
+		items, err := deps.Feedback.ListItems(r.Context(), item.WorkspaceID, board.ID, r.URL.Query().Get("status"), r.URL.Query().Get("sort"), r.URL.Query().Get("q"), customerID, 100)
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+	}
+}
+
+type widgetFeedbackCreateRequest struct {
+	widgetVisitorRequest
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Type        string `json:"type"`
+}
+
+func handleWidgetFeedbackCreate(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req widgetFeedbackCreateRequest
+		if err := httpserver.DecodeJSON(r, &req); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed feedback submission.")
+			return
+		}
+		item, err := deps.Widget.WidgetForOrigin(r.Context(), req.PublicKey, req.URL, r.Header.Get("Origin"))
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		visitor, err := deps.Widget.ResolveVisitor(r.Context(), item.WorkspaceID, req.Token)
+		var issuedToken string
+		if err != nil || visitor == nil {
+			issuedToken, visitor, err = deps.Widget.IssueVisitor(r.Context(), item.WorkspaceID)
+		}
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		board, err := deps.Feedback.GetBoard(r.Context(), item.WorkspaceID, r.PathValue("slug"), true)
+		if err != nil {
+			writeWidgetError(w, r, feedback.ErrNotFound)
+			return
+		}
+		customerID := ""
+		if visitor.CustomerID != nil {
+			customerID = *visitor.CustomerID
+		}
+		created, err := deps.Feedback.CreateItem(r.Context(), item.WorkspaceID, board.ID, "", feedback.ItemInput{Title: req.Title, Description: req.Description, Type: req.Type}, customerID)
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, map[string]any{"item": created, "token": issuedToken})
+	}
+}
+
+type widgetFeedbackVoteRequest struct{ widgetVisitorRequest }
+
+func handleWidgetFeedbackVote(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req widgetFeedbackVoteRequest
+		if err := httpserver.DecodeJSON(r, &req); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed vote request.")
+			return
+		}
+		workspaceID, visitor, err := resolveVisitorRequest(r, deps, req.widgetVisitorRequest)
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		if visitor.CustomerID == nil {
+			httpserver.WriteError(w, r, http.StatusUnauthorized, httpserver.CodeUnauthorized, "Identify yourself before voting.")
+			return
+		}
+		if err := deps.Feedback.Vote(r.Context(), workspaceID, r.PathValue("id"), *visitor.CustomerID); err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, map[string]any{"status": "voted"})
+	}
+}
+
+func handleWidgetFeedbackSubscription(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req widgetVisitorRequest
+		if err := httpserver.DecodeJSON(r, &req); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed subscription request.")
+			return
+		}
+		workspaceID, visitor, err := resolveVisitorRequest(r, deps, req)
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		if visitor.CustomerID == nil {
+			httpserver.WriteError(w, r, http.StatusUnauthorized, httpserver.CodeUnauthorized, "Identify yourself before following feedback.")
+			return
+		}
+		if r.Method == http.MethodDelete {
+			err = deps.Feedback.Unsubscribe(r.Context(), workspaceID, r.PathValue("id"), *visitor.CustomerID)
+		} else {
+			err = deps.Feedback.Subscribe(r.Context(), workspaceID, r.PathValue("id"), *visitor.CustomerID)
+		}
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"subscribed": r.Method != http.MethodDelete})
 	}
 }
 
@@ -847,6 +1135,12 @@ func writeWidgetError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusConflict, httpserver.CodeConflict, err.Error())
 	case errors.Is(err, formmodule.ErrNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Form not found.")
+	case errors.Is(err, feedback.ErrNotFound):
+		httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Feedback board or item not found.")
+	case errors.Is(err, feedback.ErrAlreadyVoted), errors.Is(err, feedback.ErrVoteLimit), errors.Is(err, feedback.ErrVotingDisabled):
+		httpserver.WriteError(w, r, http.StatusConflict, httpserver.CodeConflict, err.Error())
+	case errors.Is(err, feedback.ErrCustomerRequired):
+		httpserver.WriteError(w, r, http.StatusUnauthorized, httpserver.CodeUnauthorized, "Identify yourself before following feedback.")
 	case errors.Is(err, widget.ErrInvalidInbox), errors.Is(err, widget.ErrInvalidName),
 		errors.Is(err, widget.ErrWildcardDomain), errors.Is(err, widget.ErrNoInbox),
 		errors.Is(err, conversation.ErrEmptyBody):

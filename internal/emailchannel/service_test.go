@@ -51,6 +51,49 @@ func TestUnmarshalProviderPayload(t *testing.T) {
 	}
 }
 
+func TestUnmarshalPostmarkInboundPayload(t *testing.T) {
+	input, err := UnmarshalProviderPayloadFor("postmark", "application/json", []byte(`{
+		"From":"Person <person@example.com>",
+		"To":"Support <support@example.com>",
+		"Subject":"Re: Help",
+		"MessageID":"provider-1",
+		"TextBody":"new reply",
+		"Headers":[{"Name":"In-Reply-To","Value":"<old@example.com>"},{"Name":"References","Value":"<old@example.com> <root@example.com>"}]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(input.To) != 1 || input.To[0] != "support@example.com" || input.From != "Person <person@example.com>" || input.Body != "new reply" || input.InReplyTo != "<old@example.com>" || len(input.References) != 2 {
+		t.Fatalf("unexpected Postmark payload: %+v", input)
+	}
+}
+
+func TestUnmarshalFormInboundPayload(t *testing.T) {
+	input, err := UnmarshalProviderPayloadFor("mailgun", "application/x-www-form-urlencoded", []byte("recipient=support%40example.com&sender=person%40example.com&subject=Hello&body-plain=reply&Message-Id=%3Cm1%40example.com%3E&In-Reply-To=%3Cold%40example.com%3E"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(input.To) != 1 || input.To[0] != "support@example.com" || input.From != "person@example.com" || input.Body != "reply" || input.MessageID != "<m1@example.com>" || input.InReplyTo != "<old@example.com>" {
+		t.Fatalf("unexpected form payload: %+v", input)
+	}
+}
+
+func TestUnmarshalDeliveryPayloadNormalizesHardBounce(t *testing.T) {
+	event, err := UnmarshalDeliveryPayload("postmark", "application/json", []byte(`{
+		"RecordType":"Bounce",
+		"Type":"HardBounce",
+		"Email":"person@example.com",
+		"MessageID":"provider-1",
+		"Description":"mailbox does not exist"
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Type != "bounced" || !event.Hard || event.ProviderEventID != "provider-1" || event.Recipient != "person@example.com" {
+		t.Fatalf("unexpected delivery event: %+v", event)
+	}
+}
+
 func TestOutboundHeaderUsesMailboxDomain(t *testing.T) {
 	if got := outboundHeader("msg_123", "Support <support@Example.com>"); got != "<msg_123@Example.com>" {
 		t.Fatalf("outbound header: %q", got)
