@@ -104,15 +104,35 @@ export function Widget({
   const tokenRef = useRef<string | null>(null);
   const conversationRef = useRef<string | null>(null);
   const socketRef = useRef<VisitorSocket | null>(null);
+  const viewedArticlesRef = useRef(new Set<string>());
+  const impressionTrackedRef = useRef(false);
 
   const { appearance, content } = config;
   const theme = useResolvedTheme(appearance.theme);
 
+  const ensureVisitorToken = useCallback(async () => {
+    let token = tokenRef.current;
+    if (!token) {
+      const issued = await issueVisitor(host, publicKey);
+      token = issued.token;
+      tokenRef.current = token;
+      saveSession(publicKey, { token, conversationId: conversationRef.current });
+    }
+    return token;
+  }, [host, publicKey]);
+
+  const trackSurface = useCallback((type: string) => {
+    void ensureVisitorToken()
+      .then((token) => apiTrack(host, publicKey, token, type, {}))
+      .catch(() => {});
+  }, [ensureVisitorToken, host, publicKey]);
+
   const show = useCallback(() => {
     setOpen(true);
     setUnread(0);
+    trackSurface("widget.opened");
     onEvent("open");
-  }, [onEvent]);
+  }, [onEvent, trackSurface]);
 
   const hide = useCallback(() => {
     setOpen(false);
@@ -305,7 +325,11 @@ export function Widget({
 
   useEffect(() => {
     onEvent("ready");
-  }, [onEvent]);
+    if (!impressionTrackedRef.current) {
+      impressionTrackedRef.current = true;
+      trackSurface("widget.impression");
+    }
+  }, [onEvent, trackSurface]);
 
   useEffect(() => {
     onEvent("unread:changed", { count: unread });
@@ -407,10 +431,16 @@ export function Widget({
     setArticleDetail(null);
     setArticleFeedback(null);
     void getArticle(host, publicKey, activeArticle)
-      .then(setArticleDetail)
+      .then((item) => {
+        setArticleDetail(item);
+        if (!viewedArticlesRef.current.has(activeArticle)) {
+          viewedArticlesRef.current.add(activeArticle);
+          trackSurface("widget.article_viewed");
+        }
+      })
       .catch(() => setArticleDetail(config.articles.find((item) => item.slug === activeArticle) ?? null))
       .finally(() => setArticleLoading(false));
-  }, [activeArticle, config.articles, host, publicKey, screen]);
+  }, [activeArticle, config.articles, host, publicKey, screen, trackSurface]);
 
   const article: WidgetArticle | undefined = articleDetail ?? config.articles.find((item) => item.slug === activeArticle);
 
