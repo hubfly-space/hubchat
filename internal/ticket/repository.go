@@ -83,22 +83,38 @@ func (r *repository) insert(
 	ctx context.Context, tx pgx.Tx,
 	id, workspaceID string, number int, prefix, title, description, priority string,
 	ttype, customerID, companyID, inboxID *string, channel string,
-	conversationID, parentID *string, dueAt *time.Time,
-) error {
-	_, err := tx.Exec(ctx, `
+	conversationID, parentID *string, dueAt *time.Time, importKey *string,
+) (bool, error) {
+	tag, err := tx.Exec(ctx, `
 		INSERT INTO tickets
 			(id, workspace_id, number, prefix, title, description, status, priority, type,
-			 customer_id, company_id, inbox_id, channel, conversation_id, parent_id, due_at)
-		VALUES ($1, $2, $3, $4, $5, $6, 'new', $7, $8, $9, $10, $11, $12, $13, $14, $15)
+			 customer_id, company_id, inbox_id, channel, conversation_id, parent_id, due_at, import_key)
+		VALUES ($1, $2, $3, $4, $5, $6, 'new', $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		ON CONFLICT (workspace_id, import_key) WHERE import_key IS NOT NULL DO NOTHING
 	`, id, workspaceID, number, prefix, title, description, priority, ttype,
-		customerID, companyID, inboxID, channel, conversationID, parentID, dueAt)
-	return err
+		customerID, companyID, inboxID, channel, conversationID, parentID, dueAt, importKey)
+	return tag.RowsAffected() > 0, err
 }
 
 func (r *repository) byID(ctx context.Context, workspaceID, id string) (*Ticket, error) {
 	row := r.pool.QueryRow(ctx, `SELECT `+ticketColumns+`
 		FROM tickets WHERE workspace_id = $1 AND id = $2
 	`, workspaceID, id)
+	return scanTicket(row)
+}
+
+func (r *repository) byImportKey(ctx context.Context, workspaceID, importKey string) (*Ticket, error) {
+	row := r.pool.QueryRow(ctx, `SELECT `+ticketColumns+`
+		FROM tickets WHERE workspace_id = $1 AND import_key = $2
+	`, workspaceID, importKey)
+	return scanTicket(row)
+}
+
+func (r *repository) byImportKeyTx(ctx context.Context, tx pgx.Tx, workspaceID, importKey string) (*Ticket, error) {
+	row := tx.QueryRow(ctx, `SELECT `+ticketColumns+`
+		FROM tickets WHERE workspace_id = $1 AND import_key = $2
+		FOR UPDATE
+	`, workspaceID, importKey)
 	return scanTicket(row)
 }
 

@@ -536,9 +536,13 @@ func (s *Service) ListResponsesPage(ctx context.Context, workspaceID, surveyID s
 	result := make([]Response, 0)
 	for rows.Next() {
 		var item Response
+		var comment *string
 		var raw []byte
-		if err := rows.Scan(&item.ID, &item.SurveyID, &item.CustomerID, &item.ConversationID, &item.TicketID, &item.AgentID, &item.Score, &item.Comment, &item.SubmittedAt, &raw); err != nil {
+		if err := rows.Scan(&item.ID, &item.SurveyID, &item.CustomerID, &item.ConversationID, &item.TicketID, &item.AgentID, &item.Score, &comment, &item.SubmittedAt, &raw); err != nil {
 			return nil, err
+		}
+		if comment != nil {
+			item.Comment = *comment
 		}
 		_ = json.Unmarshal(raw, &item.Answers)
 		result = append(result, item)
@@ -562,7 +566,8 @@ func (s *Service) WriteResponsesCSV(ctx context.Context, workspaceID, surveyID s
 		return err
 	}
 	for rows.Next() {
-		var id, comment string
+		var id string
+		var comment *string
 		var customerID *string
 		var score *float64
 		var submittedAt time.Time
@@ -574,11 +579,15 @@ func (s *Service) WriteResponsesCSV(ctx context.Context, workspaceID, surveyID s
 		if customerID != nil {
 			customer = *customerID
 		}
+		commentValue := ""
+		if comment != nil {
+			commentValue = *comment
+		}
 		scoreValue := ""
 		if score != nil {
 			scoreValue = fmt.Sprintf("%g", *score)
 		}
-		if err := writer.Write([]string{id, customer, scoreValue, comment, submittedAt.UTC().Format(time.RFC3339Nano), string(answers)}); err != nil {
+		if err := writer.Write([]string{id, customer, scoreValue, commentValue, submittedAt.UTC().Format(time.RFC3339Nano), string(answers)}); err != nil {
 			return err
 		}
 	}

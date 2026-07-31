@@ -94,6 +94,9 @@ type CreateRequest struct {
 	ParentID       *string
 	DueAt          *time.Time
 	FieldValues    map[string]any
+	// ImportKey is an internal, workspace-scoped source-row key used by
+	// resumable imports. Public API callers cannot supply it.
+	ImportKey *string
 }
 
 // Create opens a new ticket, allocating its display number from the
@@ -194,6 +197,15 @@ func (s *Service) create(
 	var ticket *Ticket
 
 	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		if req.ImportKey != nil && strings.TrimSpace(*req.ImportKey) != "" {
+			if existing, findErr := s.repo.byImportKeyTx(ctx, tx, workspaceID, strings.TrimSpace(*req.ImportKey)); findErr == nil {
+				id = existing.ID
+				return nil
+			} else if !errors.Is(findErr, ErrNotFound) {
+				return findErr
+			}
+		}
+
 		if req.ConversationID != nil {
 			if *req.ConversationID == "" {
 				return ErrInvalidConversation
@@ -219,12 +231,21 @@ func (s *Service) create(
 			return err
 		}
 
-		if err := s.repo.insert(ctx, tx,
+		inserted, err := s.repo.insert(ctx, tx,
 			id, workspaceID, number, prefix, title, req.Description, priority,
 			req.Type, req.CustomerID, companyID, &req.InboxID, channel,
-			req.ConversationID, req.ParentID, req.DueAt,
-		); err != nil {
+			req.ConversationID, req.ParentID, req.DueAt, req.ImportKey,
+		)
+		if err != nil {
 			return err
+		}
+		if !inserted {
+			existing, findErr := s.repo.byImportKeyTx(ctx, tx, workspaceID, strings.TrimSpace(*req.ImportKey))
+			if findErr != nil {
+				return findErr
+			}
+			id = existing.ID
+			return nil
 		}
 		if req.ConversationID != nil {
 			if _, err := tx.Exec(ctx, `UPDATE conversations SET ticket_id=$1 WHERE workspace_id=$2 AND id=$3`, id, workspaceID, *req.ConversationID); err != nil {
@@ -297,6 +318,12 @@ func (s *Service) create(
 
 func (s *Service) Get(ctx context.Context, workspaceID, id string) (*Ticket, error) {
 	return s.repo.byID(ctx, workspaceID, id)
+}
+
+// FindByImportKey returns the ticket created for an imported source row.
+// Import keys are only meaningful inside a workspace.
+func (s *Service) FindByImportKey(ctx context.Context, workspaceID, importKey string) (*Ticket, error) {
+	return s.repo.byImportKey(ctx, workspaceID, strings.TrimSpace(importKey))
 }
 
 // UpdateDetails changes title/description/type under optimistic concurrency

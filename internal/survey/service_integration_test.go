@@ -3,6 +3,8 @@
 package survey
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,6 +59,17 @@ func TestSubmitPublishesEventAndAnalyticsSummaryIncludesCSAT(t *testing.T) {
 	}
 	if summary.SurveyResponses != 1 || summary.CSATAverage == nil || *summary.CSATAverage != 4 {
 		t.Fatalf("survey summary = responses %d csat %v", summary.SurveyResponses, summary.CSATAverage)
+	}
+	responses, err := service.ListResponsesPage(ctx, workspaceID, created.ID, time.Time{}, "", 1)
+	if err != nil || len(responses) != 1 || responses[0].Score == nil || *responses[0].Score != 4 {
+		t.Fatalf("survey response page = %#v, err=%v", responses, err)
+	}
+	var csv bytes.Buffer
+	if err := service.WriteResponsesCSV(ctx, workspaceID, created.ID, &csv); err != nil {
+		t.Fatalf("write survey csv: %v", err)
+	}
+	if !strings.Contains(csv.String(), "id,customer_id,score,comment,submitted_at,answers") || !strings.Contains(csv.String(), ",4,") {
+		t.Fatalf("survey csv = %q", csv.String())
 	}
 	analyticsService := analytics.New(pool)
 	if count, err := analyticsService.FoldWorkspace(ctx, workspaceID, time.Now().UTC()); err != nil {
