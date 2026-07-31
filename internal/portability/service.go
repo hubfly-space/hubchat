@@ -11,18 +11,26 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hubchat/hubchat/internal/customer"
 	"github.com/hubchat/hubchat/internal/database"
 	filemodule "github.com/hubchat/hubchat/internal/file"
 	"github.com/hubchat/hubchat/internal/ids"
 	"github.com/hubchat/hubchat/internal/jobs"
+	"github.com/hubchat/hubchat/internal/knowledgebase"
+	"github.com/hubchat/hubchat/internal/ticket"
 	"github.com/jackc/pgx/v5"
 )
 
 const (
-	JobExport       = "portability.export"
-	JobImport       = "portability.import"
-	importBatchSize = 100
-	maxArchiveBytes = 512 << 20
+	JobExport                 = "portability.export"
+	JobImport                 = "portability.import"
+	importBatchSize           = 100
+	maxArchiveBytes           = 512 << 20
+	KindWorkspace             = "workspace"
+	KindCustomersCSV          = "customers_csv"
+	KindCompaniesCSV          = "companies_csv"
+	KindTicketsCSV            = "tickets_csv"
+	KindKnowledgeBaseMarkdown = "knowledgebase_markdown"
 )
 
 type Request struct {
@@ -71,13 +79,34 @@ type importPayload struct {
 }
 
 type Service struct {
-	pool  *database.Pool
-	files *filemodule.Service
-	jobs  *jobs.Client
+	pool          *database.Pool
+	files         *filemodule.Service
+	jobs          *jobs.Client
+	customers     *customer.Service
+	tickets       *ticket.Service
+	knowledgebase *knowledgebase.Service
 }
 
 func New(pool *database.Pool, files *filemodule.Service, queue *jobs.Client) *Service {
 	return &Service{pool: pool, files: files, jobs: queue}
+}
+
+// SetCustomerImporter attaches the domain service used by CSV imports. It is
+// optional so archive-only callers and CLI tests can keep the smaller wiring.
+func (s *Service) SetCustomerImporter(importer *customer.Service) {
+	s.customers = importer
+}
+
+// SetTicketImporter attaches the domain service used by ticket CSV imports.
+func (s *Service) SetTicketImporter(importer *ticket.Service) {
+	s.tickets = importer
+}
+
+// SetKnowledgeBaseImporter attaches the service used by Markdown article
+// imports. Articles are upserted by workspace, knowledge base, language, and
+// slug so a resumed job cannot create a duplicate.
+func (s *Service) SetKnowledgeBaseImporter(importer *knowledgebase.Service) {
+	s.knowledgebase = importer
 }
 
 func (s *Service) CreateExport(ctx context.Context, workspaceID, memberID, kind string, scope map[string]any) (*Request, error) {
@@ -118,13 +147,11 @@ func (s *Service) CreateExport(ctx context.Context, workspaceID, memberID, kind 
 
 func (s *Service) CreateImport(ctx context.Context, workspaceID, memberID, fileID, kind string, mapping map[string]any, start bool) (*Request, error) {
 	if strings.TrimSpace(fileID) == "" {
-		return nil, errors.New("portability: import archive file is required")
+		return nil, errors.New("portability: import file is required")
 	}
-	if kind == "" {
-		kind = "workspace"
-	}
-	if kind != "workspace" {
-		return nil, errors.New("portability: only workspace archives are currently supported")
+	kind = normalizeImportKind(kind)
+	if !validImportKind(kind) {
+		return nil, fmt.Errorf("portability: unsupported import kind %q", kind)
 	}
 	if mapping == nil {
 		mapping = map[string]any{}
@@ -140,11 +167,27 @@ func (s *Service) CreateImport(ctx context.Context, workspaceID, memberID, fileI
 	if err != nil {
 		return nil, fmt.Errorf("portability: import file: %w", err)
 	}
-	if !validArchiveFile(fileRecord) {
-		return nil, errors.New("portability: import file must be a JSON gzip archive")
-	}
-	if _, err := s.readArchive(ctx, workspaceID, &fileRecord.ID); err != nil {
-		return nil, fmt.Errorf("portability: validate archive: %w", err)
+	if kind == KindWorkspace {
+		if !validArchiveFile(fileRecord) {
+			return nil, errors.New("portability: import file must be a JSON gzip archive")
+		}
+		if _, err := s.readArchive(ctx, workspaceID, &fileRecord.ID); err != nil {
+			return nil, fmt.Errorf("portability: validate archive: %w", err)
+		}
+	} else if kind == KindKnowledgeBaseMarkdown {
+		if !validMarkdownFile(fileRecord) {
+			return nil, errors.New("portability: Markdown import file must be a Markdown document")
+		}
+		if _, err := s.readMarkdownFile(ctx, workspaceID, &fileRecord.ID); err != nil {
+			return nil, fmt.Errorf("portability: validate Markdown: %w", err)
+		}
+	} else {
+		if !validCSVFile(fileRecord) {
+			return nil, errors.New("portability: CSV import file must be a CSV document")
+		}
+		if _, err := s.readCSVFile(ctx, workspaceID, &fileRecord.ID, kind); err != nil {
+			return nil, fmt.Errorf("portability: validate CSV: %w", err)
+		}
 	}
 	if _, ok := mapping["backup_verified"]; !ok {
 		mapping["backup_verified"] = false
@@ -302,11 +345,18 @@ func (s *Service) PreviewImport(ctx context.Context, workspaceID, id string) ([]
 	if err != nil {
 		return nil, err
 	}
-	archive, err := s.readArchive(ctx, workspaceID, request.FileID)
-	if err != nil {
-		return nil, err
+	var summaries []TableSummary
+	if request.Kind == KindWorkspace {
+		archive, readErr := s.readArchive(ctx, workspaceID, request.FileID)
+		if readErr != nil {
+			return nil, readErr
+		}
+		summaries, err = Import(ctx, s.pool, archive, workspaceID, true)
+	} else if request.Kind == KindKnowledgeBaseMarkdown {
+		summaries, err = s.previewMarkdownImport(ctx, workspaceID, request)
+	} else {
+		summaries, err = s.previewCSVImport(ctx, workspaceID, request)
 	}
-	summaries, err := Import(ctx, s.pool, archive, workspaceID, true)
 	if err != nil {
 		return nil, err
 	}
@@ -418,6 +468,12 @@ func (s *Service) RunImport(ctx context.Context, id string) error {
 	}
 	if err != nil {
 		return err
+	}
+	if request.Kind != KindWorkspace {
+		if request.Kind == KindKnowledgeBaseMarkdown {
+			return s.runMarkdownImport(ctx, id, request)
+		}
+		return s.runCSVImport(ctx, id, request)
 	}
 	archive, err := s.readArchive(ctx, request.WorkspaceID, request.FileID)
 	if err != nil {
