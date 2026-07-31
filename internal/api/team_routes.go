@@ -17,13 +17,13 @@ func registerTeamRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /v1/teams",
 		requireCapability(deps, authorization.MemberManage, idempotent(handleCreateTeam(deps))))
 	mux.HandleFunc("PATCH /v1/teams/{id}",
-		requireCapability(deps, authorization.MemberManage, handleUpdateTeam(deps)))
+		requireCapability(deps, authorization.MemberManage, idempotent(handleUpdateTeam(deps))))
 	mux.HandleFunc("DELETE /v1/teams/{id}",
-		requireCapability(deps, authorization.MemberManage, handleDeleteTeam(deps)))
+		requireCapability(deps, authorization.MemberManage, idempotent(handleDeleteTeam(deps))))
 	mux.HandleFunc("PUT /v1/teams/{id}/members/{memberId}",
 		requireCapability(deps, authorization.MemberManage, idempotent(handleAddTeamMember(deps))))
 	mux.HandleFunc("DELETE /v1/teams/{id}/members/{memberId}",
-		requireCapability(deps, authorization.MemberManage, handleRemoveTeamMember(deps)))
+		requireCapability(deps, authorization.MemberManage, idempotent(handleRemoveTeamMember(deps))))
 }
 
 type teamPayload struct {

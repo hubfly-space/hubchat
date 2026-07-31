@@ -13,7 +13,7 @@ func registerSurveyRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/surveys", requireCapability(deps, authorization.SurveyManage, handleListSurveys(deps)))
 	mux.HandleFunc("POST /v1/surveys", requireCapability(deps, authorization.SurveyManage, Idempotency(deps)(handleCreateSurvey(deps))))
 	mux.HandleFunc("GET /v1/surveys/{id}", requireCapability(deps, authorization.SurveyManage, handleGetSurvey(deps)))
-	mux.HandleFunc("PATCH /v1/surveys/{id}", requireCapability(deps, authorization.SurveyManage, handleUpdateSurvey(deps)))
+	mux.HandleFunc("PATCH /v1/surveys/{id}", requireCapability(deps, authorization.SurveyManage, Idempotency(deps)(handleUpdateSurvey(deps))))
 	mux.HandleFunc("GET /v1/surveys/{id}/responses", requireCapability(deps, authorization.SurveyManage, handleListSurveyResponses(deps)))
 	mux.HandleFunc("GET /v1/surveys/{id}/summary", requireCapability(deps, authorization.SurveyManage, handleSurveySummary(deps)))
 	mux.HandleFunc("GET /v1/public/surveys/{workspaceID}/{id}", handlePublicGetSurvey(deps))

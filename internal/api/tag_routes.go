@@ -16,7 +16,7 @@ func registerTagRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /v1/tags",
 		requireCapability(deps, authorization.WorkspaceManage, idempotent(handleCreateTag(deps))))
 	mux.HandleFunc("DELETE /v1/tags/{id}",
-		requireCapability(deps, authorization.WorkspaceManage, handleDeleteTag(deps)))
+		requireCapability(deps, authorization.WorkspaceManage, idempotent(handleDeleteTag(deps))))
 	mux.HandleFunc("POST /v1/tags/{id}/merge",
 		requireCapability(deps, authorization.WorkspaceManage, idempotent(handleMergeTag(deps))))
 }
