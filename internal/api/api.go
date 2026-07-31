@@ -13,25 +13,36 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
+	"github.com/hubchat/hubchat/internal/analytics"
+	"github.com/hubchat/hubchat/internal/apikey"
 	"github.com/hubchat/hubchat/internal/audit"
 	"github.com/hubchat/hubchat/internal/auth"
 	"github.com/hubchat/hubchat/internal/authorization"
+	"github.com/hubchat/hubchat/internal/automation"
 	"github.com/hubchat/hubchat/internal/config"
 	"github.com/hubchat/hubchat/internal/conversation"
 	"github.com/hubchat/hubchat/internal/customer"
 	"github.com/hubchat/hubchat/internal/database"
+	"github.com/hubchat/hubchat/internal/emailchannel"
 	"github.com/hubchat/hubchat/internal/events"
+	"github.com/hubchat/hubchat/internal/feedback"
 	"github.com/hubchat/hubchat/internal/file"
+	"github.com/hubchat/hubchat/internal/form"
 	"github.com/hubchat/hubchat/internal/httpserver"
 	"github.com/hubchat/hubchat/internal/inbox"
 	"github.com/hubchat/hubchat/internal/jobs"
+	"github.com/hubchat/hubchat/internal/knowledgebase"
 	"github.com/hubchat/hubchat/internal/notification"
 	"github.com/hubchat/hubchat/internal/portal"
 	"github.com/hubchat/hubchat/internal/realtime"
 	"github.com/hubchat/hubchat/internal/search"
+	"github.com/hubchat/hubchat/internal/sla"
+	"github.com/hubchat/hubchat/internal/survey"
 	"github.com/hubchat/hubchat/internal/ticket"
+	"github.com/hubchat/hubchat/internal/webhook"
 	"github.com/hubchat/hubchat/internal/widget"
 	"github.com/hubchat/hubchat/internal/workspace"
 )
@@ -40,19 +51,29 @@ import (
 // cmd/hubchat and passed down — nothing in this package opens its own
 // database connection.
 type Deps struct {
-	Pool         *database.Pool
-	Logger       *slog.Logger
-	Auth         *auth.Service
-	Workspace    *workspace.Service
-	Conversation *conversation.Service
-	Inbox        *inbox.Service
-	Customer     *customer.Service
-	Search       *search.Service
-	Ticket       *ticket.Service
-	Widget       *widget.Service
-	File         *file.Service
-	Portal       *portal.Service
-	Notification *notification.Service
+	Pool          *database.Pool
+	Logger        *slog.Logger
+	Auth          *auth.Service
+	Workspace     *workspace.Service
+	Conversation  *conversation.Service
+	Inbox         *inbox.Service
+	Customer      *customer.Service
+	Search        *search.Service
+	Ticket        *ticket.Service
+	Widget        *widget.Service
+	File          *file.Service
+	Portal        *portal.Service
+	Notification  *notification.Service
+	Form          *form.Service
+	APIKeys       *apikey.Service
+	Webhook       *webhook.Service
+	Knowledgebase *knowledgebase.Service
+	Feedback      *feedback.Service
+	Survey        *survey.Service
+	SLA           *sla.Service
+	Automation    *automation.Service
+	Analytics     *analytics.Service
+	EmailChannel  *emailchannel.Service
 
 	// Hub answers "who is viewing this conversation right now" for the
 	// Conversation DTO's presence field. Read-only from here — writes to
@@ -115,6 +136,17 @@ func New(deps Deps) http.Handler {
 	registerPortalRoutes(mux, deps)
 	registerPortalAdminRoutes(mux, deps)
 	registerNotificationRoutes(mux, deps)
+	registerFormRoutes(mux, deps)
+	registerAPIKeyRoutes(mux, deps)
+	registerWebhookRoutes(mux, deps)
+	registerKnowledgeBaseRoutes(mux, deps)
+	registerFeedbackRoutes(mux, deps)
+	registerSurveyRoutes(mux, deps)
+	registerSLARoutes(mux, deps)
+	registerAutomationRoutes(mux, deps)
+	registerAnalyticsRoutes(mux, deps)
+	registerEmailChannelRoutes(mux, deps)
+	registerJobRoutes(mux, deps)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound,
@@ -145,8 +177,35 @@ func requireActor(deps Deps, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := httpserver.SessionToken(r)
 		if token == "" {
-			httpserver.WriteError(w, r, http.StatusUnauthorized, httpserver.CodeUnauthorized,
-				"Sign in to continue.")
+			authorizationHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+			bearer := ""
+			if strings.HasPrefix(authorizationHeader, "Bearer ") {
+				bearer = strings.TrimSpace(strings.TrimPrefix(authorizationHeader, "Bearer "))
+			}
+			if deps.APIKeys != nil && bearer != "" {
+				principal, keyErr := deps.APIKeys.Authenticate(r.Context(), bearer)
+				if keyErr != nil {
+					httpserver.WriteError(w, r, http.StatusUnauthorized, httpserver.CodeUnauthorized, "The API key is invalid or expired.")
+					return
+				}
+				if requested := r.Header.Get("Hubchat-Workspace-Id"); requested != "" && requested != principal.WorkspaceID {
+					httpserver.WriteError(w, r, http.StatusForbidden, httpserver.CodeForbidden, "The API key does not belong to this workspace.")
+					return
+				}
+				capabilities := make(map[authorization.Capability]bool, len(principal.Scopes))
+				for _, scope := range principal.Scopes {
+					capabilities[authorization.Capability(scope)] = true
+				}
+				memberID := ""
+				if principal.CreatedBy != nil {
+					memberID = *principal.CreatedBy
+				}
+				actor := &authorization.Actor{MemberID: memberID, WorkspaceID: principal.WorkspaceID, Role: "api_key", Capabilities: capabilities}
+				ctx := authorization.WithActor(r.Context(), actor)
+				next(w, r.WithContext(ctx))
+				return
+			}
+			httpserver.WriteError(w, r, http.StatusUnauthorized, httpserver.CodeUnauthorized, "Sign in to continue.")
 			return
 		}
 
