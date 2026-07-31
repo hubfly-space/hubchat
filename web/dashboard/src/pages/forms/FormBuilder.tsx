@@ -89,15 +89,21 @@ export default function FormBuilder() {
   const form = query.data;
   const [fields, setFields] = useState<FormField[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [routing, setRouting] = useState<LiveForm["routing"]>({ inbox_id: null, team_id: null, tag_ids: [] });
+  const [access, setAccess] = useState<LiveForm["access"]>("public");
+  const [spamProtection, setSpamProtection] = useState<Record<string, unknown>>({});
 
   useEffect(() => {
     if (!form) return;
     setFields(form.fields);
     setActiveId(form.fields[0]?.id ?? null);
+    setRouting({ inbox_id: form.routing?.inbox_id ?? null, team_id: form.routing?.team_id ?? null, tag_ids: form.routing?.tag_ids ?? [] });
+    setAccess(form.access);
+    setSpamProtection(form.spam_protection ?? {});
   }, [form]);
 
   const save = useMutation<void, LiveForm>(
-    () => api.patch<LiveForm>(`/forms/${formId}`, { ...form, fields }),
+    () => api.patch<LiveForm>(`/forms/${formId}`, { ...form, fields, routing, access, spam_protection: spamProtection }),
     { invalidates: [["form", formId], ["forms"]] },
   );
 
@@ -113,7 +119,7 @@ export default function FormBuilder() {
 
   const addField = (type: (typeof FIELD_TYPES)[number]["type"]) => {
     const field: FormField = {
-      id: `ff_${Math.random().toString(36).slice(2, 8)}`,
+      id: `ff_${crypto.randomUUID()}`,
       key: `field_${fields.length + 1}`,
       label: "Untitled field",
       type,
@@ -309,7 +315,8 @@ export default function FormBuilder() {
                       <Field label="Inbox" htmlFor="routing-inbox">
                         <Select
                           id="routing-inbox"
-                          defaultValue={form.routing.inbox_id ?? undefined}
+                          value={routing.inbox_id ?? ""}
+                          onValueChange={(value) => setRouting((current) => ({ ...current, inbox_id: value || null }))}
                           options={(inboxes.data?.data ?? []).map((inbox) => ({ value: inbox.id, label: inbox.name }))}
                           aria-label="Inbox"
                         />
@@ -317,7 +324,8 @@ export default function FormBuilder() {
                       <Field label="Team" htmlFor="routing-team">
                         <Select
                           id="routing-team"
-                          defaultValue={form.routing.team_id ?? undefined}
+                          value={routing.team_id ?? ""}
+                          onValueChange={(value) => setRouting((current) => ({ ...current, team_id: value || null }))}
                           options={(teams.data?.data ?? []).map((team) => ({ value: team.id, label: team.name }))}
                           aria-label="Team"
                         />
@@ -328,7 +336,8 @@ export default function FormBuilder() {
                             <Checkbox
                               key={tag.id}
                               label={tag.name}
-                              defaultChecked={form.routing.tag_ids?.includes(tag.id)}
+                              checked={routing.tag_ids.includes(tag.id)}
+                              onCheckedChange={(checked) => setRouting((current) => ({ ...current, tag_ids: checked === true ? [...new Set([...current.tag_ids, tag.id])] : current.tag_ids.filter((id) => id !== tag.id) }))}
                             />
                           ))}
                         </div>
@@ -343,12 +352,14 @@ export default function FormBuilder() {
                       <Switch
                         label="Require the customer to be signed in"
                         description="Anonymous submissions are rejected."
-                        defaultChecked={form.access === "authenticated"}
+                        checked={access === "authenticated"}
+                        onCheckedChange={(checked) => setAccess(checked ? "authenticated" : "public")}
                       />
                       <Switch
                         label="Spam protection"
                         description="Rate limits by IP and requires a proof-of-work token on public forms."
-                        defaultChecked={Object.keys(form.spam_protection ?? {}).length > 0}
+                        checked={Object.keys(spamProtection).length > 0}
+                        onCheckedChange={(checked) => setSpamProtection(checked ? { rate_limit_per_hour: 10 } : {})}
                       />
                     </CardBody>
                   </Card>

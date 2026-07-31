@@ -139,7 +139,7 @@ export default function RuleBuilder() {
   const addAction = (type: AutomationActionType) =>
     setActions((current) => [
       ...current,
-      { id: `act_${Math.random().toString(36).slice(2, 8)}`, type, params: {} },
+      { id: `act_${idempotencyKey()}`, type, params: {} },
     ]);
 
   return (
@@ -269,13 +269,22 @@ export default function RuleBuilder() {
                       { value: "in", label: "is any of" },
                       { value: "is_set", label: "is set" },
                     ]}
-                    onValueChange={() => undefined}
+                    onValueChange={(value) =>
+                      setConditions((current) =>
+                        current.map((item, i) => (i === index ? { ...item, operator: value as FilterCondition["operator"] } : item)),
+                      )
+                    }
                   />
                   <Input
                     inputSize="sm"
                     className="flex-1"
                     aria-label="Value"
-                    defaultValue={String(condition.value ?? "")}
+                    value={Array.isArray(condition.value) ? condition.value.join(", ") : String(condition.value ?? "")}
+                    onChange={(event) =>
+                      setConditions((current) =>
+                        current.map((item, i) => (i === index ? { ...item, value: event.target.value } : item)),
+                      )
+                    }
                   />
                   <Button
                     variant="ghost"
@@ -327,7 +336,14 @@ export default function RuleBuilder() {
                         <Zap aria-hidden="true" className="size-3 text-accent-text" />
                         {meta?.label ?? action.type}
                       </p>
-                      <ActionParams action={action} members={members} teams={teams} inboxes={inboxes} tags={tags} />
+                      <ActionParams
+                        action={action}
+                        members={members}
+                        teams={teams}
+                        inboxes={inboxes}
+                        tags={tags}
+                        onChange={(params) => setActions((current) => current.map((item) => item.id === action.id ? { ...item, params } : item))}
+                      />
                     </div>
                     <Button
                       variant="ghost"
@@ -448,13 +464,17 @@ function Connector() {
   );
 }
 
-function ActionParams({ action, members, teams, inboxes, tags }: { action: AutomationAction; members: { id: string; name: string }[]; teams: { id: string; name: string }[]; inboxes: { id: string; name: string }[]; tags: { id: string; name: string }[] }) {
+function ActionParams({ action, members, teams, inboxes, tags, onChange }: { action: AutomationAction; members: { id: string; name: string }[]; teams: { id: string; name: string }[]; inboxes: { id: string; name: string }[]; tags: { id: string; name: string }[]; onChange: (params: AutomationAction["params"]) => void }) {
+  const set = (key: string, value: string | number | boolean | string[] | null) => onChange({ ...action.params, [key]: value });
+  const value = (key: string) => String(action.params[key] ?? "");
   switch (action.type) {
     case "assign_member":
       return (
         <Select
           size="sm"
           aria-label="Member"
+          value={value("member_id")}
+          onValueChange={(selected) => set("member_id", selected)}
           options={members.map((member) => ({ value: member.id, label: member.name }))}
         />
       );
@@ -463,6 +483,8 @@ function ActionParams({ action, members, teams, inboxes, tags }: { action: Autom
         <Select
           size="sm"
           aria-label="Team"
+          value={value("team_id")}
+          onValueChange={(selected) => set("team_id", selected)}
           options={teams.map((team) => ({ value: team.id, label: team.name }))}
         />
       );
@@ -471,6 +493,8 @@ function ActionParams({ action, members, teams, inboxes, tags }: { action: Autom
         <Select
           size="sm"
           aria-label="Inbox"
+          value={value("inbox_id")}
+          onValueChange={(selected) => set("inbox_id", selected)}
           options={inboxes.map((inbox) => ({ value: inbox.id, label: inbox.name }))}
         />
       );
@@ -480,6 +504,8 @@ function ActionParams({ action, members, teams, inboxes, tags }: { action: Autom
         <Select
           size="sm"
           aria-label="Tag"
+          value={value("tag_id")}
+          onValueChange={(selected) => set("tag_id", selected)}
           options={tags.map((tag) => ({ value: tag.id, label: tag.name }))}
         />
       );
@@ -488,6 +514,8 @@ function ActionParams({ action, members, teams, inboxes, tags }: { action: Autom
         <Select
           size="sm"
           aria-label="Priority"
+          value={value("priority")}
+          onValueChange={(selected) => set("priority", selected)}
           options={[
             { value: "urgent", label: "Urgent" },
             { value: "high", label: "High" },
@@ -501,6 +529,8 @@ function ActionParams({ action, members, teams, inboxes, tags }: { action: Autom
         <Select
           size="sm"
           aria-label="State"
+          value={value("state")}
+          onValueChange={(selected) => set("state", selected)}
           options={[
             { value: "open", label: "Open" },
             { value: "pending", label: "Pending" },
@@ -511,7 +541,9 @@ function ActionParams({ action, members, teams, inboxes, tags }: { action: Autom
         />
       );
     case "send_message":
-      return <Textarea rows={2} placeholder="Message sent to the customer…" aria-label="Message" />;
+      return <Textarea rows={2} value={value("body")} onChange={(event) => set("body", event.target.value)} placeholder="Message sent to the customer…" aria-label="Message" />;
+    case "send_email":
+      return <div className="space-y-2"><Input inputSize="sm" value={value("to")} onChange={(event) => set("to", event.target.value)} placeholder="recipient@example.com" aria-label="Recipient" /><Input inputSize="sm" value={value("subject")} onChange={(event) => set("subject", event.target.value)} placeholder="Email subject" aria-label="Subject" /><Textarea rows={2} value={value("body")} onChange={(event) => set("body", event.target.value)} placeholder="Email body" aria-label="Email body" /></div>;
     case "invoke_webhook":
       return (
         <Tooltip content="Endpoints are managed in Developers → Webhooks">
@@ -528,7 +560,7 @@ function ActionParams({ action, members, teams, inboxes, tags }: { action: Autom
         </Tooltip>
       );
     case "close_after_inactivity":
-      return <Input inputSize="sm" type="number" suffix="days" defaultValue={7} className="max-w-32" />;
+      return <Input inputSize="sm" type="number" suffix="minutes" value={value("after_minutes")} onChange={(event) => set("after_minutes", Number(event.target.value) || 0)} className="max-w-32" />;
     default:
       return <p className="text-2xs text-fg-muted">No parameters.</p>;
   }

@@ -19,18 +19,11 @@ import { Composer } from "../inbox/Composer";
 import { MessageTimeline } from "../inbox/MessageTimeline";
 
 /**
- * Live demo — the one screen in this dashboard that talks to the real Go
- * backend instead of `data/fixtures.ts`.
- *
- * Every other route in this app (~70 of them) renders from fixtures; that is
- * the whole dashboard's data source today; see the fixtures file's own header
- * for why, and docs/architecture.md's status section for what has a real
- * service layer behind it so far. This page exists to prove — inside the
- * actual running application, not just via curl — that the send path
- * genuinely works: sign in, create a workspace, start a conversation, send a
- * message, and see it land through the realtime WebSocket, using the exact
- * `web/dashboard/src/lib/api.ts` client the rest of the app would use once it
- * is wired up the same way.
+ * Live diagnostic demo. It exercises the real Go backend and PostgreSQL from
+ * inside the dashboard, including auth, workspace creation, messaging, and
+ * realtime delivery. Product routes use their live APIs; this route remains
+ * deliberately separate from the normal navigation because it creates test
+ * data and is intended for installation diagnostics.
  *
  * Intentionally outside AppShell (see router.tsx) — it is a diagnostic tool,
  * not a product surface, and doesn't pretend to be one.
