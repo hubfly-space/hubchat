@@ -20,9 +20,8 @@ type PublicConfig struct {
 	Appearance map[string]any
 	Content    map[string]any
 	Behavior   map[string]any
-	// Articles is always empty until the knowledge base module exists
-	// (Stage 7) — an honest empty slice rather than fixture data standing in
-	// for a feature that is not built yet.
+	// Articles is a small published-only prefetch for instant widget search;
+	// deeper search and article bodies use the origin-gated widget endpoints.
 	Articles []map[string]any
 }
 

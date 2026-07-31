@@ -33,6 +33,7 @@ import {
   TicketPlus,
   UserPlus,
 } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 
 export type ConnectionState = "connected" | "reconnecting" | "offline";
@@ -51,7 +52,13 @@ export function TopBar({
   const notifications = useQuery<{ data: LiveNotification[] }>(["notifications"], (signal) =>
     api.get("/notifications?limit=20", { signal }),
   );
+  const preferences = useQuery<{ data: NotificationPreference[] }>(["notification-preferences"], (signal) =>
+    api.get("/notifications/preferences", { signal }),
+    { staleTime: 60_000 },
+  );
   const { mode, setMode, density, setDensity } = useTheme();
+
+  useBrowserNotifications(notifications.data?.data ?? [], preferences.data?.data ?? [], preferences.isSuccess, navigate);
 
   return (
     <header className="flex h-topbar shrink-0 items-center gap-3 border-b border-line bg-surface px-3">
@@ -137,6 +144,36 @@ export function TopBar({
       </div>
     </header>
   );
+}
+
+type NotificationPreference = { type: string; browser: boolean };
+
+function useBrowserNotifications(items: LiveNotification[], preferences: NotificationPreference[], preferencesReady: boolean, navigate: ReturnType<typeof useNavigate>) {
+  const seen = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (!preferencesReady || seen.current === null) {
+      if (preferencesReady && seen.current === null) seen.current = new Set(items.map((item) => item.id));
+      return;
+    }
+    if (!("Notification" in window) || window.Notification.permission !== "granted") {
+      items.forEach((item) => seen.current?.add(item.id));
+      return;
+    }
+    const enabled = new Set(preferences.filter((item) => item.browser).map((item) => item.type));
+    items.forEach((item) => {
+      if (seen.current?.has(item.id)) return;
+      seen.current?.add(item.id);
+      const preferenceType = item.type === "customer_reply" ? "reply" : item.type;
+      if (item.read_at !== null || !enabled.has(preferenceType)) return;
+      const popup = new window.Notification(item.title, { body: item.body });
+      popup.onclick = () => {
+        window.focus();
+        if (item.url) navigate(item.url);
+        else if (item.entity_id) navigate(`/inbox?conversation=${encodeURIComponent(item.entity_id)}`);
+        popup.close();
+      };
+    });
+  }, [items, preferences, preferencesReady, navigate]);
 }
 
 function ConnectionIndicator({ state }: { state: ConnectionState }) {
