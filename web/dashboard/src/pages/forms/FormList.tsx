@@ -26,6 +26,7 @@ import { ClipboardList, Plus, Settings2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useWorkspace } from "../../app/workspace-context";
 
 type LiveForm = {
   id: string;
@@ -44,6 +45,7 @@ type CreateForm = { name: string; slug: string; purpose: string; access: string;
 /** Intake forms (§6.11). */
 export default function FormList() {
   const navigate = useNavigate();
+  const { workspace } = useWorkspace();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
@@ -112,8 +114,8 @@ export default function FormList() {
 
                     <div className="mt-3 max-w-lg">
                       <CopyField
-                        label="URL"
-                        value={`https://help.northwind.cloud/f/${form.slug}`}
+                        label="Public form endpoint"
+                        value={`${window.location.origin}/api/v1/public/forms/${workspace.id}/${form.slug}`}
                       />
                     </div>
                   </CardBody>

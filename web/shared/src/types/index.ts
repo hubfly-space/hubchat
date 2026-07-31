@@ -1054,7 +1054,7 @@ export type Job = {
   workspace_id: Id | null;
   queue: string;
   type: string;
-  state: "pending" | "running" | "succeeded" | "failed" | "dead";
+  state: "pending" | "running" | "succeeded" | "failed" | "dead" | "cancelled";
   attempt: number;
   max_attempts: number;
   scheduled_at: Timestamp;

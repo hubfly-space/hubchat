@@ -5,6 +5,7 @@ import {
   Callout,
   Card,
   CardBody,
+  ConfirmDialog,
   DataTable,
   EmptyState,
   Metric,
@@ -23,7 +24,7 @@ import {
   type Column,
   type Job,
 } from "@hubchat/shared";
-import { Activity, RotateCcw, Trash2 } from "lucide-react";
+import { Activity, Ban, RotateCcw } from "lucide-react";
 import { useState } from "react";
 
 const STATE: Record<Job["state"], { label: string; tone: BadgeTone }> = {
@@ -32,6 +33,7 @@ const STATE: Record<Job["state"], { label: string; tone: BadgeTone }> = {
   succeeded: { label: "Succeeded", tone: "success" },
   failed: { label: "Failed", tone: "warning" },
   dead: { label: "Dead letter", tone: "danger" },
+  cancelled: { label: "Cancelled", tone: "neutral" },
 };
 
 /** Background job inspection (§8.7). */
@@ -39,6 +41,8 @@ export default function Jobs() {
   const [filter, setFilter] = useState<"all" | Job["state"]>("all");
   const query = useQuery<{ data: Job[] }>(["jobs", "all"], (signal) => api.get("/jobs", { signal }));
   const retry = useMutation<string, unknown>((id) => api.post(`/jobs/${encodeURIComponent(id)}/retry`), { invalidates: [["jobs", filter], ["jobs", "all"]] });
+  const cancel = useMutation<string, unknown>((id) => api.post(`/jobs/${encodeURIComponent(id)}/cancel`), { invalidates: [["jobs", filter], ["jobs", "all"]] });
+  const [cancelling, setCancelling] = useState<Job | null>(null);
   const allRows = query.data?.data ?? [];
   const rows = allRows.filter((job) => filter === "all" || job.state === filter);
   const dead = allRows.filter((job) => job.state === "dead").length;
@@ -164,6 +168,7 @@ export default function Jobs() {
                 { value: "running", label: "Running" },
                 { value: "failed", label: "Failed" },
                 { value: "dead", label: "Dead" },
+                { value: "cancelled", label: "Cancelled" },
               ]}
             />
           }
@@ -182,14 +187,14 @@ export default function Jobs() {
               columns={columns}
               rowKey={(job) => job.id}
               rowActions={(job) =>
-                job.state === "failed" || job.state === "dead" ? (
+                job.state === "pending" || job.state === "failed" || job.state === "dead" ? (
                   <div className="flex gap-0.5">
-                      <Tooltip content="Retry now">
+                    {(job.state === "failed" || job.state === "dead") && <Tooltip content="Retry now">
                       <Button variant="ghost" size="xs" iconOnly aria-label="Retry" leading={<RotateCcw />} onClick={() => void retry.mutate(job.id)} />
-                    </Tooltip>
-                    <Tooltip content="Discard">
-                      <Button variant="ghost" size="xs" iconOnly aria-label="Discard" leading={<Trash2 />} />
-                    </Tooltip>
+                    </Tooltip>}
+                    {job.state === "pending" && <Tooltip content="Cancel pending job">
+                      <Button variant="ghost" size="xs" iconOnly aria-label="Cancel pending job" leading={<Ban />} onClick={() => setCancelling(job)} />
+                    </Tooltip>}
                   </div>
                 ) : null
               }
@@ -203,6 +208,20 @@ export default function Jobs() {
             />
           </CardBody>
         </Card>
+
+        <ConfirmDialog
+          open={cancelling !== null}
+          onOpenChange={(open) => !open && setCancelling(null)}
+          title="Cancel this queued job?"
+          description={cancelling ? `The pending ${cancelling.type} job will be marked cancelled and will not be leased by a worker. You can retry it later from this queue.` : "The pending job will be marked cancelled."}
+          confirmLabel="Cancel job"
+          destructive
+          loading={cancel.isPending}
+          onConfirm={() => {
+            if (!cancelling) return;
+            void cancel.mutate(cancelling.id).then(() => setCancelling(null)).catch(() => {});
+          }}
+        />
 
         <p className="mt-3 text-xs text-fg-muted">
           Jobs can also be inspected and retried from the CLI:{" "}
