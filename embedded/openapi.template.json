@@ -267,6 +267,10 @@
       "get": { "$ref": "#/components/operations/list", "operationId": "listExports", "tags": ["Portability"] },
       "post": { "$ref": "#/components/operations/create", "operationId": "createExport", "tags": ["Portability"] }
     },
+    "/v1/portability/exports/{id}/manifest": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/get", "operationId": "getExportManifest", "tags": ["Portability"] }
+    },
     "/v1/portability/imports": {
       "get": { "$ref": "#/components/operations/list", "operationId": "listImports", "tags": ["Portability"] },
       "post": { "$ref": "#/components/operations/create", "operationId": "createImport", "tags": ["Portability"] }

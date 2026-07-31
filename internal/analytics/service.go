@@ -89,6 +89,9 @@ var metricDefinitions = []MetricDefinition{
 	{Metric: "support.resolution_seconds", Label: "Resolution time", Definition: "Average elapsed wall-clock time from ticket creation to its first resolution timestamp.", Unit: "seconds"},
 	{Metric: "sla.compliance_percent", Label: "SLA compliance", Definition: "SLA instances satisfied divided by all met or breached instances in the selected period.", Unit: "percent"},
 	{Metric: "support.backlog", Label: "Backlog", Definition: "Open conversations and tickets at the end of the selected period."},
+	{Metric: "surfaces.widget.impressions", Label: "Widget impressions", Definition: "Widget mounts recorded by the visitor event channel in the selected period."},
+	{Metric: "surfaces.widget.opens", Label: "Widget opens", Definition: "Widget panels opened by visitors in the selected period."},
+	{Metric: "surfaces.widget.articles_viewed", Label: "Widget article views", Definition: "Knowledge-base articles opened inside the widget in the selected period."},
 }
 
 func (s *Service) MetricDefinitions() []MetricDefinition {
@@ -282,6 +285,7 @@ func metricsForEvent(record events.Record) []eventMetric {
 	var data struct {
 		Channel    string `json:"channel"`
 		AuthorType string `json:"author_type"`
+		Type       string `json:"type"`
 	}
 	_ = json.Unmarshal(record.Data, &data)
 	dimensions := map[string]any{}
@@ -332,6 +336,21 @@ func metricsForEvent(record events.Record) []eventMetric {
 		return []eventMetric{{name: "sla.approaching", dimensions: dimensions}}
 	case events.SLABreached:
 		return []eventMetric{{name: "sla.breached", dimensions: dimensions}}
+	case events.EventReceived:
+		// Customer/visitor application events deliberately enter the shared
+		// event log under one stable envelope type. Only this closed set is
+		// promoted to report metrics; arbitrary application events remain
+		// available to automation and the developer event stream without
+		// silently becoming analytics dimensions.
+		switch data.Type {
+		case "widget.impression":
+			return []eventMetric{{name: "surfaces.widget.impressions", dimensions: dimensions}}
+		case "widget.opened":
+			return []eventMetric{{name: "surfaces.widget.opens", dimensions: dimensions}}
+		case "widget.article_viewed":
+			return []eventMetric{{name: "surfaces.widget.articles_viewed", dimensions: dimensions}}
+		}
+		return nil
 	default:
 		return nil
 	}

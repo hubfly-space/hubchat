@@ -2355,6 +2355,28 @@
         ]
       }
     },
+    "/v1/portability/exports/{id}/manifest": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        }
+      ],
+      "get": {
+        "summary": "Get a resource",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "getExportManifest",
+        "tags": [
+          "Portability"
+        ]
+      }
+    },
     "/v1/portability/imports": {
       "get": {
         "summary": "List resources",
