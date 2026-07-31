@@ -189,6 +189,44 @@
       "get": { "$ref": "#/components/operations/list", "operationId": "listWebhooks", "tags": ["Integrations"] },
       "post": { "$ref": "#/components/operations/create", "operationId": "createWebhook", "tags": ["Integrations"] }
     },
+    "/v1/email/mailboxes": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listEmailMailboxes", "tags": ["Integrations"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "createEmailMailbox", "tags": ["Integrations"] }
+    },
+    "/v1/email/mailboxes/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "patch": { "$ref": "#/components/operations/update", "operationId": "updateEmailMailbox", "tags": ["Integrations"] },
+      "delete": { "$ref": "#/components/operations/delete", "operationId": "deleteEmailMailbox", "tags": ["Integrations"] }
+    },
+    "/v1/email/mailboxes/{id}/delivery-events": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/list", "operationId": "listEmailDeliveryEvents", "tags": ["Integrations"] }
+    },
+    "/v1/email/mailboxes/{id}/suppressions": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/list", "operationId": "listMailboxEmailSuppressions", "tags": ["Integrations"] }
+    },
+    "/v1/email/mailboxes/{id}/suppressions/{address}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/Id" },
+        { "name": "address", "in": "path", "required": true, "schema": { "type": "string" } }
+      ],
+      "delete": { "$ref": "#/components/operations/delete", "operationId": "removeEmailSuppression", "tags": ["Integrations"] }
+    },
+    "/v1/email/suppressions": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listEmailSuppressions", "tags": ["Integrations"] }
+    },
+    "/v1/email/inbound/{provider}": {
+      "parameters": [{ "name": "provider", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": { "$ref": "#/components/operations/publicCreate", "operationId": "receiveInboundEmail", "security": [], "tags": ["Integrations"] }
+    },
+    "/v1/email/delivery/{provider}/{mailboxID}": {
+      "parameters": [
+        { "name": "provider", "in": "path", "required": true, "schema": { "type": "string" } },
+        { "name": "mailboxID", "in": "path", "required": true, "schema": { "type": "string" } }
+      ],
+      "post": { "$ref": "#/components/operations/publicCreate", "operationId": "receiveEmailDeliveryEvent", "security": [], "tags": ["Integrations"] }
+    },
     "/v1/analytics/metrics": {
       "get": { "$ref": "#/components/operations/list", "operationId": "listMetricDefinitions", "tags": ["Analytics"] }
     },
