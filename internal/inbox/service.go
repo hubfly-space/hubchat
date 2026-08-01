@@ -184,3 +184,10 @@ func (s *Service) Get(ctx context.Context, workspaceID, id string) (*Inbox, erro
 func (s *Service) List(ctx context.Context, workspaceID string) ([]Inbox, error) {
 	return s.repo.list(ctx, workspaceID)
 }
+
+// ListPage preserves the default-first configuration order while bounding the
+// result. The HTTP cursor carries the boolean default flag and name; id is the
+// final tie-breaker.
+func (s *Service) ListPage(ctx context.Context, workspaceID string, beforeDefault bool, beforeName, beforeID string, hasCursor bool, limit int) ([]Inbox, error) {
+	return s.repo.listPage(ctx, workspaceID, beforeDefault, beforeName, beforeID, hasCursor, limit)
+}

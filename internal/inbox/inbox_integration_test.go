@@ -92,6 +92,28 @@ func TestCreateInboxRejectsDuplicateSlugAndUnknownChannel(t *testing.T) {
 	}
 }
 
+func TestListInboxPagePreservesDefaultFirstOrder(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	svc := newTestService(t, pool)
+	workspaceID, memberID := seedWorkspace(t, ctx, pool)
+	if _, err := svc.Create(ctx, workspaceID, memberID, "Sales", "sales", nil, nil, nil); err != nil {
+		t.Fatalf("create sales: %v", err)
+	}
+	if _, err := svc.Create(ctx, workspaceID, memberID, "Billing", "billing", nil, nil, nil); err != nil {
+		t.Fatalf("create billing: %v", err)
+	}
+	first, err := svc.ListPage(ctx, workspaceID, false, "", "", false, 1)
+	if err != nil || len(first) != 1 || !first[0].IsDefault {
+		t.Fatalf("first inbox page = %#v, err=%v", first, err)
+	}
+	second, err := svc.ListPage(ctx, workspaceID, first[0].IsDefault, first[0].Name, first[0].ID, true, 1)
+	if err != nil || len(second) != 1 || second[0].IsDefault {
+		t.Fatalf("second inbox page = %#v, err=%v", second, err)
+	}
+}
+
 func TestDeleteInboxRefusesTheLastOne(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.Reset(t, pool)

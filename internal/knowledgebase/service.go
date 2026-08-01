@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -202,6 +203,36 @@ func (s *Service) ListKnowledgeBases(ctx context.Context, workspaceID string) ([
 	return result, rows.Err()
 }
 
+// ListKnowledgeBasesPage returns knowledge bases in the same newest-first
+// order as ListKnowledgeBases, with the created timestamp and id as a stable
+// cursor pair.
+func (s *Service) ListKnowledgeBasesPage(ctx context.Context, workspaceID string, before time.Time, beforeID string, limit int) ([]KnowledgeBase, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := "workspace_id=$1"
+	args := []any{workspaceID}
+	if !before.IsZero() {
+		where += " AND (created_at,id) < ($2,$3)"
+		args = append(args, before, beforeID)
+	}
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, `SELECT id,workspace_id,name,slug,default_language,languages,visibility,article_count,created_at,updated_at FROM knowledge_bases WHERE `+where+` ORDER BY created_at DESC,id DESC LIMIT $`+strconv.Itoa(len(args)), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]KnowledgeBase, 0)
+	for rows.Next() {
+		var item KnowledgeBase
+		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.Slug, &item.DefaultLanguage, &item.Languages, &item.Visibility, &item.ArticleCount, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
 func (s *Service) GetKnowledgeBase(ctx context.Context, workspaceID, id string) (*KnowledgeBase, error) {
 	var item KnowledgeBase
 	err := s.pool.QueryRow(ctx, `SELECT id,workspace_id,name,slug,default_language,languages,visibility,article_count,created_at,updated_at FROM knowledge_bases WHERE workspace_id=$1 AND id=$2`, workspaceID, id).Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.Slug, &item.DefaultLanguage, &item.Languages, &item.Visibility, &item.ArticleCount, &item.CreatedAt, &item.UpdatedAt)
@@ -232,6 +263,35 @@ func (s *Service) CreateCollection(ctx context.Context, workspaceID, kbID string
 
 func (s *Service) ListCollections(ctx context.Context, workspaceID, kbID string) ([]Collection, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id,workspace_id,knowledge_base_id,parent_id,name,slug,coalesce(description,''),coalesce(icon,''),article_count,position,created_at FROM article_collections WHERE workspace_id=$1 AND knowledge_base_id=$2 ORDER BY position,id`, workspaceID, kbID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]Collection, 0)
+	for rows.Next() {
+		var item Collection
+		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.KnowledgeBaseID, &item.ParentID, &item.Name, &item.Slug, &item.Description, &item.Icon, &item.ArticleCount, &item.Position, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+// ListCollectionsPage orders by the user-controlled position and id. The
+// position is carried as the cursor's non-time value by the HTTP layer.
+func (s *Service) ListCollectionsPage(ctx context.Context, workspaceID, kbID string, beforePosition int, beforeID string, hasCursor bool, limit int) ([]Collection, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := "workspace_id=$1 AND knowledge_base_id=$2"
+	args := []any{workspaceID, kbID}
+	if hasCursor {
+		where += " AND (position,id) > ($3,$4)"
+		args = append(args, beforePosition, beforeID)
+	}
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, `SELECT id,workspace_id,knowledge_base_id,parent_id,name,slug,coalesce(description,''),coalesce(icon,''),article_count,position,created_at FROM article_collections WHERE `+where+` ORDER BY position,id LIMIT $`+strconv.Itoa(len(args)), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -526,14 +586,27 @@ func (s *Service) SaveChangelog(ctx context.Context, workspaceID, memberID, id s
 }
 
 func (s *Service) ListChangelog(ctx context.Context, workspaceID string, limit int) ([]ChangelogEntry, error) {
-	if limit <= 0 || limit > 200 {
+	return s.ListChangelogPage(ctx, workspaceID, time.Time{}, "", limit)
+}
+
+// ListChangelogPage returns drafts and published entries in one stable stream.
+// The effective publication/creation timestamp plus id is the cursor because
+// drafts do not have a published_at value yet.
+func (s *Service) ListChangelogPage(ctx context.Context, workspaceID string, before time.Time, beforeID string, limit int) ([]ChangelogEntry, error) {
+	if limit <= 0 || limit > 201 {
 		limit = 100
 	}
-	rows, err := s.pool.Query(ctx, `
+	query := `
 		SELECT id,workspace_id,title,body,kind,feedback_item_id,published_at,created_by,created_at,updated_at
-		FROM changelog_entries WHERE workspace_id=$1
-		ORDER BY coalesce(published_at,created_at) DESC,id DESC LIMIT $2
-	`, workspaceID, limit)
+		FROM changelog_entries WHERE workspace_id=$1`
+	args := []any{workspaceID}
+	if !before.IsZero() {
+		query += ` AND (coalesce(published_at,created_at),id) < ($2,$3)`
+		args = append(args, before, beforeID)
+	}
+	query += fmt.Sprintf(" ORDER BY coalesce(published_at,created_at) DESC,id DESC LIMIT $%d", len(args)+1)
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -554,15 +627,25 @@ func (s *Service) GetChangelog(ctx context.Context, workspaceID, id string) (*Ch
 }
 
 func (s *Service) ListPublishedChangelog(ctx context.Context, workspaceID string, limit int) ([]ChangelogEntry, error) {
+	return s.ListPublishedChangelogPage(ctx, workspaceID, time.Time{}, "", limit)
+}
+
+func (s *Service) ListPublishedChangelogPage(ctx context.Context, workspaceID string, before time.Time, beforeID string, limit int) ([]ChangelogEntry, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	rows, err := s.pool.Query(ctx, `
+	query := `
 		SELECT id,workspace_id,title,body,kind,feedback_item_id,published_at,created_by,created_at,updated_at
 		FROM changelog_entries
-		WHERE workspace_id=$1 AND published_at IS NOT NULL AND published_at <= now()
-		ORDER BY published_at DESC,id DESC LIMIT $2
-	`, workspaceID, limit)
+		WHERE workspace_id=$1 AND published_at IS NOT NULL AND published_at <= now()`
+	args := []any{workspaceID}
+	if !before.IsZero() {
+		query += " AND (published_at,id) < ($2,$3)"
+		args = append(args, before, beforeID)
+	}
+	args = append(args, limit)
+	query += fmt.Sprintf(" ORDER BY published_at DESC,id DESC LIMIT $%d", len(args))
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -644,14 +727,41 @@ func scanChangelog(rows pgx.Rows) ([]ChangelogEntry, error) {
 }
 
 func (s *Service) SearchPublished(ctx context.Context, workspaceID, kbSlug, collectionSlug, query, language, surface string, limit int) ([]SearchResult, error) {
-	query = strings.TrimSpace(query)
-	if limit <= 0 || limit > 50 {
-		limit = 20
+	result, err := s.SearchPublishedPage(ctx, workspaceID, kbSlug, collectionSlug, query, language, nil, time.Time{}, "", limit)
+	if err != nil {
+		return nil, err
 	}
 	if surface == "" {
 		surface = "portal"
 	}
-	rows, err := s.pool.Query(ctx, `SELECT a.id,a.workspace_id,a.knowledge_base_id,a.collection_id,a.title,a.slug,a.excerpt,a.body,a.state,a.language,a.author_id,a.seo,a.view_count,a.helpful_count,a.unhelpful_count,a.version,a.scheduled_at,a.published_at,a.created_at,a.updated_at,ts_rank(setweight(to_tsvector('english',a.title),'A')||setweight(to_tsvector('english',a.excerpt),'B')||setweight(to_tsvector('english',a.body),'C'),websearch_to_tsquery('english',$4)) FROM articles a JOIN knowledge_bases k ON k.id=a.knowledge_base_id LEFT JOIN article_collections c ON c.id=a.collection_id AND c.workspace_id=a.workspace_id AND c.knowledge_base_id=a.knowledge_base_id WHERE a.workspace_id=$1 AND ($2='' OR k.slug=$2) AND ($3='' OR c.slug=$3) AND a.state='published' AND ($5='' OR a.language=$5) AND ($4='' OR (setweight(to_tsvector('english',a.title),'A')||setweight(to_tsvector('english',a.excerpt),'B')||setweight(to_tsvector('english',a.body),'C')) @@ websearch_to_tsquery('english',$4)) ORDER BY 21 DESC,a.published_at DESC LIMIT $6`, workspaceID, kbSlug, collectionSlug, query, language, limit)
+	_, _ = s.pool.Exec(ctx, `INSERT INTO article_searches(id,workspace_id,query,result_count,language,surface) VALUES($1,$2,$3,$4,NULLIF($5,''),$6)`, ids.New(ids.PrefixArticleSearch), workspaceID, strings.TrimSpace(query), len(result), language, surface)
+	return result, nil
+}
+
+// RecordSearch records one logical public search. Paginated follow-up requests
+// deliberately do not create duplicate analytics rows.
+func (s *Service) RecordSearch(ctx context.Context, workspaceID, query, language, surface string, resultCount int) {
+	if surface == "" {
+		surface = "portal"
+	}
+	_, _ = s.pool.Exec(ctx, `INSERT INTO article_searches(id,workspace_id,query,result_count,language,surface) VALUES($1,$2,$3,$4,NULLIF($5,''),$6)`, ids.New(ids.PrefixArticleSearch), workspaceID, strings.TrimSpace(query), resultCount, language, surface)
+}
+
+func (s *Service) SearchPublishedPage(ctx context.Context, workspaceID, kbSlug, collectionSlug, query, language string, beforeRank *float32, before time.Time, beforeID string, limit int) ([]SearchResult, error) {
+	query = strings.TrimSpace(query)
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	rankExpr := "ts_rank(setweight(to_tsvector('english',a.title),'A')||setweight(to_tsvector('english',a.excerpt),'B')||setweight(to_tsvector('english',a.body),'C'),websearch_to_tsquery('english',$4))"
+	args := []any{workspaceID, kbSlug, collectionSlug, query, language}
+	querySQL := `SELECT a.id,a.workspace_id,a.knowledge_base_id,a.collection_id,a.title,a.slug,a.excerpt,a.body,a.state,a.language,a.author_id,a.seo,a.view_count,a.helpful_count,a.unhelpful_count,a.version,a.scheduled_at,a.published_at,a.created_at,a.updated_at,` + rankExpr + ` FROM articles a JOIN knowledge_bases k ON k.id=a.knowledge_base_id LEFT JOIN article_collections c ON c.id=a.collection_id AND c.workspace_id=a.workspace_id AND c.knowledge_base_id=a.knowledge_base_id WHERE a.workspace_id=$1 AND ($2='' OR k.slug=$2) AND ($3='' OR c.slug=$3) AND a.state='published' AND ($5='' OR a.language=$5) AND ($4='' OR (setweight(to_tsvector('english',a.title),'A')||setweight(to_tsvector('english',a.excerpt),'B')||setweight(to_tsvector('english',a.body),'C')) @@ websearch_to_tsquery('english',$4))`
+	if beforeRank != nil {
+		args = append(args, *beforeRank, before, beforeID)
+		querySQL += ` AND (` + rankExpr + `,a.published_at,a.id) < ($6,$7,$8)`
+	}
+	args = append(args, limit)
+	querySQL += ` ORDER BY ` + rankExpr + ` DESC,a.published_at DESC,a.id DESC LIMIT $` + fmt.Sprint(len(args))
+	rows, err := s.pool.Query(ctx, querySQL, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -668,7 +778,6 @@ func (s *Service) SearchPublished(ctx context.Context, workspaceID, kbSlug, coll
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	_, _ = s.pool.Exec(ctx, `INSERT INTO article_searches(id,workspace_id,query,result_count,language,surface) VALUES($1,$2,$3,$4,NULLIF($5,''),$6)`, ids.New(ids.PrefixArticleSearch), workspaceID, query, len(result), language, surface)
 	return result, nil
 }
 

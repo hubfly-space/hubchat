@@ -13,12 +13,12 @@ import (
 )
 
 var (
-	ErrNotFound        = errors.New("inbox: not found")
-	ErrInvalidName     = errors.New("inbox: name is required")
-	ErrInvalidSlug     = errors.New("inbox: slug is required")
-	ErrSlugTaken       = errors.New("inbox: a workspace inbox already uses this slug")
-	ErrInvalidChannel  = errors.New("inbox: not a recognised channel")
-	ErrLastInbox       = errors.New("inbox: a workspace must keep at least one inbox")
+	ErrNotFound         = errors.New("inbox: not found")
+	ErrInvalidName      = errors.New("inbox: name is required")
+	ErrInvalidSlug      = errors.New("inbox: slug is required")
+	ErrSlugTaken        = errors.New("inbox: a workspace inbox already uses this slug")
+	ErrInvalidChannel   = errors.New("inbox: not a recognised channel")
+	ErrLastInbox        = errors.New("inbox: a workspace must keep at least one inbox")
 	ErrHasConversations = errors.New("inbox: this inbox still has conversations; reassign them first")
 )
 
@@ -230,6 +230,37 @@ func (r *repository) list(ctx context.Context, workspaceID string) ([]Inbox, err
 	}
 	defer rows.Close()
 
+	out := []Inbox{}
+	for rows.Next() {
+		i, err := scanInbox(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *i)
+	}
+	return out, rows.Err()
+}
+
+func (r *repository) listPage(ctx context.Context, workspaceID string, beforeDefault bool, beforeName, beforeID string, hasCursor bool, limit int) ([]Inbox, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := "i.workspace_id = $1"
+	args := []any{workspaceID}
+	if hasCursor {
+		where += " AND (NOT i.is_default, i.name, i.id) > (NOT $2, $3, $4)"
+		args = append(args, beforeDefault, beforeName, beforeID)
+	}
+	args = append(args, limit)
+	rows, err := r.pool.Query(ctx, selectInbox+`
+		WHERE `+where+`
+		GROUP BY i.id
+		ORDER BY i.is_default DESC, i.name ASC, i.id ASC
+		LIMIT $`+fmt.Sprint(len(args)), args...)
+	if err != nil {
+		return nil, fmt.Errorf("inbox: list page: %w", err)
+	}
+	defer rows.Close()
 	out := []Inbox{}
 	for rows.Next() {
 		i, err := scanInbox(rows)
