@@ -50,20 +50,35 @@ export function mount({
 
   const shadow = container.attachShadow({ mode: "open" });
 
-  // Keep the style tag as the portable path. Constructable stylesheets are
-  // still unavailable in some embedded browsers and, when their feature
-  // detection is only partially implemented, can fail before React mounts.
-  // A failed stylesheet must never turn into an unstyled widget.
+  // Keep the style tag as the portable path. Some embedded browsers expose
+  // constructable stylesheets but do not reliably apply them to a shadow root
+  // (especially after navigation or when the widget is injected late). A
+  // failed stylesheet must never turn into an unstyled widget.
   const style = document.createElement("style");
   style.setAttribute("data-hubchat-widget-styles", "true");
   style.textContent = styles;
   shadow.appendChild(style);
 
-  // Keep the style tag as the source of truth. Some embedded browsers expose
-  // constructable stylesheets but do not reliably apply them to a shadow root
-  // (especially after navigation or when the widget is injected late). A
-  // second stylesheet is not worth turning a styled support panel into an
-  // unstyled one, so the portable tag stays installed in every browser.
+  // A host page with `style-src 'self'` can block the inline style element even
+  // though the widget script itself is allowed to run. Constructable sheets do
+  // not use an inline style tag, so use one as a compatibility fallback when
+  // the browser reports that the portable sheet did not parse. This keeps the
+  // normal path compatible with older WebViews while preventing a strict CSP
+  // from silently producing the unstyled panel shown by the host page.
+  if (
+    (style.sheet?.cssRules.length ?? 0) === 0 &&
+    "adoptedStyleSheets" in shadow &&
+    typeof CSSStyleSheet !== "undefined" &&
+    "replaceSync" in CSSStyleSheet.prototype
+  ) {
+    try {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(styles);
+      shadow.adoptedStyleSheets = [...shadow.adoptedStyleSheets, sheet];
+    } catch {
+      // The style tag remains the only portable option on older browsers.
+    }
+  }
 
   const mountPoint = document.createElement("div");
   mountPoint.setAttribute("data-density", "comfortable");

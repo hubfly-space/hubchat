@@ -281,8 +281,10 @@ export async function runBrowserJourney({
         hostFontSize: hostStyle.fontSize,
         widgetBackground: widgetStyle.backgroundColor,
         widgetFontSize: widgetStyle.fontSize,
+        widgetFontFamily: widgetStyle.fontFamily,
         widgetWidth: widgetStyle.width,
         hasStylesheet: Boolean(shadow.querySelector('style[data-hubchat-widget-styles]')),
+        stylesheetRules: shadow.querySelector('style[data-hubchat-widget-styles]')?.sheet?.cssRules.length ?? 0,
         launcherLabel: launcher.getAttribute("aria-label"),
       };
     })()`);
@@ -291,7 +293,9 @@ export async function runBrowserJourney({
     assert(widgetState.hostFontSize === "32px", "host CSS regression: hostile button font size changed");
     assert(widgetState.widgetBackground === "rgb(59, 110, 246)", "widget CSS regression: accent style did not load");
     assert(widgetState.widgetFontSize !== "32px", "widget CSS regression: host font leaked into shadow root");
+    assert(widgetState.widgetFontFamily.includes("Inter"), "widget CSS regression: widget font reset did not load");
     assert(widgetState.hasStylesheet, "widget CSS was not installed in the shadow root");
+    assert(widgetState.stylesheetRules > 0 || widgetState.widgetFontFamily.includes("Inter"), "widget CSS regression: installed stylesheet contains no usable rules");
 
     const alreadyOpen = await browser.page.evaluate("Boolean(document.querySelector('#hubchat-widget')?.shadowRoot?.querySelector('[role=dialog]'))");
     if (!alreadyOpen) await browser.page.evaluate("document.querySelector('#host-open').click()");
