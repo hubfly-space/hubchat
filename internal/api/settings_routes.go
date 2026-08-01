@@ -32,6 +32,12 @@ func registerSettingsRoutes(mux *http.ServeMux, deps Deps) {
 		requireCapability(deps, authorization.WorkspaceManageSecurity, Idempotency(deps)(handleUpdateSecurity(deps))))
 	mux.HandleFunc("PATCH /v1/workspace/privacy",
 		requireCapability(deps, authorization.WorkspaceManageSecurity, Idempotency(deps)(handleUpdatePrivacy(deps))))
+	mux.HandleFunc("GET /v1/workspace/legal-holds",
+		requireCapability(deps, authorization.WorkspaceManageSecurity, handleListLegalHolds(deps)))
+	mux.HandleFunc("POST /v1/workspace/legal-holds",
+		requireCapability(deps, authorization.WorkspaceManageSecurity, Idempotency(deps)(handleCreateLegalHold(deps))))
+	mux.HandleFunc("POST /v1/workspace/legal-holds/{id}/release",
+		requireCapability(deps, authorization.WorkspaceManageSecurity, Idempotency(deps)(handleReleaseLegalHold(deps))))
 }
 
 func handleGetUsage(deps Deps) http.HandlerFunc {
@@ -143,6 +149,11 @@ func handleUpdateSecurity(deps Deps) http.HandlerFunc {
 			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed request body.")
 			return
 		}
+		if security.RequireSSO && deps.Auth.OAuthProvider() == nil {
+			httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError,
+				"Organization SSO is not configured for this deployment.")
+			return
+		}
 
 		settings, err := deps.Workspace.UpdateSecuritySettings(r.Context(), actor.WorkspaceID, actor.MemberID, security)
 		if err != nil {
@@ -172,12 +183,68 @@ func handleUpdatePrivacy(deps Deps) http.HandlerFunc {
 	}
 }
 
+type createLegalHoldRequest struct {
+	Category string `json:"category"`
+	Reason   string `json:"reason"`
+}
+
+func handleListLegalHolds(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed legal hold cursor.")
+			return
+		}
+		holds, err := deps.Workspace.ListLegalHoldsPage(r.Context(), actor.WorkspaceID, r.URL.Query().Get("include_released") == "true", cursor.At, cursor.ID, limit+1)
+		if err != nil {
+			writeSettingsError(w, r, err)
+			return
+		}
+		page := NewPage(holds, limit, func(item workspace.LegalHold) Cursor {
+			return Cursor{At: item.CreatedAt, ID: item.ID}
+		})
+		httpserver.WriteJSON(w, http.StatusOK, page)
+	}
+}
+
+func handleCreateLegalHold(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		var req createLegalHoldRequest
+		if err := httpserver.DecodeJSON(r, &req); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed request body.")
+			return
+		}
+		hold, err := deps.Workspace.CreateLegalHold(r.Context(), actor.WorkspaceID, actor.MemberID, workspace.LegalHoldInput{Category: req.Category, Reason: req.Reason})
+		if err != nil {
+			writeSettingsError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, hold)
+	}
+}
+
+func handleReleaseLegalHold(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		hold, err := deps.Workspace.ReleaseLegalHold(r.Context(), actor.WorkspaceID, actor.MemberID, r.PathValue("id"))
+		if err != nil {
+			writeSettingsError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, hold)
+	}
+}
+
 func writeSettingsError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
-	case errors.Is(err, workspace.ErrInvalidName), errors.Is(err, workspace.ErrInvalidSettings):
+	case errors.Is(err, workspace.ErrInvalidName), errors.Is(err, workspace.ErrInvalidSettings), errors.Is(err, workspace.ErrInvalidLegalHold):
 		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, err.Error())
 	case errors.Is(err, workspace.ErrNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Workspace not found.")
+	case errors.Is(err, workspace.ErrLegalHoldNotFound):
+		httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Legal hold not found in this workspace.")
 	default:
 		httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Something went wrong.")
 	}

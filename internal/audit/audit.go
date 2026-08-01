@@ -72,8 +72,11 @@ const (
 	CustomerDeleted     Action = "customer.deleted"
 	// SensitiveRevealed records a deliberate reveal of a masked field
 	// (§12 audit on reveal).
-	SensitiveRevealed Action = "customer.sensitive_revealed"
-	DataExported      Action = "data.exported"
+	SensitiveRevealed  Action = "customer.sensitive_revealed"
+	DataExported       Action = "data.exported"
+	OpsTestEmailQueued Action = "ops.test_email_queued"
+	LegalHoldCreated   Action = "legal_hold.created"
+	LegalHoldReleased  Action = "legal_hold.released"
 )
 
 // ActorType mirrors the CHECK constraint on audit_logs.actor_type.
@@ -132,6 +135,28 @@ type Log struct {
 // New returns a Log backed by pool.
 func New(pool *database.Pool) *Log {
 	return &Log{pool: pool}
+}
+
+// RetentionSweep removes audit rows past each workspace's configured audit
+// window. The audit log remains append-only to application code; this is the
+// explicit whole-range retention operation allowed by the privacy policy.
+func (l *Log) RetentionSweep(ctx context.Context) (int64, error) {
+	tag, err := l.pool.Exec(ctx, `
+		DELETE FROM audit_logs al
+		USING workspaces w
+		WHERE al.workspace_id = w.id
+		  AND coalesce((w.settings #>> '{privacy,retention_days,audit_logs}')::int, 0) > 0
+		  AND al.occurred_at < now() - make_interval(days => (w.settings #>> '{privacy,retention_days,audit_logs}')::int)
+		  AND NOT EXISTS (
+				SELECT 1 FROM workspace_legal_holds lh
+				WHERE lh.workspace_id = w.id AND lh.released_at IS NULL
+				  AND lh.category IN ('all', 'audit')
+			)
+	`)
+	if err != nil {
+		return 0, fmt.Errorf("audit: retention sweep: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }
 
 // Record writes an entry on its own transaction.

@@ -511,7 +511,7 @@ func handleWidgetArticle(deps Deps) http.HandlerFunc {
 			writeWidgetError(w, r, err)
 			return
 		}
-		article, err := deps.Knowledgebase.GetPublishedBySlug(r.Context(), item.WorkspaceID, r.PathValue("slug"))
+		article, err := deps.Knowledgebase.GetPublishedBySlugSurface(r.Context(), item.WorkspaceID, r.PathValue("slug"), "widget")
 		if err != nil {
 			if errors.Is(err, knowledgebase.ErrNotFound) {
 				httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Article not found.")
@@ -539,7 +539,7 @@ func handleWidgetArticleFeedback(deps Deps) http.HandlerFunc {
 			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed article feedback.")
 			return
 		}
-		article, err := deps.Knowledgebase.GetPublishedBySlug(r.Context(), item.WorkspaceID, r.PathValue("slug"))
+		article, err := deps.Knowledgebase.GetPublishedBySlugSurface(r.Context(), item.WorkspaceID, r.PathValue("slug"), "widget")
 		if err != nil {
 			writeKnowledgebaseError(w, r, err)
 			return
