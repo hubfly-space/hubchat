@@ -13,6 +13,7 @@ import (
 
 	"github.com/hubchat/hubchat/internal/customer"
 	"github.com/hubchat/hubchat/internal/database"
+	"github.com/hubchat/hubchat/internal/feedback"
 	filemodule "github.com/hubchat/hubchat/internal/file"
 	"github.com/hubchat/hubchat/internal/ids"
 	"github.com/hubchat/hubchat/internal/jobs"
@@ -24,12 +25,14 @@ import (
 const (
 	JobExport                 = "portability.export"
 	JobImport                 = "portability.import"
+	JobExpireExports          = "portability.expire_exports"
 	importBatchSize           = 100
 	maxArchiveBytes           = 512 << 20
 	KindWorkspace             = "workspace"
 	KindCustomersCSV          = "customers_csv"
 	KindCompaniesCSV          = "companies_csv"
 	KindTicketsCSV            = "tickets_csv"
+	KindFeedbackCSV           = "feedback_csv"
 	KindKnowledgeBaseMarkdown = "knowledgebase_markdown"
 )
 
@@ -84,6 +87,7 @@ type Service struct {
 	jobs          *jobs.Client
 	customers     *customer.Service
 	tickets       *ticket.Service
+	feedback      *feedback.Service
 	knowledgebase *knowledgebase.Service
 }
 
@@ -102,6 +106,11 @@ func (s *Service) SetTicketImporter(importer *ticket.Service) {
 	s.tickets = importer
 }
 
+// SetFeedbackImporter attaches the domain service used by feedback CSV jobs.
+func (s *Service) SetFeedbackImporter(importer *feedback.Service) {
+	s.feedback = importer
+}
+
 // SetKnowledgeBaseImporter attaches the service used by Markdown article
 // imports. Articles are upserted by workspace, knowledge base, language, and
 // slug so a resumed job cannot create a duplicate.
@@ -110,11 +119,8 @@ func (s *Service) SetKnowledgeBaseImporter(importer *knowledgebase.Service) {
 }
 
 func (s *Service) CreateExport(ctx context.Context, workspaceID, memberID, kind string, scope map[string]any) (*Request, error) {
-	if kind == "" {
-		kind = "workspace"
-	}
-	if kind != "workspace" {
-		return nil, errors.New("portability: only workspace archives are currently supported")
+	if err := validateExportKind(kind); err != nil {
+		return nil, err
 	}
 	if scope == nil {
 		scope = map[string]any{}
@@ -143,6 +149,27 @@ func (s *Service) CreateExport(ctx context.Context, workspaceID, memberID, kind 
 		return nil, err
 	}
 	return s.Get(ctx, workspaceID, id)
+}
+
+// PreviewExport reads the workspace archive inputs without creating a job or
+// file. Callers can use the result to show the operator what will be included
+// before the irreversible download is generated.
+func (s *Service) PreviewExport(ctx context.Context, workspaceID, kind string, scope map[string]any) ([]TableSummary, error) {
+	if err := validateExportKind(kind); err != nil {
+		return nil, err
+	}
+	_, summaries, err := Export(ctx, s.pool, workspaceID, time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	return summaries, nil
+}
+
+func validateExportKind(kind string) error {
+	if kind == "" || kind == KindWorkspace {
+		return nil
+	}
+	return errors.New("portability: only workspace archives are currently supported")
 }
 
 func (s *Service) CreateImport(ctx context.Context, workspaceID, memberID, fileID, kind string, mapping map[string]any, start bool) (*Request, error) {
@@ -416,6 +443,83 @@ func (s *Service) ExportManifest(ctx context.Context, workspaceID, id string) (*
 		}
 	}
 	return manifest, nil
+}
+
+// SweepExpiredExports removes archive bytes after their download window while
+// retaining the request row as an audit record. The sweep is safe to rerun:
+// a failed storage deletion leaves the row eligible for the next attempt, and
+// a successful deletion makes the foreign-key file_id nullable before the row
+// is marked expired.
+func (s *Service) SweepExpiredExports(ctx context.Context, now time.Time, limit int) (int, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, workspace_id, file_id
+		FROM export_requests
+		WHERE state IN ('completed','expired')
+		  AND expires_at IS NOT NULL AND expires_at <= $1
+		ORDER BY expires_at ASC, id ASC
+		LIMIT $2
+	`, now, limit)
+	if err != nil {
+		return 0, fmt.Errorf("portability: list expired exports: %w", err)
+	}
+	type candidate struct {
+		id, workspaceID string
+		fileID          *string
+	}
+	candidates := make([]candidate, 0, limit)
+	for rows.Next() {
+		var item candidate
+		if err := rows.Scan(&item.id, &item.workspaceID, &item.fileID); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("portability: scan expired export: %w", err)
+		}
+		candidates = append(candidates, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+
+	removed := 0
+	var firstErr error
+	for _, item := range candidates {
+		if item.fileID != nil && strings.TrimSpace(*item.fileID) != "" {
+			if s.files == nil {
+				if firstErr == nil {
+					firstErr = errors.New("portability: file service is unavailable")
+				}
+				continue
+			}
+			if err := s.files.Delete(ctx, item.workspaceID, *item.fileID); err != nil {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("portability: delete expired export %s: %w", item.id, err)
+				}
+				continue
+			}
+		}
+		result, err := s.pool.Exec(ctx, `
+			UPDATE export_requests
+			SET state='expired'
+			WHERE id=$1 AND workspace_id=$2
+			  AND state IN ('completed','expired')
+			  AND expires_at IS NOT NULL AND expires_at <= $3
+		`, item.id, item.workspaceID, now)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("portability: expire export %s: %w", item.id, err)
+			}
+			continue
+		}
+		removed += int(result.RowsAffected())
+	}
+	return removed, firstErr
 }
 
 func (s *Service) RunExport(ctx context.Context, id string) error {

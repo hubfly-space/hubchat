@@ -63,6 +63,27 @@ func TestExportManifestIncludesChecksumAndAttachmentTotals(t *testing.T) {
 	}
 }
 
+func TestExportIncludesCurrentTenantOperationalTables(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id,name,slug) VALUES ('wrk_manifest_tables','Manifest tables','manifest-tables')`); err != nil {
+		t.Fatal(err)
+	}
+	archive, _, err := Export(ctx, pool, "wrk_manifest_tables", time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"teams", "team_routing_cursors", "customer_notification_preferences",
+		"email_delivery_events", "email_suppressions",
+	} {
+		if _, ok := archive.Tables[name]; !ok {
+			t.Fatalf("archive is missing current tenant table %q", name)
+		}
+	}
+}
+
 func TestImportChunkResumesAndRemapsWorkspaceRows(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.Reset(t, pool)
@@ -114,5 +135,127 @@ func TestImportChunkResumesAndRemapsWorkspaceRows(t *testing.T) {
 	}
 	if targetCount != 2 || otherCount != 1 {
 		t.Fatalf("tag counts target=%d other=%d", targetCount, otherCount)
+	}
+}
+
+func TestImportTeamClearsForeignLeadButPreservesRoutingConfig(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspaces (id,name,slug) VALUES
+			('wrk_team_source','Team source','team-source'),
+			('wrk_team_target','Team target','team-target')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	teamIndex := -1
+	for index, spec := range tableSpecs {
+		if spec.name == "teams" {
+			teamIndex = index
+			break
+		}
+	}
+	if teamIndex < 0 {
+		t.Fatal("teams archive table is missing")
+	}
+	archive := &Archive{
+		Version:           CurrentVersion,
+		SourceWorkspaceID: "wrk_team_source",
+		ExportedAt:        time.Now().UTC(),
+		Tables: map[string][]json.RawMessage{
+			"teams": {json.RawMessage(`{"id":"team_imported","workspace_id":"wrk_team_source","name":"Support","description":"","lead_id":"member_from_source","routing_strategy":"round_robin","routing_config":{"languages":["fr"]},"created_at":"2026-07-31T00:00:00Z"}`)},
+		},
+	}
+	nextTable, nextRow, processed, done, err := ImportChunk(ctx, pool, archive, "wrk_team_target", teamIndex, 0, 1)
+	if err != nil || !done || processed != 1 || nextTable != len(tableSpecs) || nextRow != 0 {
+		t.Fatalf("team import cursor = table %d row %d processed %d done %t err %v", nextTable, nextRow, processed, done, err)
+	}
+	var leadID *string
+	var routingConfig map[string]any
+	if err := pool.QueryRow(ctx, `SELECT lead_id,routing_config FROM teams WHERE workspace_id='wrk_team_target' AND id='team_imported'`).Scan(&leadID, &routingConfig); err != nil {
+		t.Fatal(err)
+	}
+	if leadID != nil || routingConfig["languages"] == nil {
+		t.Fatalf("imported team lead=%v routing=%v", leadID, routingConfig)
+	}
+}
+
+func TestImportSkipsPreferencesForMissingTargetMember(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id,name,slug) VALUES ('wrk_pref_target','Preference target','pref-target')`); err != nil {
+		t.Fatal(err)
+	}
+	preferenceIndex := -1
+	for index, spec := range tableSpecs {
+		if spec.name == "notification_preferences" {
+			preferenceIndex = index
+			break
+		}
+	}
+	if preferenceIndex < 0 {
+		t.Fatal("notification preferences archive table is missing")
+	}
+	archive := &Archive{
+		Version:           CurrentVersion,
+		SourceWorkspaceID: "wrk_pref_source",
+		ExportedAt:        time.Now().UTC(),
+		Tables: map[string][]json.RawMessage{
+			"notification_preferences": {json.RawMessage(`{"workspace_id":"wrk_pref_source","member_id":"member_from_source","type":"reply","in_app":true,"email":false,"browser":false,"sound":false}`)},
+		},
+	}
+	nextTable, nextRow, processed, done, err := ImportChunk(ctx, pool, archive, "wrk_pref_target", preferenceIndex, 0, 1)
+	if err != nil || !done || processed != 1 || nextTable != len(tableSpecs) || nextRow != 0 {
+		t.Fatalf("preference import cursor = table %d row %d processed %d done %t err %v", nextTable, nextRow, processed, done, err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM notification_preferences WHERE workspace_id='wrk_pref_target'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("imported %d preference rows for a missing target member", count)
+	}
+}
+
+func TestSweepExpiredExportsRemovesArchiveAndRetainsAuditRow(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id,name,slug) VALUES ('wrk_expired_export','Expired export','expired-export')`); err != nil {
+		t.Fatal(err)
+	}
+	store, err := filemodule.NewLocalStore(t.TempDir(), 1<<20, []string{"application/gzip"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := filemodule.New(pool, store)
+	record, err := files.Create(ctx, "wrk_expired_export", filemodule.UploadInput{
+		Name: "expired.json.gz", MIMEType: "application/gzip", SizeBytes: 3,
+		Body: bytes.NewReader([]byte("zip")), OwnerType: "workspace", OwnerID: "wrk_expired_export", UploadedByType: "system",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO export_requests (id,workspace_id,kind,format,state,file_id,expires_at) VALUES ('exp_expired','wrk_expired_export','workspace','json','completed',$1,now()-interval '1 minute')`, record.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	service := New(pool, files, nil)
+	removed, err := service.SweepExpiredExports(ctx, time.Now().UTC(), 10)
+	if err != nil || removed != 1 {
+		t.Fatalf("sweep removed=%d err=%v, want one removal", removed, err)
+	}
+	var state string
+	var fileID *string
+	if err := pool.QueryRow(ctx, `SELECT state,file_id FROM export_requests WHERE id='exp_expired'`).Scan(&state, &fileID); err != nil {
+		t.Fatal(err)
+	}
+	if state != "expired" || fileID != nil {
+		t.Fatalf("expired request state=%q file_id=%v", state, fileID)
+	}
+	if _, err := files.Get(ctx, "wrk_expired_export", record.ID); err == nil {
+		t.Fatal("expired archive metadata still exists")
 	}
 }
