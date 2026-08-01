@@ -26,7 +26,9 @@ import {
   cn,
   idempotencyKey,
   useMutation,
+  useAllPages,
   useQuery,
+  type Paginated,
 } from "@hubchat/shared";
 import {
   AlignLeft,
@@ -84,9 +86,9 @@ const FIELD_TYPES = [
 export default function FormBuilder() {
   const { formId } = useParams();
   const query = useQuery<LiveForm>(formId ? ["form", formId] : null, (signal) => api.get(`/forms/${formId}`, { signal }), { enabled: Boolean(formId) });
-  const inboxes = useQuery<{ data: { id: string; name: string }[] }>(["inboxes"], (signal) => api.get("/inboxes", { signal }));
-  const teams = useQuery<{ data: { id: string; name: string }[] }>(["teams"], (signal) => api.get("/teams", { signal }));
-  const tags = useQuery<{ data: { id: string; name: string }[] }>(["tags"], (signal) => api.get("/tags", { signal }));
+  const inboxes = useAllPages<{ id: string; name: string }>(["inboxes", "lookup"], (cursor, signal) => api.get<Paginated<{ id: string; name: string }>>(`/inboxes?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
+  const teams = useAllPages<{ id: string; name: string }>(["teams", "lookup"], (cursor, signal) => api.get<Paginated<{ id: string; name: string }>>(`/teams?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
+  const tags = useAllPages<{ id: string; name: string }>(["tags", "lookup"], (cursor, signal) => api.get<Paginated<{ id: string; name: string }>>(`/tags?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
   const form = query.data;
   const [fields, setFields] = useState<FormField[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -331,7 +333,7 @@ export default function FormBuilder() {
                           id="routing-inbox"
                           value={routing.inbox_id ?? ""}
                           onValueChange={(value) => setRouting((current) => ({ ...current, inbox_id: value || null }))}
-                          options={(inboxes.data?.data ?? []).map((inbox) => ({ value: inbox.id, label: inbox.name }))}
+                          options={inboxes.items.map((inbox) => ({ value: inbox.id, label: inbox.name }))}
                           aria-label="Inbox"
                         />
                       </Field>
@@ -340,13 +342,13 @@ export default function FormBuilder() {
                           id="routing-team"
                           value={routing.team_id ?? ""}
                           onValueChange={(value) => setRouting((current) => ({ ...current, team_id: value || null }))}
-                          options={(teams.data?.data ?? []).map((team) => ({ value: team.id, label: team.name }))}
+                          options={teams.items.map((team) => ({ value: team.id, label: team.name }))}
                           aria-label="Team"
                         />
                       </Field>
                       <Field label="Automatic tags">
                         <div className="flex flex-wrap gap-1.5">
-                          {(tags.data?.data ?? []).slice(0, 4).map((tag) => (
+                          {tags.items.slice(0, 4).map((tag) => (
                             <Checkbox
                               key={tag.id}
                               label={tag.name}

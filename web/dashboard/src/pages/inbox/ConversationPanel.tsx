@@ -18,17 +18,19 @@ import {
   MenuSub,
   MenuTrigger,
   PriorityIndicator,
-  QueryBoundary,
   TagChip,
   Tooltip,
   idempotencyKey,
   invalidate,
+  useInfinite,
+  useAllPages,
   useMutation,
   useQuery,
   type Conversation,
   type Customer,
   type Inbox,
   type Message,
+  type Paginated,
 } from "@hubchat/shared";
 import {
   AlertOctagon,
@@ -78,9 +80,9 @@ export function ConversationPanel({
   const assignee = memberById(conversation.assignee_id);
   const viewers = conversation.viewers.map(memberById).filter(Boolean);
 
-  const messages = useQuery<{ data: Message[] }>(
+  const messages = useInfinite<Message>(
     ["conversation-messages", conversation.id],
-    (signal) => api.get(`/conversations/${conversation.id}/messages`, { signal }),
+    (cursor, signal) => api.get<Paginated<Message>>(`/conversations/${conversation.id}/messages?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }),
   );
   const customer = useQuery<Customer>(
     conversation.customer_id ? ["customer", conversation.customer_id] : null,
@@ -336,17 +338,7 @@ export function ConversationPanel({
 
       {/* Timeline ---------------------------------------------------------- */}
       <div className="min-h-0 flex-1 overflow-y-auto" onClick={() => void markRead.mutate().catch(() => {})}>
-        <QueryBoundary query={messages}>
-          {({ data }) =>
-            data.length > 0 ? (
-              <MessageTimeline messages={data} />
-            ) : (
-              <div className="flex h-full items-center justify-center p-8 text-center text-xs text-fg-muted">
-                No messages yet.
-              </div>
-            )
-          }
-        </QueryBoundary>
+        {messages.isLoading ? <p className="p-8 text-center text-xs text-fg-muted">Loading messages…</p> : messages.error ? <p className="p-8 text-center text-xs text-danger">Could not load messages.</p> : messages.items.length > 0 ? <><div className="flex justify-center px-5 pt-4">{messages.hasMore && <Button variant="ghost" size="xs" loading={messages.isFetching} onClick={() => void messages.fetchNext()}>Load older messages</Button>}</div><MessageTimeline messages={messages.items} /></> : <div className="flex h-full items-center justify-center p-8 text-center text-xs text-fg-muted">No messages yet.</div>}
       </div>
 
       <Composer
@@ -428,11 +420,11 @@ function AssigneeItems({
 }
 
 function MoveToInboxMenu({ currentInboxId, onPick }: { currentInboxId: string; onPick: (id: string) => void }) {
-  const inboxes = useQuery<{ data: Inbox[] }>(["inboxes"], (signal) => api.get("/inboxes", { signal }));
+  const inboxes = useAllPages<Inbox>(["inboxes", "lookup"], (cursor, signal) => api.get<Paginated<Inbox>>(`/inboxes?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
 
   return (
     <MenuSub label="Move to inbox" icon={<Flag />}>
-      {(inboxes.data?.data ?? [])
+      {inboxes.items
         .filter((inbox) => inbox.id !== currentInboxId)
         .map((inbox) => (
           <MenuItem key={inbox.id} onSelect={() => onPick(inbox.id)}>

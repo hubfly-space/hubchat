@@ -4,6 +4,7 @@ import {
   cn,
   invalidate,
   useHotkey,
+  useAllPages,
   useInfinite,
   useQuery,
   type Conversation,
@@ -36,15 +37,15 @@ export default function InboxPage() {
   const { viewer } = useWorkspace();
   const [showContext, setShowContext] = useState(true);
 
-  const inboxes = useQuery<{ data: Inbox[] }>(["inboxes"], (signal) => api.get("/inboxes", { signal }));
+  const inboxes = useAllPages<Inbox>(["inboxes", "lookup"], (cursor, signal) => api.get<Paginated<Inbox>>(`/inboxes?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
   const savedViews = useInfinite<SavedView>(["saved-views", "conversation"], (cursor, signal) => {
     const params = new URLSearchParams({ entity_type: "conversation", limit: "50" });
     if (cursor) params.set("cursor", cursor);
     return api.get<Paginated<SavedView>>(`/saved-views?${params.toString()}`, { signal });
   });
   const filterParams = useMemo(
-    () => viewFilterParams(viewId, viewer.id, inboxes.data?.data ?? [], savedViews.items),
-    [viewId, viewer.id, inboxes.data, savedViews.items],
+    () => viewFilterParams(viewId, viewer.id, inboxes.items, savedViews.items),
+    [viewId, viewer.id, inboxes.items, savedViews.items],
   );
 
   const list = useInfinite<Conversation>(
@@ -116,7 +117,7 @@ export default function InboxPage() {
         customersById={customersById}
         activeId={conversation?.id ?? null}
         onSelect={open}
-        viewName={viewLabel(viewId, inboxes.data?.data ?? [], savedViews.items)}
+        viewName={viewLabel(viewId, inboxes.items, savedViews.items)}
         onBulkAssignToMe={(ids) => void bulkAssignToMe(ids)}
         onBulkResolve={(ids) => void bulkResolve(ids)}
         bulkPending={bulkPending}

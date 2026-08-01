@@ -10,6 +10,7 @@ import {
   Select,
   Tooltip,
   idempotencyKey,
+  useAllPages,
   useInfinite,
   useMutation,
   useQuery,
@@ -62,7 +63,7 @@ export function InboxSidebar() {
   const [state, setState] = useState("");
 
   const counts = useQuery<Counts>(["conversation-counts"], (signal) => api.get("/conversations/counts", { signal }));
-  const inboxes = useQuery<{ data: Inbox[] }>(["inboxes"], (signal) => api.get("/inboxes", { signal }));
+  const inboxes = useAllPages<Inbox>(["inboxes", "lookup"], (cursor, signal) => api.get<Paginated<Inbox>>(`/inboxes?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
   const savedViews = useInfinite<SavedView>(["saved-views", "conversation"], (cursor, signal) => {
     const params = new URLSearchParams({ entity_type: "conversation", limit: "50" });
     if (cursor) params.set("cursor", cursor);
@@ -206,7 +207,7 @@ export function InboxSidebar() {
         <div>
           <Eyebrow className="px-2 pb-1.5">Inboxes</Eyebrow>
           <ul className="flex flex-col gap-px">
-            {(inboxes.data?.data ?? []).map((inbox) => (
+            {inboxes.items.map((inbox) => (
               <li key={inbox.id}>
                 <SidebarItem
                   to={`/inbox/${inbox.slug}`}
