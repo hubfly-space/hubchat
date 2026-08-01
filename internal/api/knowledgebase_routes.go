@@ -349,7 +349,11 @@ func handlePublicArticleSearch(deps Deps) http.HandlerFunc {
 
 func handlePublicArticle(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		item, err := deps.Knowledgebase.GetPublishedBySlug(r.Context(), r.PathValue("workspaceID"), r.PathValue("slug"))
+		surface := r.URL.Query().Get("surface")
+		if surface == "" {
+			surface = "portal"
+		}
+		item, err := deps.Knowledgebase.GetPublishedBySlugSurface(r.Context(), r.PathValue("workspaceID"), r.PathValue("slug"), surface)
 		if errors.Is(err, knowledgebase.ErrNotFound) {
 			httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Article not found.")
 			return
@@ -372,7 +376,7 @@ func handlePublicArticleFeedback(deps Deps) http.HandlerFunc {
 			writeKnowledgebaseValidation(w, r, err)
 			return
 		}
-		article, err := deps.Knowledgebase.GetPublishedBySlug(r.Context(), r.PathValue("workspaceID"), r.PathValue("slug"))
+		article, err := deps.Knowledgebase.GetPublishedBySlugSurface(r.Context(), r.PathValue("workspaceID"), r.PathValue("slug"), "portal")
 		if err != nil {
 			writeKnowledgebaseError(w, r, err)
 			return
