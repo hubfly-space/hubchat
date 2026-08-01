@@ -22,18 +22,17 @@ var (
 	ErrSelfRemoval       = errors.New("workspace: use the account settings to leave a workspace")
 )
 
-// builtinRoles mirrors the CHECK constraint on workspace_members.role
-// (migration 0001). Custom roles are explicitly deferred by the product
-// itself (§5.9: "Custom roles can be added after the initial release") — this
-// module assigns one of these six and nothing else.
+// builtinRoles is the global role catalog. Workspace custom roles live in the
+// roles table and are validated through the workspace service before being
+// assigned.
 var builtinRoles = map[string]bool{
 	"owner": true, "admin": true, "manager": true,
 	"agent": true, "developer": true, "analyst": true,
 }
 
-// ValidRole reports whether role is one of the built-in roles a member may
-// hold. Exported so the HTTP layer can validate before calling SetMemberRole
-// and return a clean 422 rather than a generic 500.
+// ValidRole reports whether role is one of the built-in role keys. It remains
+// useful to callers that only accept presets; member assignment uses the
+// workspace-aware validator so custom roles are also supported.
 func ValidRole(role string) bool { return builtinRoles[role] }
 
 // SetMemberRole changes a member's role.
@@ -52,11 +51,11 @@ func ValidRole(role string) bool { return builtinRoles[role] }
 //     unrecoverable without direct database access.
 func (s *Service) SetMemberRole(ctx context.Context, workspaceID, actorMemberID, targetMemberID, role string) error {
 	role = strings.TrimSpace(role)
-	if err := s.validateAssignableRole(ctx, workspaceID, role); err != nil {
-		return err
-	}
 
 	return database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		if err := validateAssignableRoleTx(ctx, tx, workspaceID, role); err != nil {
+			return err
+		}
 		target, err := s.repo.lockMember(ctx, tx, workspaceID, targetMemberID)
 		if err != nil {
 			return err

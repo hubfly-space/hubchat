@@ -196,10 +196,10 @@ func (r *repository) firstMembershipWorkspaceID(ctx context.Context, userID stri
 	return workspaceID, err
 }
 
-// capabilitiesForRole loads the seeded role_permissions for a built-in role
-// key (§0001 migration). Extra per-member grants are unioned in by the
-// caller — kept separate here because role permissions rarely change and are
-// worth a cheap in-process cache later; member grants never are.
+// capabilitiesForRole loads the workspace role first, falling back to the
+// global built-in catalog. Extra per-member grants are unioned in by the
+// caller — kept separate because role permissions and member grants have
+// different ownership and audit paths.
 func (r *repository) capabilitiesForRole(ctx context.Context, workspaceID, roleKey string) (map[authorization.Capability]bool, error) {
 	var roleID string
 	var capabilities []string
@@ -226,10 +226,7 @@ func (r *repository) capabilitiesForRole(ctx context.Context, workspaceID, roleK
 	return caps, nil
 }
 
-// RoleDefinition is a built-in role and the capabilities it grants — the
-// read-only matrix the Roles settings screen renders (§5.9). Custom roles
-// are out of scope until a later release; every workspace shares this same
-// fixed set for now.
+// RoleDefinition is a built-in or workspace-owned role and its capability set.
 type RoleDefinition struct {
 	ID           string
 	WorkspaceID  string
@@ -240,9 +237,8 @@ type RoleDefinition struct {
 	Capabilities []string
 }
 
-// listRoleDefinitions loads every built-in role and its seeded permissions in
-// one query, ordered so owner (which Actor.Can short-circuits rather than
-// storing permissions for) sorts first regardless of insertion order.
+// listRoleDefinitions loads the global presets and one workspace's custom
+// roles in one query, ordered so owner sorts first.
 func (r *repository) listRoleDefinitions(ctx context.Context, workspaceID string) ([]RoleDefinition, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT r.id, coalesce(r.workspace_id,''), r.key, r.name, r.description, r.is_builtin,

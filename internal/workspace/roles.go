@@ -58,10 +58,11 @@ func normalizeRoleInput(input RoleInput) (RoleInput, error) {
 	if input.Name == "" {
 		return RoleInput{}, ErrRoleNameRequired
 	}
-	input.Capabilities, _ = normalizeCapabilities(input.Capabilities)
-	if input.Capabilities == nil {
-		return RoleInput{}, ErrInvalidCapability
+	capabilities, err := normalizeCapabilities(input.Capabilities)
+	if err != nil {
+		return RoleInput{}, err
 	}
+	input.Capabilities = capabilities
 	return input, nil
 }
 
@@ -113,6 +114,35 @@ func (s *Service) validateAssignableRole(ctx context.Context, workspaceID, role 
 		return ErrInvalidRole
 	}
 	return nil
+}
+
+func validateAssignableRoleTx(ctx context.Context, tx pgx.Tx, workspaceID, role string) error {
+	role = strings.TrimSpace(role)
+	if role == "owner" {
+		return ErrCannotDemoteOwner
+	}
+	var exists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM roles
+			WHERE key=$2 AND (workspace_id=$1 OR (workspace_id IS NULL AND is_builtin))
+		)`, workspaceID, role).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrInvalidRole
+	}
+	// Lock the selected workspace role (or built-in role row) so deletion and
+	// assignment cannot pass each other between validation and the membership
+	// update. The row lock is deliberately taken before the member lock in both
+	// paths to keep concurrent role operations ordered.
+	_, err := tx.Exec(ctx, `
+		SELECT id FROM roles
+		WHERE key=$2 AND (workspace_id=$1 OR (workspace_id IS NULL AND is_builtin))
+		ORDER BY (workspace_id IS NULL)
+		LIMIT 1
+		FOR SHARE`, workspaceID, role)
+	return err
 }
 
 // CreateRole adds a workspace-owned custom role and its permissions
@@ -227,6 +257,13 @@ func (s *Service) DeleteRole(ctx context.Context, workspaceID, actorMemberID, ro
 			return err
 		}
 		if assigned > 0 {
+			return ErrRoleInUse
+		}
+		var pendingInvites int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM workspace_invites WHERE workspace_id=$1 AND role=$2 AND accepted_at IS NULL`, workspaceID, key).Scan(&pendingInvites); err != nil {
+			return err
+		}
+		if pendingInvites > 0 {
 			return ErrRoleInUse
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM roles WHERE workspace_id=$1 AND id=$2`, workspaceID, roleID); err != nil {

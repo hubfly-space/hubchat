@@ -191,8 +191,9 @@ func (r *repository) markInviteAccepted(ctx context.Context, tx pgx.Tx, inviteID
 	return nil
 }
 
-// insertMemberWithRole is insertOwnerMember's general form: any built-in role,
-// not only 'owner'. Bootstrap keeps its own narrower helper because a
+// insertMemberWithRole is insertOwnerMember's general form. Invite issuance
+// validates the workspace role before a row reaches this repository. Bootstrap
+// keeps its own narrower helper because a
 // workspace's first member is always its owner by construction, and that
 // invariant is clearer written directly than expressed as a call with 'owner'
 // threaded through as a parameter.
