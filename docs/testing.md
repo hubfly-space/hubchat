@@ -93,7 +93,9 @@ HUBCHAT_BINARY_DATABASE_URL="postgres://hubchat:hubchat@127.0.0.1:5432/hubchat_t
   make production-binary-check
 ```
 
-This target builds the embedded release artifact, starts the documented
+The target applies the embedded migrations to that explicitly supplied test
+database before starting the binary. Do not point it at a database containing
+live work. It then builds the embedded release artifact, starts the documented
 `http,realtime` process split with `HUBCHAT_DEV=0`
 and `HUBCHAT_MIGRATE=verify`, runs both HTTP checks, and requires graceful
 shutdown. It also starts the worker/scheduler role split briefly and verifies

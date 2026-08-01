@@ -107,7 +107,12 @@ production-load-check: ## Run bounded production HTTP load smoke (set HUBCHAT_LO
 
 .PHONY: production-binary-check
 production-binary-check: build ## Build and validate a production binary (set HUBCHAT_BINARY_DATABASE_URL)
-	node scripts/check-production-binary.mjs
+	@if [ -z "$(HUBCHAT_BINARY_DATABASE_URL)" ] && [ -z "$(HUBCHAT_TEST_DATABASE_URL)" ]; then \
+		echo "HUBCHAT_BINARY_DATABASE_URL or HUBCHAT_TEST_DATABASE_URL is required" >&2; \
+		exit 1; \
+	fi
+	HUBCHAT_DATABASE_URL="$${HUBCHAT_BINARY_DATABASE_URL:-$${HUBCHAT_TEST_DATABASE_URL}}" $(GO) run $(PKG) migrate
+	HUBCHAT_BINARY_DATABASE_URL="$${HUBCHAT_BINARY_DATABASE_URL:-$${HUBCHAT_TEST_DATABASE_URL}}" node scripts/check-production-binary.mjs
 
 .PHONY: production-browser-check
 production-browser-check: build ## Production binary check plus Chrome widget/portal/dashboard browser journey

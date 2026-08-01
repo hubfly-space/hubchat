@@ -85,3 +85,37 @@ jobs:
         run: docker compose up -d mailhog minio minio-init
       - name: Run provider adapter gate
         run: make provider-check
+
+  release-smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: hubchat
+          POSTGRES_PASSWORD: hubchat
+          POSTGRES_DB: hubchat_release
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hubchat -d hubchat_release"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run compiled production binary smoke
+        env:
+          HUBCHAT_BINARY_DATABASE_URL: postgres://hubchat:hubchat@localhost:5432/hubchat_release?sslmode=disable
+        run: make production-binary-check

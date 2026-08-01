@@ -1815,10 +1815,6 @@ func errText(err error) string {
 	return err.Error()
 }
 
-func notImplemented(command, description string) error {
-	return fmt.Errorf("`hubchat %s` (%s) is not implemented in this build", command, description)
-}
-
 func newLogger(cfg config.Config) *slog.Logger {
 	level := slog.LevelInfo
 	switch cfg.Observability.LogLevel {
