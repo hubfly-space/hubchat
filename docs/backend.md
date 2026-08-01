@@ -88,6 +88,13 @@ nobody else can use and a lock nobody expected.
 
 - **Partial indexes for active queues.** Closed and spam conversations are most
   rows after a year and appear in none of the hot views.
+- **Conversation routing is transactional.** When an inbox has a configured
+  team, a new conversation is assigned to that team in the same transaction as
+  its opening message. Manual and team-queue strategies leave work at the team;
+  round-robin consumes the durable `team_routing_cursors` row, while
+  least-active, customer-owner, and weighted strategies consider only members
+  currently accepting conversations. The team row is locked during selection,
+  so concurrent starts cannot make the same routing decision.
 - **Every index names the query it exists for.** An index without a named query
   is one nobody will dare delete.
 
@@ -112,6 +119,10 @@ Durable rows in PostgreSQL, leased with a heartbeat.
   jobs are never force-killed because handlers may hold external side effects.
 - **Workspace fairness is explicit.** One tenant's export must not starve
   everyone else's notifications.
+- **Export retention is enforced.** Completed workspace archives have a
+  seven-day download window; the scheduled portability sweep removes their
+  file object but keeps the request row as an `expired` audit record. A failed
+  object deletion remains eligible for a later sweep.
 
 ## 7. Logging
 

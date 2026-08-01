@@ -27,7 +27,7 @@ through `POST /api/v1/portability/import-files`, create an import request with
 `POST /api/v1/portability/imports/{id}/preview`, then confirm it with
 `POST /api/v1/portability/imports/{id}/confirm` and
 `{"backup_verified":true}`. `kind` may be `workspace` for a JSON gzip archive,
-`customers_csv`, `companies_csv`, `tickets_csv`, or `knowledgebase_markdown`. CSV imports require stable `external_id`
+`customers_csv`, `companies_csv`, `tickets_csv`, `feedback_csv`, or `knowledgebase_markdown`. CSV imports require stable `external_id`
 values when available; rows without one receive a deterministic request-scoped
 identity so worker retries cannot duplicate them. The importer records a
 table/row cursor and resumes idempotently after a worker retry. Archive files
@@ -36,10 +36,15 @@ CSV files are limited to 100 MiB. `tickets_csv` is also supported and requires
 `title` and a workspace-local `inbox_id`; it accepts optional description,
 status, priority, type, customer/company/member/team IDs, channel, and `due_at`
 columns. Its `external_id` becomes the ticket's immutable import key.
+`feedback_csv` requires `board_id` and `title`; it accepts description, type,
+status, visibility, submitter/company IDs, product area, priority, and
+`external_id`. Feedback rows are keyed by workspace, board, and import key.
 Markdown imports are one article per file and require YAML front matter with
 `knowledge_base_id`; `title`, `slug`, `language`, `state`, `excerpt`, and
 `collection_id` are supported. Articles are upserted by workspace, knowledge
-base, language, and slug.
+base, language, and slug. Workspace archives do not import users or workspace
+members: missing member-owned followers, drafts, and notification preferences
+are skipped, while nullable assignee/author references are cleared safely.
 
 The checked-in document is generated from
 [`openapi.template.json`](../embedded/openapi.template.json) with
@@ -49,3 +54,29 @@ published artifact.
 The embeddable browser contract is documented separately in
 [`widget-sdk.md`](widget-sdk.md), including the typed `window.Hubchat` API and
 the signed-identity and metadata rules for widget visitors.
+
+Public knowledge-base search returns the same data, has_more, and next_cursor
+envelope as authenticated list endpoints. Its cursor preserves full-text
+relevance, publication time, and article ID ordering; clients must pass it
+back opaquely.
+
+Survey definitions and widget feedback items use the same opaque cursor
+contract. GET /api/v1/surveys and
+GET /api/v1/widget/feedback/boards/{slug}/items accept limit and cursor;
+the widget endpoint also preserves the requested status, sort, search, and
+visitor identity across pages.
+
+Workspace archive exports support `POST /api/v1/portability/exports/preview`
+before `POST /api/v1/portability/exports`. The preview is read-only and returns
+the included table summaries and estimated row count; it does not create a job
+or file. A completed archive is stored in the configured file backend for seven
+days, after which the scheduler deletes the archive bytes and retains the
+export request as an `expired` audit record. `GET /api/v1/portability/exports/{id}/manifest`
+therefore works only while the archive remains available.
+
+Portal custom domains use `POST /api/v1/portals/{id}/domains`, then a TXT record
+at `_hubchat-verification.<domain>` containing the returned verification token.
+`POST /api/v1/portals/{id}/domains/{domainID}/verify` checks DNS and marks the
+domain active only after an exact token match. Verified domains resolve the
+portal from the request host; the configured subdomain remains available as a
+fallback.
