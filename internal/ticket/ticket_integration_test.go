@@ -415,6 +415,69 @@ func TestLinkRejectsSelfAndUnknownRelationAndCyclesInParent(t *testing.T) {
 	}
 }
 
+func TestRelationshipListsUseStableIDCursors(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	svc, _ := newTestService(t, pool)
+	ws := seedWorkspace(t, ctx, pool)
+	root, err := svc.Create(ctx, ws.WorkspaceID, ws.MemberID, ticket.CreateRequest{Title: "Root", InboxID: ws.InboxID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	children := make([]*ticket.Ticket, 0, 2)
+	for _, title := range []string{"Child one", "Child two"} {
+		child, createErr := svc.Create(ctx, ws.WorkspaceID, ws.MemberID, ticket.CreateRequest{Title: title, InboxID: ws.InboxID})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		if _, setErr := svc.SetParent(ctx, ws.WorkspaceID, ws.MemberID, child.ID, &root.ID); setErr != nil {
+			t.Fatal(setErr)
+		}
+		if linkErr := svc.Link(ctx, ws.WorkspaceID, ws.MemberID, root.ID, child.ID, "related"); linkErr != nil {
+			t.Fatal(linkErr)
+		}
+		children = append(children, child)
+	}
+
+	firstChildren, err := svc.ChildrenPage(ctx, ws.WorkspaceID, root.ID, "", 1)
+	if err != nil || len(firstChildren) != 1 {
+		t.Fatalf("first children page = %v, err=%v", firstChildren, err)
+	}
+	secondChildren, err := svc.ChildrenPage(ctx, ws.WorkspaceID, root.ID, firstChildren[0], 1)
+	if err != nil || len(secondChildren) != 1 || secondChildren[0] == firstChildren[0] {
+		t.Fatalf("second children page = %v, err=%v", secondChildren, err)
+	}
+
+	firstLinks, err := svc.LinksPage(ctx, ws.WorkspaceID, root.ID, "", 1)
+	if err != nil || len(firstLinks) != 1 {
+		t.Fatalf("first links page = %v, err=%v", firstLinks, err)
+	}
+	secondLinks, err := svc.LinksPage(ctx, ws.WorkspaceID, root.ID, firstLinks[0].ID, 1)
+	if err != nil || len(secondLinks) != 1 || secondLinks[0].ID == firstLinks[0].ID {
+		t.Fatalf("second links page = %v, err=%v", secondLinks, err)
+	}
+	_ = children
+}
+
+func TestTicketListQueryScopesTitleAndDescription(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	svc, _ := newTestService(t, pool)
+	ws := seedWorkspace(t, ctx, pool)
+	if _, err := svc.Create(ctx, ws.WorkspaceID, ws.MemberID, ticket.CreateRequest{Title: "Payment issue", Description: "invoice reference 42", InboxID: ws.InboxID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Create(ctx, ws.WorkspaceID, ws.MemberID, ticket.CreateRequest{Title: "Login issue", Description: "password reset", InboxID: ws.InboxID}); err != nil {
+		t.Fatal(err)
+	}
+	items, err := svc.List(ctx, ws.WorkspaceID, ticket.ListFilter{Query: "invoice", Limit: 10})
+	if err != nil || len(items) != 1 || items[0].Title != "Payment issue" {
+		t.Fatalf("ticket query results = %+v, err=%v", items, err)
+	}
+}
+
 func TestDuplicateCandidatesMatchSameCustomerBySimilarTitle(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.Reset(t, pool)

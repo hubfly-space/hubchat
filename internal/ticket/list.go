@@ -14,6 +14,7 @@ const UnassignedSentinel = "unassigned"
 // ListFilter narrows the ticket queue. Every field left at its zero value is
 // simply not filtered on.
 type ListFilter struct {
+	Query      string
 	InboxID    string
 	AssigneeID string
 	TeamID     string
@@ -55,6 +56,10 @@ func (r *repository) list(ctx context.Context, workspaceID string, filter ListFi
 
 	if filter.InboxID != "" {
 		where = append(where, "inbox_id = "+arg(filter.InboxID))
+	}
+	if strings.TrimSpace(filter.Query) != "" {
+		query := strings.TrimSpace(filter.Query)
+		where = append(where, "(title ILIKE '%' || "+arg(query)+" || '%' OR coalesce(description, '') ILIKE '%' || "+arg(query)+" || '%')")
 	}
 	switch filter.AssigneeID {
 	case "":

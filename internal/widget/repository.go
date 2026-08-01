@@ -203,9 +203,19 @@ func (r *repository) insertVersion(
 }
 
 func (r *repository) versions(ctx context.Context, widgetID string) ([]ConfigVersion, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+versionColumns+`
-		FROM widget_config_versions WHERE widget_id = $1 ORDER BY version DESC
-	`, widgetID)
+	return r.versionsPage(ctx, widgetID, 0, 200)
+}
+
+func (r *repository) versionsPage(ctx context.Context, widgetID string, beforeVersion, limit int) ([]ConfigVersion, error) {
+	query := `SELECT ` + versionColumns + ` FROM widget_config_versions WHERE widget_id = $1`
+	args := []any{widgetID}
+	if beforeVersion > 0 {
+		query += ` AND version < $2`
+		args = append(args, beforeVersion)
+	}
+	query += fmt.Sprintf(" ORDER BY version DESC LIMIT $%d", len(args)+1)
+	args = append(args, limit)
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("widget: versions: %w", err)
 	}

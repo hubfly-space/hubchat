@@ -3,6 +3,7 @@ package ticket
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -277,10 +278,25 @@ func (r *repository) removeLink(ctx context.Context, tx pgx.Tx, workspaceID, sou
 // "blocked_by" recorded from the other side still belongs on this ticket's
 // list.
 func (r *repository) links(ctx context.Context, workspaceID, ticketID string) ([]TicketLink, error) {
-	rows, err := r.pool.Query(ctx, `
+	return r.linksPage(ctx, workspaceID, ticketID, "", 0)
+}
+
+func (r *repository) linksPage(ctx context.Context, workspaceID, ticketID, beforeID string, limit int) ([]TicketLink, error) {
+	query := `
 		SELECT id, source_id, target_id, relation FROM ticket_links
 		WHERE workspace_id = $1 AND (source_id = $2 OR target_id = $2)
-	`, workspaceID, ticketID)
+	`
+	args := []any{workspaceID, ticketID}
+	if beforeID != "" {
+		query += ` AND id > $3`
+		args = append(args, beforeID)
+	}
+	query += ` ORDER BY id`
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		args = append(args, limit)
+	}
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -327,9 +343,22 @@ func (r *repository) ancestorIDs(ctx context.Context, workspaceID, id string) ([
 }
 
 func (r *repository) childIDs(ctx context.Context, workspaceID, id string) ([]string, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT id FROM tickets WHERE workspace_id = $1 AND parent_id = $2
-	`, workspaceID, id)
+	return r.childIDsPage(ctx, workspaceID, id, "", 0)
+}
+
+func (r *repository) childIDsPage(ctx context.Context, workspaceID, id, beforeID string, limit int) ([]string, error) {
+	query := `SELECT id FROM tickets WHERE workspace_id = $1 AND parent_id = $2`
+	args := []any{workspaceID, id}
+	if beforeID != "" {
+		query += ` AND id > $3`
+		args = append(args, beforeID)
+	}
+	query += ` ORDER BY id`
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		args = append(args, limit)
+	}
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
