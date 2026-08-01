@@ -13,6 +13,10 @@ embedded/assets/widget/
 /bin/
 /dist/
 hubchat
+# The source directory is named hubchat too; keep it versioned while the
+# unanchored rule above continues to ignore local binaries named hubchat.
+!cmd/hubchat/
+!cmd/hubchat/**
 *.test
 *.out
 coverage.*

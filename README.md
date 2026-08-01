@@ -94,7 +94,7 @@ state change is applied.
 |---|---|
 | `make build` | Produces a single ~18 MB binary with all three frontends embedded |
 | `./dist/hubchat serve` | Serves the dashboard, portal, and widget with correct cache and security headers |
-| `./dist/hubchat doctor` | Checks configuration, embedded assets, and dependencies |
+| `./dist/hubchat doctor [--json]` | Checks configuration, PostgreSQL migrations, storage, embedded assets, and optional email configuration |
 | `make check` | Typecheck, lint, vet, unit test, API contract checks, and all frontend builds |
 
 Integration tests use a separate destructive test database and run with
