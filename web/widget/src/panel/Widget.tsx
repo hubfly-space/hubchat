@@ -89,6 +89,10 @@ export function Widget({
   const [attachmentError, setAttachmentError] = useState("");
   const [query, setQuery] = useState("");
   const [articleResults, setArticleResults] = useState<WidgetArticle[]>(config.articles);
+  const [articleNextCursor, setArticleNextCursor] = useState<string | null>(null);
+  const [articleHasMore, setArticleHasMore] = useState(false);
+  const [articleSearchLoading, setArticleSearchLoading] = useState(false);
+  const [articleSearchError, setArticleSearchError] = useState(false);
   const [articleDetail, setArticleDetail] = useState<WidgetArticle | null>(null);
   const [articleLoading, setArticleLoading] = useState(false);
   const [articleFeedback, setArticleFeedback] = useState<"submitted" | "error" | null>(null);
@@ -423,15 +427,42 @@ export function Widget({
   useEffect(() => {
     if (screen !== "articles" || !config.modes.includes("knowledge_base")) return;
     let cancelled = false;
+    setArticleSearchLoading(true);
+    setArticleSearchError(false);
+    setArticleNextCursor(null);
+    setArticleHasMore(false);
     const timer = window.setTimeout(() => {
-      void searchArticles(host, publicKey, query).then((items) => {
-        if (!cancelled) setArticleResults(items);
+      void searchArticles(host, publicKey, query).then((page) => {
+        if (cancelled) return;
+        setArticleResults(page.data);
+        setArticleNextCursor(page.next_cursor);
+        setArticleHasMore(page.has_more);
       }).catch(() => {
-        if (!cancelled && !query.trim()) setArticleResults(config.articles);
+        if (cancelled) return;
+        setArticleSearchError(true);
+        setArticleResults(query.trim() ? [] : config.articles);
+      }).finally(() => {
+        if (!cancelled) setArticleSearchLoading(false);
       });
     }, query.trim() ? 180 : 0);
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [config.articles, config.modes, host, publicKey, query, screen]);
+
+  const loadMoreArticles = async () => {
+    if (screen !== "articles" || !articleNextCursor || articleSearchLoading) return;
+    setArticleSearchLoading(true);
+    setArticleSearchError(false);
+    try {
+      const page = await searchArticles(host, publicKey, query, articleNextCursor);
+      setArticleResults((current) => [...current, ...page.data]);
+      setArticleNextCursor(page.next_cursor);
+      setArticleHasMore(page.has_more);
+    } catch {
+      setArticleSearchError(true);
+    } finally {
+      setArticleSearchLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (screen !== "article" || !activeArticle) return;
@@ -532,6 +563,10 @@ export function Widget({
                   setActiveArticle(slug);
                   setScreen("article");
                 }}
+                hasMore={articleHasMore}
+                loading={articleSearchLoading}
+                error={articleSearchError}
+                onLoadMore={() => void loadMoreArticles()}
               />
             )}
 
@@ -930,11 +965,19 @@ function ArticlesScreen({
   onQuery,
   results,
   onOpen,
+  hasMore,
+  loading,
+  error,
+  onLoadMore,
 }: {
   query: string;
   onQuery: (value: string) => void;
   results: { slug: string; title: string; excerpt: string }[];
   onOpen: (slug: string) => void;
+  hasMore: boolean;
+  loading: boolean;
+  error: boolean;
+  onLoadMore: () => void;
 }) {
   return (
     <div className="p-3">
@@ -949,7 +992,11 @@ function ArticlesScreen({
         />
       </div>
 
-      {results.length === 0 ? (
+      {error && results.length === 0 ? (
+        <p className="px-2 py-8 text-center text-xs text-danger">
+          Articles are unavailable right now. Try again in a moment.
+        </p>
+      ) : results.length === 0 ? (
         <p className="px-2 py-8 text-center text-xs text-fg-muted">
           Nothing matched. Try fewer words, or start a conversation.
         </p>
@@ -970,6 +1017,17 @@ function ArticlesScreen({
             </li>
           ))}
         </ul>
+      )}
+
+      {hasMore && (
+        <button
+          type="button"
+          onClick={onLoadMore}
+          disabled={loading}
+          className="mt-2 w-full rounded-md border border-line px-3 py-2 text-xs text-fg-secondary disabled:opacity-50"
+        >
+          {loading ? "Loading…" : "Load more articles"}
+        </button>
       )}
     </div>
   );

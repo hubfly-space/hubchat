@@ -181,11 +181,14 @@ export async function unsubscribeFeedbackItem(host: string, publicKey: string, t
   return parse<{ subscribed: boolean }>(response);
 }
 
-export async function searchArticles(host: string, publicKey: string, query: string): Promise<WidgetArticle[]> {
-  const params = new URLSearchParams({ key: publicKey, url: location.href });
+export type WidgetArticlesPage = { data: WidgetArticle[]; next_cursor: string | null; has_more: boolean };
+
+export async function searchArticles(host: string, publicKey: string, query: string, cursor?: string | null): Promise<WidgetArticlesPage> {
+  const params = new URLSearchParams({ key: publicKey, url: location.href, limit: "20" });
   if (query.trim()) params.set("q", query.trim());
+  if (cursor) params.set("cursor", cursor);
   const response = await fetch(`${endpoint(host, "/articles")}?${params.toString()}`, { credentials: "omit" });
-  return (await parse<{ data: WidgetArticle[] }>(response)).data;
+  return parse<WidgetArticlesPage>(response);
 }
 
 export function getArticle(host: string, publicKey: string, slug: string): Promise<WidgetArticle> {
