@@ -95,7 +95,7 @@ export default function TicketDetail() {
     if (!nextCursor || loadingOlder) return;
     setLoadingOlder(true);
     try {
-      const page = await api.get<Detail>(`/portal/tickets/${encodeURIComponent(id!) }?limit=100&cursor=${encodeURIComponent(nextCursor)}`);
+      const page = await api.get<Detail>(`/portal/tickets/${encodeURIComponent(id!)}?limit=100&cursor=${encodeURIComponent(nextCursor)}`);
       setOlderMessages((current) => [...page.messages, ...current]);
       setNextCursor(page.next_cursor ?? null);
     } catch (error) {

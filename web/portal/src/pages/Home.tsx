@@ -2,7 +2,7 @@ import { ApiError, Card, CardBody, EmptyState, SearchInput, api, useQuery, type 
 import { ArrowRight, Book, Lightbulb, MessageSquarePlus } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { portalAccent, usePortal } from "../portal-context";
+import { portalAccent, portalFeatureEnabled, portalThemeText, usePortal } from "../portal-context";
 
 type Article = { id: string; slug: string; title: string; excerpt: string; updated_at: string; view_count: number };
 type SearchResponse = Paginated<{ article: Article }>;
@@ -19,10 +19,13 @@ export default function Home() {
   const { data: portalData } = usePortal();
   const accent = portalAccent(portalData?.portal);
   const workspaceID = portalData?.portal.workspace_id ?? "";
+  const ticketsEnabled = portalFeatureEnabled(portalData?.portal, "tickets");
+  const knowledgeBaseEnabled = portalFeatureEnabled(portalData?.portal, "knowledge_base");
+  const feedbackEnabled = portalFeatureEnabled(portalData?.portal, "feedback");
   const articles = useQuery<SearchResponse>(
     ["portal-home-knowledge", workspaceID, query],
     (signal) => api.get(`/public/knowledge-bases/${encodeURIComponent(workspaceID)}/search?q=${encodeURIComponent(query)}&surface=portal`, { signal }),
-    { enabled: Boolean(workspaceID) },
+    { enabled: Boolean(workspaceID && knowledgeBaseEnabled) },
   );
   const results = (articles.data?.data ?? []).map((item) => item.article);
   const navigation = portalData?.portal.navigation ?? [];
@@ -42,13 +45,13 @@ export default function Home() {
 
         <div className="relative mx-auto max-w-3xl px-4 py-16 text-center sm:px-6 sm:py-20">
           <h1 className="text-3xl font-semibold tracking-tighter text-fg sm:text-4xl">
-            How can we help?
+            {portalThemeText(portalData?.portal, "headline", "How can we help?")}
           </h1>
           <p className="mx-auto mt-3 max-w-xl text-md leading-normal text-fg-muted">
-            Search our guides, track your requests, or start a conversation with the team.
+            {portalThemeText(portalData?.portal, "subheadline", "Search our guides, track your requests, or start a conversation with the team.")}
           </p>
 
-          <div className="relative mx-auto mt-7 max-w-xl">
+          {knowledgeBaseEnabled ? <div className="relative mx-auto mt-7 max-w-xl">
             <SearchInput
               inputSize="lg"
               value={query}
@@ -70,9 +73,9 @@ export default function Home() {
                     <p className="text-sm text-fg">Nothing matches “{query}”</p>
                     <p className="mt-1 text-xs text-fg-muted">
                       Try fewer words, or{" "}
-                      <Link to="/tickets/new" className="text-accent-text hover:underline">
+                      {ticketsEnabled ? <Link to="/tickets/new" className="text-accent-text hover:underline">
                         send us a request
-                      </Link>
+                      </Link> : "contact the team"}
                       .
                     </p>
                   </div>
@@ -95,12 +98,12 @@ export default function Home() {
                 )}
               </div>
             )}
-          </div>
+          </div> : <p className="mx-auto mt-7 max-w-xl text-sm text-fg-muted">Use the links above to find support or contact the team.</p>}
         </div>
       </section>
 
       <div className="mx-auto w-full max-w-5xl px-4 py-10 sm:px-6">
-        <section className="mb-10">
+        {knowledgeBaseEnabled && <section className="mb-10">
           <div className="mb-3 flex items-center justify-between gap-3">
             <h2 className="text-md font-semibold tracking-tight text-fg">Latest guides</h2>
             <Link to="/kb" className="text-xs text-accent-text hover:underline">Browse all</Link>
@@ -108,10 +111,10 @@ export default function Home() {
           {articles.isLoading ? <p className="text-sm text-fg-muted">Loading guides…</p> : articles.isError ? <EmptyState icon={Book} title="Guides unavailable" description="Try again in a moment or send us a request." /> : results.length === 0 ? <EmptyState icon={Book} title="No published guides yet" description="Send us a request and we will help directly." /> : (
             <Card><CardBody className="p-0"><ul className="divide-y divide-line-subtle">{results.slice(0, 6).map((article) => <li key={article.id}><Link to={`/kb/article/${article.slug}`} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-hover"><Book aria-hidden="true" className="size-3.5 shrink-0 text-fg-muted" /><span className="min-w-0 flex-1"><span className="block truncate text-sm text-fg">{article.title}</span><span className="mt-0.5 block line-clamp-1 text-xs text-fg-muted">{article.excerpt}</span></span><ArrowRight aria-hidden="true" className="size-3.5 shrink-0 text-fg-disabled" /></Link></li>)}</ul></CardBody></Card>
           )}
-        </section>
+        </section>}
 
         {/* Popular -------------------------------------------------------- */}
-        <section className="mb-10">
+        {knowledgeBaseEnabled && <section className="mb-10">
           <h2 className="mb-3 text-md font-semibold tracking-tight text-fg">Most read</h2>
           <Card>
             <CardBody className="p-0">
@@ -136,23 +139,23 @@ export default function Home() {
               </ul>
             </CardBody>
           </Card>
-        </section>
+        </section>}
 
         {/* Contact -------------------------------------------------------- */}
-        <section>
+        {(ticketsEnabled || feedbackEnabled) && <section>
           <h2 className="mb-3 text-md font-semibold tracking-tight text-fg">Still need help?</h2>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Card interactive className="p-0">
-              <Link to={navigation.find((item) => item.href === "/tickets/new")?.href ?? "/tickets/new"} className="block p-4">
+            {ticketsEnabled && <Card interactive className="p-0">
+              <Link to={navigation.find((item) => !item.external && item.href === "/tickets/new")?.href ?? "/tickets/new"} className="block p-4">
                 <MessageSquarePlus aria-hidden="true" className="size-4 text-accent-text" />
                 <p className="mt-2.5 text-sm font-medium text-fg">Send a request</p>
                 <p className="mt-1 text-xs leading-normal text-fg-muted">
                   We reply within one business day, usually much sooner.
                 </p>
               </Link>
-            </Card>
+            </Card>}
 
-            <Card interactive className="p-0">
+            {feedbackEnabled && <Card interactive className="p-0">
               <Link to="/feedback" className="block p-4">
                 <Lightbulb aria-hidden="true" className="size-4 text-accent-text" />
                 <p className="mt-2.5 text-sm font-medium text-fg">Suggest an improvement</p>
@@ -160,9 +163,9 @@ export default function Home() {
                   Vote on what we build next, or add something we have missed.
                 </p>
               </Link>
-            </Card>
+            </Card>}
           </div>
-        </section>
+        </section>}
       </div>
     </>
   );

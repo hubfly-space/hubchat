@@ -132,6 +132,71 @@ export type ApiCustomer = {
   "version": number;
 };
 
+export type ApiCustomer360 = {
+  "feedback": ApiCustomer360Feedback[];
+  "feedback_truncated": boolean;
+  "surveys": ApiCustomer360Survey[];
+  "surveys_truncated": boolean;
+  "articles": ApiCustomer360Article[];
+  "articles_truncated": boolean;
+  "identities": ApiCustomer360Identity[];
+  "identities_truncated": boolean;
+  "merges": ApiCustomer360Merge[];
+  "merges_truncated": boolean;
+};
+
+export type ApiCustomer360Article = {
+  "id": ApiId;
+  "article_id": ApiId;
+  "title": string;
+  "slug": string;
+  "helpful": boolean;
+  "comment"?: string;
+  "created_at": ApiTimestamp;
+};
+
+export type ApiCustomer360Feedback = {
+  "id": ApiId;
+  "title": string;
+  "board_id": ApiId;
+  "board_name": string;
+  "status": string;
+  "vote_count": number;
+  "comment_count": number;
+  "created_at": ApiTimestamp;
+};
+
+export type ApiCustomer360Identity = {
+  "id": ApiId;
+  "kind": "email" | "phone";
+  "value": string;
+  "verified_at"?: string | null;
+  "is_primary": boolean;
+  "created_at": ApiTimestamp;
+};
+
+export type ApiCustomer360Merge = {
+  "id": ApiId;
+  "winner_id": ApiId;
+  "loser_id": ApiId;
+  "moved_counts": {
+  [key: string]: unknown;
+};
+  "reversible_until"?: string | null;
+  "reversed_at"?: string | null;
+  "created_at": ApiTimestamp;
+};
+
+export type ApiCustomer360Survey = {
+  "id": ApiId;
+  "survey_id": ApiId;
+  "survey_name": string;
+  "survey_type": string;
+  "score"?: number | null;
+  "comment"?: string;
+  "submitted_at"?: string | null;
+};
+
 export type ApiCustomerPage = ApiPageOf & {
   "data"?: ApiCustomer[];
 };
@@ -191,6 +256,26 @@ export type ApiFieldValidation = {
 };
 
 export type ApiId = string;
+
+export type ApiLegalHold = {
+  "id": ApiId;
+  "workspace_id": ApiId;
+  "category": "all" | "events" | "sessions" | "webhooks" | "surveys" | "audit";
+  "reason": string;
+  "created_by"?: ApiId | null;
+  "released_by"?: ApiId | null;
+  "created_at": ApiTimestamp;
+  "released_at"?: string | null;
+};
+
+export type ApiLegalHoldInput = {
+  "category": "all" | "events" | "sessions" | "webhooks" | "surveys" | "audit";
+  "reason": string;
+};
+
+export type ApiLegalHoldPage = ApiPageOf & {
+  "data"?: ApiLegalHold[];
+};
 
 export type ApiMacro = {
   "id": ApiId;
@@ -269,6 +354,32 @@ export type ApiMessagePage = ApiPageOf & {
   "data"?: ApiMessage[];
 };
 
+export type ApiOpsCheck = {
+  "id": string;
+  "status": "pass" | "warn" | "fail";
+  "detail": string;
+};
+
+export type ApiOpsSummary = {
+  "jobs": {
+  [key: string]: unknown;
+};
+  "webhooks": {
+  [key: string]: unknown;
+};
+  "email": {
+  [key: string]: unknown;
+};
+  "storage": {
+  [key: string]: unknown;
+};
+  "realtime": {
+  [key: string]: unknown;
+};
+  "checks": ApiOpsCheck[];
+  "computed_at": ApiTimestamp;
+};
+
 export type ApiPage = {
   "data": unknown[];
   "has_more": boolean;
@@ -279,6 +390,45 @@ export type ApiPageOf = {
   "data": unknown[];
   "has_more": boolean;
   "next_cursor": string | null;
+};
+
+export type ApiPortalMessage = {
+  "id": ApiId;
+  "conversation_id": ApiId;
+  "kind": string;
+  "author_type": string;
+  "author_id": string | null;
+  "author_name": string;
+  "body": string;
+  "delivery": string;
+  "sequence": number;
+  "edited_at": string | null;
+  "created_at": ApiTimestamp;
+  "attachments": ApiAttachment[];
+};
+
+export type ApiPortalTicket = {
+  "id": ApiId;
+  "number": number;
+  "prefix": string;
+  "title": string;
+  "description": string;
+  "status": string;
+  "priority": string;
+  "conversation_id": string | null;
+  "created_at": ApiTimestamp;
+  "updated_at": ApiTimestamp;
+};
+
+export type ApiPortalTicketDetail = {
+  "ticket": ApiPortalTicket;
+  "messages": ApiPortalMessage[];
+  "has_more": boolean;
+  "next_cursor": string | null;
+};
+
+export type ApiPortalTicketPage = ApiPageOf & {
+  "data"?: ApiPortalTicket[];
 };
 
 export type ApiSavedReply = {
@@ -306,6 +456,12 @@ export type ApiSavedReplyInput = {
 
 export type ApiSavedReplyPage = ApiPageOf & {
   "data"?: ApiSavedReply[];
+};
+
+export type ApiTestEmailResult = {
+  "job_id": ApiId;
+  "recipient": string;
+  "status": "queued";
 };
 
 export type ApiTicket = {
@@ -411,9 +567,11 @@ export type ApiOperationId =
   | "createSurvey"
   | "createTicket"
   | "createWebhook"
+  | "createWorkspaceLegalHold"
   | "deleteApiKeysId"
   | "deleteAttributeDefinitionsId"
   | "deleteAuthSessionsId"
+  | "deleteAuthTrustedDevicesId"
   | "deleteAutomationMacro"
   | "deleteCompaniesIdCustomersCustomerID"
   | "deleteCompaniesIdTagsTagID"
@@ -429,6 +587,7 @@ export type ApiOperationId =
   | "deleteMembersId"
   | "deletePortalCustomerData"
   | "deletePortalDomain"
+  | "deleteReport"
   | "deleteReportSchedule"
   | "deleteSavedView"
   | "deleteTagsId"
@@ -449,11 +608,16 @@ export type ApiOperationId =
   | "exportPortalCustomerData"
   | "exportSurveyResponses"
   | "getAnalyticsSummary"
+  | "getAnalyticsWorkload"
   | "getArticle"
   | "getAttributeDefinitions"
   | "getAuthMe"
+  | "getAuthOauthProviderCallback"
+  | "getAuthOauthProviders"
+  | "getAuthOauthProviderStart"
   | "getAuthSessions"
   | "getAuthTotp"
+  | "getAuthTrustedDevices"
   | "getAutomationMacro"
   | "getAutomationRule"
   | "getBootstrap"
@@ -466,6 +630,7 @@ export type ApiOperationId =
   | "getConversationsIdFollowers"
   | "getConversationsIdTranscript"
   | "getCustomer"
+  | "getCustomer360"
   | "getCustomersIdExport"
   | "getCustomersIdSessions"
   | "getCustomersIdTimeline"
@@ -504,7 +669,7 @@ export type ApiOperationId =
   | "getPublicForm"
   | "getPublicKnowledgeBasesWorkspaceIDArticlesSlug"
   | "getPublicSurveysWorkspaceIDId"
-  | "getReportsId"
+  | "getReport"
   | "getRoles"
   | "getSavedView"
   | "getSearch"
@@ -582,6 +747,7 @@ export type ApiOperationId =
   | "listSurveys"
   | "listTickets"
   | "listWebhooks"
+  | "listWorkspaceLegalHolds"
   | "mergeFeedbackItem"
   | "patchAttributeDefinitionsId"
   | "patchAuthProfile"
@@ -634,6 +800,7 @@ export type ApiOperationId =
   | "postAuthTotpChallenge"
   | "postAuthTotpComplete"
   | "postAuthTotpDisable"
+  | "postAuthTrustedDevicesRevokeAll"
   | "postAuthVerifyEmail"
   | "postAuthVerifyEmailResend"
   | "postAutomationRepliesIdUse"
@@ -710,8 +877,10 @@ export type ApiOperationId =
   | "putWidgetsIdDomains"
   | "receiveEmailDeliveryEvent"
   | "receiveInboundEmail"
+  | "releaseWorkspaceLegalHold"
   | "removeEmailSuppression"
   | "searchPublicArticles"
+  | "sendOperationalTestEmail"
   | "submitPublicForm"
   | "submitSurveyResponse"
   | "subscribeToFeedbackItem"
@@ -726,6 +895,7 @@ export type ApiOperationId =
   | "updateEmailMailbox"
   | "updateForm"
   | "updatePortalProfile"
+  | "updateReport"
   | "updateReportSchedule"
   | "updateSavedView"
   | "updateSLACalendar"
@@ -859,6 +1029,7 @@ export type ApiOperationCatalog = {
 }; response: {
   [key: string]: unknown;
 }; };
+  "createWorkspaceLegalHold": { method: "POST"; path: "/v1/workspace/legal-holds"; request: ApiLegalHoldInput; response: ApiLegalHold; };
   "deleteApiKeysId": { method: "DELETE"; path: "/v1/api-keys/{id}"; request: unknown; response: {
   [key: string]: unknown;
 }; };
@@ -866,6 +1037,9 @@ export type ApiOperationCatalog = {
   [key: string]: unknown;
 }; };
   "deleteAuthSessionsId": { method: "DELETE"; path: "/v1/auth/sessions/{id}"; request: unknown; response: {
+  [key: string]: unknown;
+}; };
+  "deleteAuthTrustedDevicesId": { method: "DELETE"; path: "/v1/auth/trusted-devices/{id}"; request: unknown; response: {
   [key: string]: unknown;
 }; };
   "deleteAutomationMacro": { method: "DELETE"; path: "/v1/automation/macros/{id}"; request: unknown; response: unknown; };
@@ -905,6 +1079,7 @@ export type ApiOperationCatalog = {
   [key: string]: unknown;
 }; response: unknown; };
   "deletePortalDomain": { method: "DELETE"; path: "/v1/portals/{id}/domains/{domainID}"; request: unknown; response: unknown; };
+  "deleteReport": { method: "DELETE"; path: "/v1/reports/{id}"; request: unknown; response: unknown; };
   "deleteReportSchedule": { method: "DELETE"; path: "/v1/reports/{id}/schedules/{scheduleID}"; request: unknown; response: unknown; };
   "deleteSavedView": { method: "DELETE"; path: "/v1/saved-views/{id}"; request: unknown; response: unknown; };
   "deleteTagsId": { method: "DELETE"; path: "/v1/tags/{id}"; request: unknown; response: {
@@ -951,6 +1126,9 @@ export type ApiOperationCatalog = {
   "getAnalyticsSummary": { method: "GET"; path: "/v1/analytics/summary"; request: unknown; response: {
   [key: string]: unknown;
 }; };
+  "getAnalyticsWorkload": { method: "GET"; path: "/v1/analytics/workload"; request: unknown; response: {
+  [key: string]: unknown;
+}; };
   "getArticle": { method: "GET"; path: "/v1/articles/{id}"; request: unknown; response: {
   [key: string]: unknown;
 }; };
@@ -958,10 +1136,22 @@ export type ApiOperationCatalog = {
   "getAuthMe": { method: "GET"; path: "/v1/auth/me"; request: unknown; response: {
   [key: string]: unknown;
 }; };
+  "getAuthOauthProviderCallback": { method: "GET"; path: "/v1/auth/oauth/{provider}/callback"; request: unknown; response: {
+  [key: string]: unknown;
+}; };
+  "getAuthOauthProviders": { method: "GET"; path: "/v1/auth/oauth/providers"; request: unknown; response: {
+  [key: string]: unknown;
+}; };
+  "getAuthOauthProviderStart": { method: "GET"; path: "/v1/auth/oauth/{provider}/start"; request: unknown; response: {
+  [key: string]: unknown;
+}; };
   "getAuthSessions": { method: "GET"; path: "/v1/auth/sessions"; request: unknown; response: {
   [key: string]: unknown;
 }; };
   "getAuthTotp": { method: "GET"; path: "/v1/auth/totp"; request: unknown; response: {
+  [key: string]: unknown;
+}; };
+  "getAuthTrustedDevices": { method: "GET"; path: "/v1/auth/trusted-devices"; request: unknown; response: {
   [key: string]: unknown;
 }; };
   "getAutomationMacro": { method: "GET"; path: "/v1/automation/macros/{id}"; request: unknown; response: ApiMacro; };
@@ -994,6 +1184,7 @@ export type ApiOperationCatalog = {
   [key: string]: unknown;
 }; };
   "getCustomer": { method: "GET"; path: "/v1/customers/{id}"; request: unknown; response: ApiCustomer; };
+  "getCustomer360": { method: "GET"; path: "/v1/customers/{id}/360"; request: unknown; response: ApiCustomer360; };
   "getCustomersIdExport": { method: "GET"; path: "/v1/customers/{id}/export"; request: unknown; response: {
   [key: string]: unknown;
 }; };
@@ -1067,9 +1258,7 @@ export type ApiOperationCatalog = {
   "getOpenapiJson": { method: "GET"; path: "/v1/openapi.json"; request: unknown; response: {
   [key: string]: unknown;
 }; };
-  "getOperationalSummary": { method: "GET"; path: "/v1/ops/summary"; request: unknown; response: {
-  [key: string]: unknown;
-}; };
+  "getOperationalSummary": { method: "GET"; path: "/v1/ops/summary"; request: unknown; response: ApiOpsSummary; };
   "getPortalBootstrap": { method: "GET"; path: "/v1/portal/bootstrap"; request: unknown; response: {
   [key: string]: unknown;
 }; };
@@ -1085,12 +1274,8 @@ export type ApiOperationCatalog = {
   "getPortalsId": { method: "GET"; path: "/v1/portals/{id}"; request: unknown; response: {
   [key: string]: unknown;
 }; };
-  "getPortalTickets": { method: "GET"; path: "/v1/portal/tickets"; request: unknown; response: {
-  [key: string]: unknown;
-}; };
-  "getPortalTicketsId": { method: "GET"; path: "/v1/portal/tickets/{id}"; request: unknown; response: {
-  [key: string]: unknown;
-}; };
+  "getPortalTickets": { method: "GET"; path: "/v1/portal/tickets"; request: unknown; response: ApiPortalTicketPage; };
+  "getPortalTicketsId": { method: "GET"; path: "/v1/portal/tickets/{id}"; request: unknown; response: ApiPortalTicketDetail; };
   "getPublicFeedbackItem": { method: "GET"; path: "/v1/public/feedback/{workspaceID}/items/{id}"; request: unknown; response: {
   [key: string]: unknown;
 }; };
@@ -1106,7 +1291,7 @@ export type ApiOperationCatalog = {
   "getPublicSurveysWorkspaceIDId": { method: "GET"; path: "/v1/public/surveys/{workspaceID}/{id}"; request: unknown; response: {
   [key: string]: unknown;
 }; };
-  "getReportsId": { method: "GET"; path: "/v1/reports/{id}"; request: unknown; response: {
+  "getReport": { method: "GET"; path: "/v1/reports/{id}"; request: unknown; response: {
   [key: string]: unknown;
 }; };
   "getRoles": { method: "GET"; path: "/v1/roles"; request: unknown; response: {
@@ -1328,6 +1513,7 @@ export type ApiOperationCatalog = {
   "listWebhooks": { method: "GET"; path: "/v1/webhooks"; request: unknown; response: {
   [key: string]: unknown;
 }; };
+  "listWorkspaceLegalHolds": { method: "GET"; path: "/v1/workspace/legal-holds"; request: unknown; response: ApiLegalHoldPage; };
   "mergeFeedbackItem": { method: "POST"; path: "/v1/feedback/items/{id}/merge"; request: {
   [key: string]: unknown;
 }; response: {
@@ -1584,6 +1770,11 @@ export type ApiOperationCatalog = {
   [key: string]: unknown;
 }; };
   "postAuthTotpDisable": { method: "POST"; path: "/v1/auth/totp/disable"; request: {
+  [key: string]: unknown;
+}; response: {
+  [key: string]: unknown;
+}; };
+  "postAuthTrustedDevicesRevokeAll": { method: "POST"; path: "/v1/auth/trusted-devices/revoke-all"; request: {
   [key: string]: unknown;
 }; response: {
   [key: string]: unknown;
@@ -1968,8 +2159,14 @@ export type ApiOperationCatalog = {
 }; response: {
   [key: string]: unknown;
 }; };
+  "releaseWorkspaceLegalHold": { method: "POST"; path: "/v1/workspace/legal-holds/{id}/release"; request: unknown; response: ApiLegalHold; };
   "removeEmailSuppression": { method: "DELETE"; path: "/v1/email/mailboxes/{id}/suppressions/{address}"; request: unknown; response: unknown; };
   "searchPublicArticles": { method: "GET"; path: "/v1/public/knowledge-bases/{workspaceID}/search"; request: unknown; response: {
+  [key: string]: unknown;
+}; };
+  "sendOperationalTestEmail": { method: "POST"; path: "/v1/ops/test-email"; request: {
+  [key: string]: unknown;
+}; response: {
   [key: string]: unknown;
 }; };
   "submitPublicForm": { method: "POST"; path: "/v1/public/forms/{workspaceID}/{slug}/submissions"; request: {
@@ -2020,6 +2217,11 @@ export type ApiOperationCatalog = {
   [key: string]: unknown;
 }; };
   "updatePortalProfile": { method: "PATCH"; path: "/v1/portal/me"; request: {
+  [key: string]: unknown;
+}; response: {
+  [key: string]: unknown;
+}; };
+  "updateReport": { method: "PATCH"; path: "/v1/reports/{id}"; request: {
   [key: string]: unknown;
 }; response: {
   [key: string]: unknown;

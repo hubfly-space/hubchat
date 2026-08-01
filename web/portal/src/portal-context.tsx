@@ -1,5 +1,6 @@
 import { ApiError, api, useQuery } from "@hubchat/shared";
 import { createContext, useContext, type ReactNode } from "react";
+import { Navigate } from "react-router-dom";
 
 export type PortalConfig = {
   id: string;
@@ -14,6 +15,8 @@ export type PortalConfig = {
   navigation: Array<{ id: string; label: string; href: string; external: boolean }>;
   enabled: boolean;
 };
+
+export type PortalFeature = "tickets" | "knowledge_base" | "feedback" | "changelog" | "announcements";
 
 export type PortalViewer = {
   id: string;
@@ -71,6 +74,59 @@ export function usePortal() {
 export function portalAccent(config: PortalConfig | undefined) {
   const value = config?.theme?.accent;
   return typeof value === "string" && value ? value : "#3B6EF6";
+}
+
+/**
+ * Feature flags are a server-owned visibility contract, not just a UI hint.
+ * Core sections default on for older portals created before the flag was
+ * introduced; announcements are opt-in because they have no content by
+ * default.
+ */
+export function portalFeatureEnabled(config: PortalConfig | undefined, feature: PortalFeature) {
+  if (!config) return false;
+  const value = config.features?.[feature];
+  return feature === "announcements" ? value === true : value !== false;
+}
+
+export function portalThemeText(config: PortalConfig | undefined, key: "headline" | "subheadline", fallback: string) {
+  const value = config?.theme?.[key];
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+
+export function portalAssetURL(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const parsed = new URL(value, window.location.origin);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
+export function portalNavigationFeature(href: string): PortalFeature | null {
+  const pathname = href.split(/[?#]/, 1)[0] ?? "";
+  if (pathname === "/tickets" || pathname.startsWith("/tickets/")) return "tickets";
+  if (pathname === "/kb" || pathname.startsWith("/kb/")) return "knowledge_base";
+  if (pathname === "/feedback" || pathname.startsWith("/feedback/")) return "feedback";
+  if (pathname === "/changelog" || pathname.startsWith("/changelog/")) return "changelog";
+  return null;
+}
+
+export function portalNavigationItems(config: PortalConfig | undefined) {
+  if (!config) return [];
+  return config.navigation.filter((item) => {
+    if (item.external || /^https?:\/\//i.test(item.href)) return portalAssetURL(item.href) !== null;
+    if (!item.href.startsWith("/") || item.href.startsWith("//") || item.href.includes("\\")) return false;
+    const feature = portalNavigationFeature(item.href);
+    return !feature || portalFeatureEnabled(config, feature);
+  });
+}
+
+export function PortalFeatureGate({ feature, children }: { feature: PortalFeature; children: ReactNode }) {
+  const { data } = usePortal();
+  if (!data || portalFeatureEnabled(data.portal, feature)) return <>{children}</>;
+  return <Navigate to="/" replace />;
 }
 
 export function portalErrorMessage(error: unknown) {
