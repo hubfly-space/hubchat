@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 
@@ -50,11 +51,9 @@ func ValidRole(role string) bool { return builtinRoles[role] }
 //     to do something only an owner can do, by which point the workspace is
 //     unrecoverable without direct database access.
 func (s *Service) SetMemberRole(ctx context.Context, workspaceID, actorMemberID, targetMemberID, role string) error {
-	if !ValidRole(role) {
-		return ErrInvalidRole
-	}
-	if role == "owner" {
-		return ErrCannotDemoteOwner
+	role = strings.TrimSpace(role)
+	if err := s.validateAssignableRole(ctx, workspaceID, role); err != nil {
+		return err
 	}
 
 	return database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {

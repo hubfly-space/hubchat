@@ -25,10 +25,12 @@ type Workspace struct {
 }
 
 type Member struct {
-	ID          string
-	WorkspaceID string
-	UserID      string
-	Role        string
+	ID             string
+	WorkspaceID    string
+	UserID         string
+	Role           string
+	ScimExternalID *string
+	DeactivatedAt  *time.Time
 	// ExtraCapabilities are grants beyond the role's defaults (§5.9). The
 	// effective set is role_permissions ∪ ExtraCapabilities — see
 	// ActorForUser, which is the one place that union actually happens.
@@ -160,11 +162,11 @@ func (r *repository) byID(ctx context.Context, id string) (*Workspace, error) {
 func (r *repository) memberForUser(ctx context.Context, workspaceID, userID string) (*Member, error) {
 	var m Member
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, workspace_id, user_id, role, extra_capabilities, created_at
+		SELECT id, workspace_id, user_id, role, extra_capabilities, scim_external_id, deactivated_at, created_at
 		FROM workspace_members
-		WHERE workspace_id = $1 AND user_id = $2
+		WHERE workspace_id = $1 AND user_id = $2 AND deactivated_at IS NULL
 	`, workspaceID, userID).Scan(
-		&m.ID, &m.WorkspaceID, &m.UserID, &m.Role, &m.ExtraCapabilities, &m.CreatedAt,
+		&m.ID, &m.WorkspaceID, &m.UserID, &m.Role, &m.ExtraCapabilities, &m.ScimExternalID, &m.DeactivatedAt, &m.CreatedAt,
 	)
 
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -183,7 +185,7 @@ func (r *repository) firstMembershipWorkspaceID(ctx context.Context, userID stri
 	var workspaceID string
 	err := r.pool.QueryRow(ctx, `
 		SELECT workspace_id FROM workspace_members
-		WHERE user_id = $1
+		WHERE user_id = $1 AND deactivated_at IS NULL
 		ORDER BY created_at ASC
 		LIMIT 1
 	`, userID).Scan(&workspaceID)
@@ -198,27 +200,30 @@ func (r *repository) firstMembershipWorkspaceID(ctx context.Context, userID stri
 // key (§0001 migration). Extra per-member grants are unioned in by the
 // caller — kept separate here because role permissions rarely change and are
 // worth a cheap in-process cache later; member grants never are.
-func (r *repository) capabilitiesForRole(ctx context.Context, roleKey string) (map[authorization.Capability]bool, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT rp.capability
-		FROM role_permissions rp
-		JOIN roles r ON r.id = rp.role_id
-		WHERE r.key = $1 AND r.workspace_id IS NULL
-	`, roleKey)
+func (r *repository) capabilitiesForRole(ctx context.Context, workspaceID, roleKey string) (map[authorization.Capability]bool, error) {
+	var roleID string
+	var capabilities []string
+	err := r.pool.QueryRow(ctx, `
+		SELECT r.id, coalesce(array_agg(rp.capability) FILTER (WHERE rp.capability IS NOT NULL), '{}')
+		FROM roles r
+		LEFT JOIN role_permissions rp ON rp.role_id = r.id
+		WHERE r.key = $2 AND (r.workspace_id = $1 OR (r.workspace_id IS NULL AND r.is_builtin))
+		GROUP BY r.id, r.workspace_id
+		ORDER BY (r.workspace_id IS NULL)
+		LIMIT 1
+	`, workspaceID, roleKey).Scan(&roleID, &capabilities)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrRoleNotFound
+	}
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	caps := make(map[authorization.Capability]bool)
-	for rows.Next() {
-		var capability string
-		if err := rows.Scan(&capability); err != nil {
-			return nil, err
-		}
+	caps := make(map[authorization.Capability]bool, len(capabilities))
+	for _, capability := range capabilities {
 		caps[authorization.Capability(capability)] = true
 	}
-	return caps, rows.Err()
+	return caps, nil
 }
 
 // RoleDefinition is a built-in role and the capabilities it grants — the
@@ -226,28 +231,31 @@ func (r *repository) capabilitiesForRole(ctx context.Context, roleKey string) (m
 // are out of scope until a later release; every workspace shares this same
 // fixed set for now.
 type RoleDefinition struct {
+	ID           string
+	WorkspaceID  string
 	Key          string
 	Name         string
 	Description  *string
+	IsBuiltin    bool
 	Capabilities []string
 }
 
 // listRoleDefinitions loads every built-in role and its seeded permissions in
 // one query, ordered so owner (which Actor.Can short-circuits rather than
 // storing permissions for) sorts first regardless of insertion order.
-func (r *repository) listRoleDefinitions(ctx context.Context) ([]RoleDefinition, error) {
+func (r *repository) listRoleDefinitions(ctx context.Context, workspaceID string) ([]RoleDefinition, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT r.key, r.name, r.description,
+		SELECT r.id, coalesce(r.workspace_id,''), r.key, r.name, r.description, r.is_builtin,
 		       coalesce(
 		           array_agg(rp.capability) FILTER (WHERE rp.capability IS NOT NULL),
 		           '{}'
-		       ) AS capabilities
+	       ) AS capabilities
 		FROM roles r
 		LEFT JOIN role_permissions rp ON rp.role_id = r.id
-		WHERE r.workspace_id IS NULL AND r.is_builtin
-		GROUP BY r.id, r.key, r.name, r.description
-		ORDER BY (r.key != 'owner'), r.key
-	`)
+		WHERE (r.workspace_id IS NULL AND r.is_builtin) OR r.workspace_id = $1
+		GROUP BY r.id, r.workspace_id, r.key, r.name, r.description, r.is_builtin
+		ORDER BY r.is_builtin DESC, (r.key = 'owner') DESC, r.name, r.key
+	`, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +264,7 @@ func (r *repository) listRoleDefinitions(ctx context.Context) ([]RoleDefinition,
 	out := []RoleDefinition{}
 	for rows.Next() {
 		var role RoleDefinition
-		if err := rows.Scan(&role.Key, &role.Name, &role.Description, &role.Capabilities); err != nil {
+		if err := rows.Scan(&role.ID, &role.WorkspaceID, &role.Key, &role.Name, &role.Description, &role.IsBuiltin, &role.Capabilities); err != nil {
 			return nil, err
 		}
 		out = append(out, role)

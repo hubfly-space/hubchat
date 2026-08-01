@@ -60,11 +60,9 @@ type InviteDetails struct {
 // the email the caller sends — the database keeps only its hash (§11.5).
 func (s *Service) IssueInvite(ctx context.Context, workspaceID, actorMemberID, email, role string) (token string, invite *Invite, err error) {
 	email = strings.ToLower(strings.TrimSpace(email))
-	if !ValidRole(role) {
-		return "", nil, ErrInvalidRole
-	}
-	if role == "owner" {
-		return "", nil, ErrCannotDemoteOwner
+	role = strings.TrimSpace(role)
+	if err := s.validateAssignableRole(ctx, workspaceID, role); err != nil {
+		return "", nil, err
 	}
 
 	if isMember, err := s.repo.emailIsMember(ctx, workspaceID, email); err != nil {
