@@ -140,8 +140,8 @@ func (s *Service) AllocateTicketNumber(ctx context.Context, tx pgx.Tx, workspace
 // for the read-only Roles & permissions screen (§5.9). Owner's row is filled
 // in from authorization.AllCapabilityNames rather than role_permissions,
 // mirroring how Actor.Can short-circuits owner instead of looking it up.
-func (s *Service) ListRoles(ctx context.Context) ([]RoleDefinition, error) {
-	roles, err := s.repo.listRoleDefinitions(ctx)
+func (s *Service) ListRoles(ctx context.Context, workspaceID string) ([]RoleDefinition, error) {
+	roles, err := s.repo.listRoleDefinitions(ctx, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +172,7 @@ func (s *Service) ActorForUser(ctx context.Context, workspaceID, userID string) 
 		return nil, err
 	}
 
-	caps, err := s.repo.capabilitiesForRole(ctx, member.Role)
+	caps, err := s.repo.capabilitiesForRole(ctx, workspaceID, member.Role)
 	if err != nil {
 		return nil, err
 	}

@@ -38,11 +38,14 @@ import {
   useInfinite,
   useAllPages,
   useMutation,
+  useQuery,
   type BadgeTone,
+  type BuiltinMemberRole,
   type Column,
   type Member,
   type MemberRole,
   type Paginated,
+  type RoleDefinition,
   type Team,
 } from "@hubchat/shared";
 import { MoreHorizontal, ShieldAlert, UserMinus, UserPlus, UsersRound } from "lucide-react";
@@ -50,7 +53,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWorkspace } from "../../app/workspace-context";
 
-const ROLE: Record<MemberRole, { label: string; tone: BadgeTone; detail: string }> = {
+const ROLE: Record<BuiltinMemberRole, { label: string; tone: BadgeTone; detail: string }> = {
   owner: { label: "Owner", tone: "accent", detail: "Full control, including deleting the workspace." },
   admin: { label: "Admin", tone: "info", detail: "Manages people, surfaces, and integrations." },
   manager: { label: "Manager", tone: "neutral", detail: "Runs queues, SLAs, and reporting." },
@@ -58,6 +61,13 @@ const ROLE: Record<MemberRole, { label: string; tone: BadgeTone; detail: string 
   developer: { label: "Developer", tone: "system", detail: "Integrations only — no conversation access by default." },
   analyst: { label: "Analyst", tone: "neutral", detail: "Read-only reports and records." },
 };
+
+function rolePresentation(role: MemberRole, definitions: RoleDefinition[]) {
+  const builtin = ROLE[role as BuiltinMemberRole];
+  if (builtin) return builtin;
+  const custom = definitions.find((definition) => definition.key === role);
+  return { label: custom?.name ?? role, tone: "neutral" as BadgeTone, detail: custom?.description ?? "Workspace custom role." };
+}
 
 type Invite = {
   id: string;
@@ -81,7 +91,10 @@ export default function Members() {
     return api.get<Paginated<Member>>(`/members?${params.toString()}`, { signal });
   });
   const teams = useAllPages<Team>(["teams", "lookup"], (cursor, signal) => api.get<Paginated<Team>>(`/teams?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
+  const roles = useQuery<{ data: RoleDefinition[] }>(["roles"], (signal) => api.get("/roles", { signal }));
   const invites = useInfinite<Invite>(["invites"], (cursor, signal) => api.get<Paginated<Invite>>(`/invites?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
+  const roleDefinitions = roles.data?.data ?? [];
+  const assignableRoles = roleDefinitions.filter((role) => role.key !== "owner");
 
   const setRole = useMutation<{ id: string; role: string }, unknown>(
     ({ id, role }) => api.patch(`/members/${id}/role`, { role }),
@@ -114,9 +127,9 @@ export default function Members() {
       header: "Role",
       width: "128px",
       cell: (member) => (
-        <Tooltip content={ROLE[member.role].detail}>
+        <Tooltip content={rolePresentation(member.role, roleDefinitions).detail}>
           <span>
-            <Badge tone={ROLE[member.role].tone}>{ROLE[member.role].label}</Badge>
+            <Badge tone={rolePresentation(member.role, roleDefinitions).tone}>{rolePresentation(member.role, roleDefinitions).label}</Badge>
           </span>
         </Tooltip>
       ),
@@ -235,15 +248,13 @@ export default function Members() {
                           </MenuTrigger>
                           <MenuContent align="end" className="w-56">
                             <MenuLabel>Change role</MenuLabel>
-                            {(Object.keys(ROLE) as MemberRole[])
-                              .filter((role) => role !== "owner")
-                              .map((role) => (
+                            {assignableRoles.map((role) => (
                                 <MenuItem
-                                  key={role}
+                                  key={role.key}
                                   disabled={member.role === "owner"}
-                                  onSelect={() => void setRole.mutate({ id: member.id, role }).catch(() => {})}
+                                  onSelect={() => void setRole.mutate({ id: member.id, role: role.key }).catch(() => {})}
                                 >
-                                  {ROLE[role].label}
+                                  {role.name}
                                 </MenuItem>
                               ))}
                             <MenuSeparator />
@@ -293,7 +304,7 @@ export default function Members() {
                                 Sent {formatRelativeShort(invite.created_at, new Date())} ago
                               </span>
                             </span>
-                            <Badge tone={ROLE[invite.role].tone}>{ROLE[invite.role].label}</Badge>
+                            <Badge tone={rolePresentation(invite.role, roleDefinitions).tone}>{rolePresentation(invite.role, roleDefinitions).label}</Badge>
                             <Button
                               variant="danger-ghost"
                               size="sm"
@@ -325,6 +336,8 @@ function InviteDialog() {
   const [open, setOpen] = useState(false);
   const [emails, setEmails] = useState("");
   const [role, setRole] = useState<MemberRole>("agent");
+  const roles = useQuery<{ data: RoleDefinition[] }>(["roles"], (signal) => api.get("/roles", { signal }));
+  const roleOptions = (roles.data?.data ?? []).filter((item) => item.key !== "owner");
 
   const invite = useMutation<{ emails: string[]; role: MemberRole }, void>(
     async ({ emails: list, role: r }) => {
@@ -397,9 +410,7 @@ function InviteDialog() {
               aria-label="Role"
               value={role}
               onValueChange={(value) => setRole(value as MemberRole)}
-              options={(Object.keys(ROLE) as MemberRole[])
-                .filter((r) => r !== "owner")
-                .map((r) => ({ value: r, label: ROLE[r].label, description: ROLE[r].detail }))}
+              options={roleOptions.map((item) => ({ value: item.key, label: item.name, description: item.description ?? "Workspace role" }))}
             />
           </Field>
         </div>
