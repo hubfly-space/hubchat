@@ -1,4 +1,4 @@
-import { CommandPalette, api, useQuery, useTheme, type CommandItem } from "@hubchat/shared";
+import { CommandPalette, api, useQuery, useTheme, type CommandItem, type Paginated } from "@hubchat/shared";
 import { BookOpen, Inbox, Moon, Settings, TicketCheck, UserRound, Workflow, MessageSquare } from "lucide-react";
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
@@ -9,7 +9,7 @@ type SearchResult = { kind: string; title: string; snippet: string; entity_id: s
 export function GlobalSearch({ open, onOpenChange, query, onQueryChange }: { open: boolean; onOpenChange: (open: boolean) => void; query: string; onQueryChange: (query: string) => void }) {
   const navigate = useNavigate();
   const { toggleTheme } = useTheme();
-  const results = useQuery<{ data: SearchResult[] }>(query.trim() ? ["global-search", query.trim()] : null, (signal) => api.get(`/search?q=${encodeURIComponent(query.trim())}&limit=20`, { signal }), { enabled: Boolean(query.trim()) });
+  const results = useQuery<Paginated<SearchResult>>(query.trim() ? ["global-search", query.trim()] : null, (signal) => api.get(`/search?q=${encodeURIComponent(query.trim())}&limit=20`, { signal }), { enabled: Boolean(query.trim()) });
   const items = useMemo<CommandItem[]>(() => {
     const normalized = query.trim().toLowerCase();
     const commands: CommandItem[] = [
