@@ -97,6 +97,14 @@ build-go: ## Build the binary without rebuilding web assets
 production-http-check: ## Smoke-test a running production binary (set HUBCHAT_SMOKE_BASE_URL)
 	node scripts/check-production-http.mjs
 
+.PHONY: production-load-check
+production-load-check: ## Run bounded production HTTP load smoke (set HUBCHAT_LOAD_BASE_URL)
+	node scripts/check-production-load.mjs
+
+.PHONY: production-binary-check
+production-binary-check: build ## Build and validate a production binary (set HUBCHAT_BINARY_DATABASE_URL)
+	node scripts/check-production-binary.mjs
+
 .PHONY: checksums
 checksums: ## Produce SHA256 checksums for release artifacts
 	cd $(DIST) && sha256sum * > SHA256SUMS
@@ -158,6 +166,18 @@ test-integration: ## Go tests that require a live PostgreSQL (make dev-db first)
 	HUBCHAT_DATABASE_URL="$(TEST_DATABASE_URL)" $(GO) run $(PKG) migrate
 	HUBCHAT_TEST_DATABASE_URL="$(TEST_DATABASE_URL)" \
 		$(GO) test ./... -race -count=1 -p 1 -tags=integration
+
+.PHONY: test-capacity
+test-capacity: ## Run the opt-in PostgreSQL inbox capacity gate (set HUBCHAT_TEST_DATABASE_URL)
+	@echo "==> running PostgreSQL capacity gate against $(TEST_DATABASE_URL)"
+	HUBCHAT_TEST_DATABASE_URL="$(TEST_DATABASE_URL)" \
+		HUBCHAT_RUN_SCALE_TESTS=1 \
+		$(GO) test ./internal/conversation -race -count=1 -tags=integration -run '^TestConversationListAtConfiguredScale$$' -v
+
+.PHONY: provider-check
+provider-check: ## Exercise the real MinIO/MailHog adapters (make dev-db first)
+	HUBCHAT_RUN_PROVIDER_TESTS=1 \
+		$(GO) test ./internal/file ./internal/mailer -count=1 -tags=provider -v
 
 .PHONY: fmt
 fmt: ## Format Go sources

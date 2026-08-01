@@ -164,6 +164,7 @@ docs/                 architecture and engineering guidelines
 | [Public API](docs/api.md) | OpenAPI contract, authentication, and generated contract checks |
 | [Widget SDK](docs/widget-sdk.md) | Browser loader commands, identity, events, and TypeScript declarations |
 | [Security](docs/security.md) | Tenant isolation, identity verification, the threat model |
+| [Deployment](docs/deployment.md) | Release artifacts, migrations, roles, rollout checks, and restore verification |
 | [Contributing](CONTRIBUTING.md) | How to propose and land a change |
 | [ADRs](docs/adr/) | Decisions that would otherwise be re-argued |
 

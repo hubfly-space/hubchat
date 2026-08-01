@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   fast:
@@ -46,3 +47,41 @@ jobs:
         with:
           go-version: '1.25.x'
       - run: HUBCHAT_TEST_DATABASE_URL='postgres://hubchat:hubchat@localhost:5432/hubchat_test?sslmode=disable' make test-integration
+
+  capacity:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: hubchat
+          POSTGRES_PASSWORD: hubchat
+          POSTGRES_DB: hubchat_capacity
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hubchat -d hubchat_capacity"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+      - name: Migrate capacity database
+        run: HUBCHAT_DATABASE_URL='postgres://hubchat:hubchat@localhost:5432/hubchat_capacity?sslmode=disable' go run ./cmd/hubchat migrate
+      - name: Run PostgreSQL capacity gate
+        run: HUBCHAT_TEST_DATABASE_URL='postgres://hubchat:hubchat@localhost:5432/hubchat_capacity?sslmode=disable' make test-capacity
+
+  providers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+      - name: Start provider services
+        run: docker compose up -d mailhog minio minio-init
+      - name: Run provider adapter gate
+        run: make provider-check
