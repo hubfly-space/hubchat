@@ -28,6 +28,11 @@ func TestFeedbackItemsUseCompositeVoteCursorAndWorkspaceScope(t *testing.T) {
 			('fbi_a1','wrk_feedback_a','brd_feedback_a','Most voted',10,'2026-07-31T12:00:00Z'),
 			('fbi_a2','wrk_feedback_a','brd_feedback_a','Second voted',5,'2026-07-30T12:00:00Z'),
 			('fbi_b1','wrk_feedback_b','brd_feedback_b','Other workspace',99,'2026-07-31T13:00:00Z')
+		;
+		INSERT INTO feedback_comments (id,workspace_id,item_id,author_type,author_name,body,created_at) VALUES
+			('comment_a1','wrk_feedback_a','fbi_a1','customer','A customer','First comment','2026-07-30T12:00:00Z'),
+			('comment_a2','wrk_feedback_a','fbi_a1','agent','A teammate','Second comment','2026-07-31T12:00:00Z'),
+			('comment_b1','wrk_feedback_b','fbi_b1','customer','B customer','Other workspace','2026-07-31T13:00:00Z')
 	`); err != nil {
 		t.Fatal(err)
 	}
@@ -53,5 +58,67 @@ func TestFeedbackItemsUseCompositeVoteCursorAndWorkspaceScope(t *testing.T) {
 	second, secondResponse := request("/api/v1/feedback/boards/brd_feedback_a/items?limit=1&sort=votes&cursor=" + *first.NextCursor)
 	if secondResponse.Code != http.StatusOK || second.HasMore || len(second.Data) != 1 || second.Data[0]["id"] != "fbi_a2" {
 		t.Fatalf("second feedback page = %d %+v", secondResponse.Code, second)
+	}
+	privateCommentRequest := func(path string) (Page[feedback.Comment], *httptest.ResponseRecorder) {
+		req := httptest.NewRequest(http.MethodGet, path, nil).WithContext(authorization.WithActor(ctx, actor))
+		req.SetPathValue("id", "fbi_a1")
+		response := httptest.NewRecorder()
+		handleListFeedbackComments(deps)(response, req)
+		var page Page[feedback.Comment]
+		if err := json.NewDecoder(response.Body).Decode(&page); err != nil {
+			t.Fatal(err)
+		}
+		return page, response
+	}
+	privateFirst, privateFirstResponse := privateCommentRequest("/api/v1/feedback/items/fbi_a1/comments?limit=1")
+	if privateFirstResponse.Code != http.StatusOK || !privateFirst.HasMore || privateFirst.NextCursor == nil || len(privateFirst.Data) != 1 || privateFirst.Data[0].ID != "comment_a1" {
+		t.Fatalf("first private comment page = %d %+v", privateFirstResponse.Code, privateFirst)
+	}
+	privateSecond, privateSecondResponse := privateCommentRequest("/api/v1/feedback/items/fbi_a1/comments?limit=1&cursor=" + *privateFirst.NextCursor)
+	if privateSecondResponse.Code != http.StatusOK || privateSecond.HasMore || len(privateSecond.Data) != 1 || privateSecond.Data[0].ID != "comment_a2" {
+		t.Fatalf("second private comment page = %d %+v", privateSecondResponse.Code, privateSecond)
+	}
+
+	publicRequest := func(path string) (Page[feedback.Item], *httptest.ResponseRecorder) {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req = req.WithContext(ctx)
+		req.SetPathValue("workspaceID", "wrk_feedback_a")
+		req.SetPathValue("slug", "a-board")
+		response := httptest.NewRecorder()
+		handlePublicFeedbackItems(deps)(response, req)
+		var page Page[feedback.Item]
+		if err := json.NewDecoder(response.Body).Decode(&page); err != nil {
+			t.Fatal(err)
+		}
+		return page, response
+	}
+	publicFirst, publicFirstResponse := publicRequest("/api/v1/public/feedback/wrk_feedback_a/boards/a-board/items?limit=1&sort=votes")
+	if publicFirstResponse.Code != http.StatusOK || !publicFirst.HasMore || publicFirst.NextCursor == nil || len(publicFirst.Data) != 1 || publicFirst.Data[0].ID != "fbi_a1" {
+		t.Fatalf("first public feedback page = %d %+v", publicFirstResponse.Code, publicFirst)
+	}
+	publicSecond, publicSecondResponse := publicRequest("/api/v1/public/feedback/wrk_feedback_a/boards/a-board/items?limit=1&sort=votes&cursor=" + *publicFirst.NextCursor)
+	if publicSecondResponse.Code != http.StatusOK || publicSecond.HasMore || len(publicSecond.Data) != 1 || publicSecond.Data[0].ID != "fbi_a2" {
+		t.Fatalf("second public feedback page = %d %+v", publicSecondResponse.Code, publicSecond)
+	}
+
+	commentRequest := func(path string) (Page[feedback.Comment], *httptest.ResponseRecorder) {
+		req := httptest.NewRequest(http.MethodGet, path, nil).WithContext(ctx)
+		req.SetPathValue("workspaceID", "wrk_feedback_a")
+		req.SetPathValue("id", "fbi_a1")
+		response := httptest.NewRecorder()
+		handlePublicListFeedbackComments(deps)(response, req)
+		var page Page[feedback.Comment]
+		if err := json.NewDecoder(response.Body).Decode(&page); err != nil {
+			t.Fatal(err)
+		}
+		return page, response
+	}
+	commentsFirst, commentsFirstResponse := commentRequest("/api/v1/public/feedback/wrk_feedback_a/items/fbi_a1/comments?limit=1")
+	if commentsFirstResponse.Code != http.StatusOK || !commentsFirst.HasMore || commentsFirst.NextCursor == nil || len(commentsFirst.Data) != 1 || commentsFirst.Data[0].ID != "comment_a1" {
+		t.Fatalf("first public comment page = %d %+v", commentsFirstResponse.Code, commentsFirst)
+	}
+	commentsSecond, commentsSecondResponse := commentRequest("/api/v1/public/feedback/wrk_feedback_a/items/fbi_a1/comments?limit=1&cursor=" + *commentsFirst.NextCursor)
+	if commentsSecondResponse.Code != http.StatusOK || commentsSecond.HasMore || len(commentsSecond.Data) != 1 || commentsSecond.Data[0].ID != "comment_a2" {
+		t.Fatalf("second public comment page = %d %+v", commentsSecondResponse.Code, commentsSecond)
 	}
 }

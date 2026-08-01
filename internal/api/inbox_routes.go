@@ -3,6 +3,8 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hubchat/hubchat/internal/authorization"
@@ -56,17 +58,41 @@ func handleListInboxes(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
 
-		inboxes, err := deps.Inbox.List(r.Context(), actor.WorkspaceID)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed inbox cursor.")
+			return
+		}
+		beforeDefault := false
+		beforeName := ""
+		hasCursor := !cursor.IsZero()
+		if hasCursor {
+			defaultText, name, ok := strings.Cut(cursor.Value, "|")
+			if !ok || name == "" {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed inbox cursor.")
+				return
+			}
+			beforeDefault, err = strconv.ParseBool(defaultText)
+			if err != nil || cursor.ID == "" {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed inbox cursor.")
+				return
+			}
+			beforeName = name
+		}
+		inboxes, err := deps.Inbox.ListPage(r.Context(), actor.WorkspaceID, beforeDefault, beforeName, cursor.ID, hasCursor, limit+1)
 		if err != nil {
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load inboxes.")
 			return
 		}
 
-		out := make([]inboxDetailJSON, 0, len(inboxes))
-		for _, i := range inboxes {
-			out = append(out, inboxDetailToJSON(i))
+		page := NewPage(inboxes, limit, func(item inbox.Inbox) Cursor {
+			return Cursor{Value: strconv.FormatBool(item.IsDefault) + "|" + item.Name, ID: item.ID}
+		})
+		pageOut := make([]inboxDetailJSON, 0, len(page.Data))
+		for _, item := range page.Data {
+			pageOut = append(pageOut, inboxDetailToJSON(item))
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+		httpserver.WriteJSON(w, http.StatusOK, Page[inboxDetailJSON]{Data: pageOut, NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
 }
 

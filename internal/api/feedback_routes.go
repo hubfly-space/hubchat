@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/feedback"
@@ -152,23 +153,69 @@ func handleGetFeedbackItem(deps Deps) http.HandlerFunc {
 }
 func handleListFeedbackRoadmap(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := deps.Feedback.ListRoadmapItems(r.Context(), actorFromRequest(r).WorkspaceID, r.URL.Query().Get("status"), 200)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed feedback cursor.")
+			return
+		}
+		beforeRank, beforeVote := 0, int64(0)
+		if cursor.Value != "" {
+			parts := strings.Split(cursor.Value, ":")
+			if len(parts) != 2 {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed feedback cursor.")
+				return
+			}
+			beforeRank, err = strconv.Atoi(parts[0])
+			if err == nil {
+				beforeVote, err = strconv.ParseInt(parts[1], 10, 64)
+			}
+			if err != nil {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed feedback cursor.")
+				return
+			}
+		}
+		status := r.URL.Query().Get("status")
+		items, err := deps.Feedback.ListRoadmapItemsPage(r.Context(), actorFromRequest(r).WorkspaceID, status, beforeRank, beforeVote, cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			writeFeedbackInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		page := NewPage(items, limit, func(item feedback.Item) Cursor {
+			return Cursor{Value: strconv.Itoa(roadmapStatusRank(item.Status)) + ":" + strconv.FormatInt(int64(item.VoteCount), 10), At: item.CreatedAt, ID: item.ID}
+		})
+		httpserver.WriteJSON(w, http.StatusOK, page)
+	}
+}
+
+func roadmapStatusRank(status string) int {
+	switch status {
+	case "in_progress":
+		return 1
+	case "planned":
+		return 2
+	case "completed":
+		return 3
+	default:
+		return 4
 	}
 }
 func handleListFeedbackComments(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed feedback cursor.")
+			return
+		}
 		actor := actorFromRequest(r)
-		comments, err := deps.Feedback.ListComments(r.Context(), actor.WorkspaceID, r.PathValue("id"), 100)
+		comments, err := deps.Feedback.ListCommentsPage(r.Context(), actor.WorkspaceID, r.PathValue("id"), cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			writeFeedbackInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": comments})
+		page := NewPage(comments, limit, func(item feedback.Comment) Cursor {
+			return Cursor{At: item.CreatedAt, ID: item.ID}
+		})
+		httpserver.WriteJSON(w, http.StatusOK, page)
 	}
 }
 func handleListFeedbackLinks(deps Deps) http.HandlerFunc {
@@ -277,18 +324,29 @@ func handleAddFeedbackComment(deps Deps) http.HandlerFunc {
 
 func handlePublicFeedbackBoards(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := deps.Feedback.ListBoards(r.Context(), r.PathValue("workspaceID"))
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed feedback cursor.")
+			return
+		}
+		var beforePosition *int
+		if !cursor.IsZero() {
+			position, parseErr := strconv.Atoi(cursor.Value)
+			if parseErr != nil {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed feedback cursor.")
+				return
+			}
+			beforePosition = &position
+		}
+		items, err := deps.Feedback.ListPublicBoardsPage(r.Context(), r.PathValue("workspaceID"), beforePosition, cursor.ID, limit+1)
 		if err != nil {
 			writeFeedbackInternal(w, r)
 			return
 		}
-		public := make([]feedback.Board, 0, len(items))
-		for _, item := range items {
-			if item.Visibility == "public" {
-				public = append(public, item)
-			}
-		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": public})
+		page := NewPage(items, limit, func(item feedback.Board) Cursor {
+			return Cursor{Value: strconv.Itoa(item.Position), ID: item.ID}
+		})
+		httpserver.WriteJSON(w, http.StatusOK, page)
 	}
 }
 func handlePublicFeedbackItems(deps Deps) http.HandlerFunc {
@@ -298,13 +356,35 @@ func handlePublicFeedbackItems(deps Deps) http.HandlerFunc {
 			writeFeedbackError(w, r, err)
 			return
 		}
+		limit, cursor, pageErr := PageParams(r)
+		if pageErr != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed feedback cursor.")
+			return
+		}
 		customerID := portalCustomerForRequest(r, deps, r.PathValue("workspaceID"))
-		items, err := deps.Feedback.ListItems(r.Context(), r.PathValue("workspaceID"), board.ID, r.URL.Query().Get("status"), r.URL.Query().Get("sort"), r.URL.Query().Get("q"), customerID, 100)
+		sortOrder := r.URL.Query().Get("sort")
+		var beforeVote *int64
+		if sortOrder != "recent" && !cursor.IsZero() {
+			value, parseErr := strconv.ParseInt(cursor.Value, 10, 64)
+			if parseErr != nil {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed feedback cursor.")
+				return
+			}
+			beforeVote = &value
+		}
+		items, err := deps.Feedback.ListItemsPage(r.Context(), r.PathValue("workspaceID"), board.ID, r.URL.Query().Get("status"), sortOrder, r.URL.Query().Get("q"), customerID, cursor.At, cursor.ID, beforeVote, limit+1)
 		if err != nil {
 			writeFeedbackInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		page := NewPage(items, limit, func(item feedback.Item) Cursor {
+			value := ""
+			if sortOrder != "recent" {
+				value = strconv.Itoa(item.VoteCount)
+			}
+			return Cursor{Value: value, At: item.CreatedAt, ID: item.ID}
+		})
+		httpserver.WriteJSON(w, http.StatusOK, page)
 	}
 }
 func handlePublicCreateFeedbackItem(deps Deps) http.HandlerFunc {
@@ -349,12 +429,19 @@ func handlePublicListFeedbackComments(deps Deps) http.HandlerFunc {
 			writeFeedbackError(w, r, err)
 			return
 		}
-		comments, err := deps.Feedback.ListComments(r.Context(), workspaceID, r.PathValue("id"), 100)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed comment cursor.")
+			return
+		}
+		comments, err := deps.Feedback.ListCommentsPage(r.Context(), workspaceID, r.PathValue("id"), cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			writeFeedbackInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": comments})
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(comments, limit, func(comment feedback.Comment) Cursor {
+			return Cursor{At: comment.CreatedAt, ID: comment.ID}
+		}))
 	}
 }
 

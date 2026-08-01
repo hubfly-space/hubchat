@@ -40,22 +40,23 @@ func handleListInvites(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
 
-		invites, err := deps.Workspace.ListInvites(r.Context(), actor.WorkspaceID)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed invite cursor.")
+			return
+		}
+		invites, err := deps.Workspace.ListInvitesPage(r.Context(), actor.WorkspaceID, cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load invites.")
 			return
 		}
 
-		out := make([]inviteJSON, 0, len(invites))
-		for _, invite := range invites {
-			out = append(out, inviteJSON{
-				ID: invite.ID, Email: invite.Email, Role: invite.Role,
-				ExpiresAt:  invite.ExpiresAt.UTC().Format(time.RFC3339),
-				AcceptedAt: formatOptionalTime(invite.AcceptedAt),
-				CreatedAt:  invite.CreatedAt.UTC().Format(time.RFC3339),
-			})
+		page := NewPage(invites, limit, func(invite workspace.Invite) Cursor { return Cursor{At: invite.CreatedAt, ID: invite.ID} })
+		pageOut := make([]inviteJSON, 0, len(page.Data))
+		for _, invite := range page.Data {
+			pageOut = append(pageOut, inviteJSON{ID: invite.ID, Email: invite.Email, Role: invite.Role, ExpiresAt: invite.ExpiresAt.UTC().Format(time.RFC3339), AcceptedAt: formatOptionalTime(invite.AcceptedAt), CreatedAt: invite.CreatedAt.UTC().Format(time.RFC3339)})
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+		httpserver.WriteJSON(w, http.StatusOK, Page[inviteJSON]{Data: pageOut, NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
 }
 
