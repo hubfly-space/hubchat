@@ -2,18 +2,21 @@ import { AreaChart, Button, Card, CardBody, EmptyState, Metric, Page, PageBody, 
 import { Download, Inbox } from "lucide-react";
 import { useState } from "react";
 import { RANGES } from "./ReportsOverview";
-import { useAnalyticsRollups } from "../../lib/analytics";
+import { reportWindow, useAnalyticsRollups } from "../../lib/analytics";
+import { useWorkspace } from "../../app/workspace-context";
 
 type Summary = { first_response_seconds: number; next_response_seconds: number; resolution_seconds: number; sla_compliance_percent: number; sla_instances: number; backlog_conversations: number; backlog_tickets: number; tickets_reopened: number; active_sla_instances: number; open_sla_breached: number };
 type WorkloadRow = { subject_type: "member" | "team"; subject_id: string; name: string; active_conversations: number; active_tickets: number; replies_sent: number; resolved: number };
 
 /** Support operations report backed by live event and SLA APIs. */
 export default function SupportReport() {
+  const { workspace } = useWorkspace();
   const [range, setRange] = useState("30d");
-  const conversations = useAnalyticsRollups(["support-report", "conversations", range], "conversations.created", fromFor(range));
-  const tickets = useAnalyticsRollups(["support-report", "tickets", range], "tickets.created", fromFor(range));
-  const summary = useQuery<Summary>(["support-report", "summary", range], (signal) => api.get(`/analytics/summary?from=${encodeURIComponent(fromFor(range))}`, { signal }));
-  const workload = useQuery<{ data: WorkloadRow[] }>(["support-report", "workload", range], (signal) => api.get(`/analytics/workload?from=${encodeURIComponent(fromFor(range))}`, { signal }));
+  const period = reportWindow(range, workspace.timezone);
+  const conversations = useAnalyticsRollups(["support-report", "conversations", range, period.timezone], "conversations.created", period.from, period.to, period.timezone);
+  const tickets = useAnalyticsRollups(["support-report", "tickets", range, period.timezone], "tickets.created", period.from, period.to, period.timezone);
+  const summary = useQuery<Summary>(["support-report", "summary", range, period.timezone], (signal) => api.get(`/analytics/summary?from=${encodeURIComponent(period.from)}&to=${encodeURIComponent(period.to)}&timezone=${encodeURIComponent(period.timezone)}`, { signal }));
+  const workload = useQuery<{ data: WorkloadRow[] }>(["support-report", "workload", range, period.timezone], (signal) => api.get(`/analytics/workload?from=${encodeURIComponent(period.from)}&to=${encodeURIComponent(period.to)}&timezone=${encodeURIComponent(period.timezone)}`, { signal }));
   const conversationPoints = conversations.items.map((item) => ({ t: item.bucket, v: item.value }));
   const breaches = summary.data?.open_sla_breached ?? 0;
   const active = summary.data?.active_sla_instances ?? 0;
@@ -32,7 +35,7 @@ export default function SupportReport() {
     ]),
   ]);
 
-  return <Page><PageHeader title="Support operations" description="Live volume, queue health, and SLA outcomes." actions={<><SegmentedControl aria-label="Date range" value={range} onValueChange={setRange} options={RANGES.map((item) => ({ value: item.value, label: item.label }))} /><Button variant="secondary" size="sm" leading={<Download />} disabled={!conversations.items.length && !tickets.items.length} onClick={exportReport}>Export CSV</Button></>} /><PageBody>
+  return <Page><PageHeader title="Support operations" description={`Live volume, queue health, and SLA outcomes. Reporting timezone: ${period.timezone}.`} actions={<><SegmentedControl aria-label="Date range" value={range} onValueChange={setRange} options={RANGES.map((item) => ({ value: item.value, label: item.label }))} /><Button variant="secondary" size="sm" leading={<Download />} disabled={!conversations.items.length && !tickets.items.length} onClick={exportReport}>Export CSV</Button></>} /><PageBody>
     {conversations.isError || tickets.isError || summary.isError || workload.isError ? <EmptyState icon={Inbox} title="Support data unavailable" description="Could not load report rollups." action={<Button variant="secondary" onClick={() => { conversations.refetch(); tickets.refetch(); summary.refetch(); workload.refetch(); }}>Try again</Button>} /> : <>
       <Section title="Headline"><Card><CardBody className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Conversations" value={formatCompact(sum(conversationPoints))} definition="Conversations created in the selected period." /><Metric label="Tickets" value={formatCompact(sum(tickets.items.map((item) => ({ v: item.value }))))} definition="Tickets created in the selected period." /><Metric label="First response" value={summary.data?.first_response_seconds ? formatDuration(summary.data.first_response_seconds) : "—"} definition="Average elapsed time from first customer message to first agent reply." /><Metric label="Next response" value={summary.data?.next_response_seconds ? formatDuration(summary.data.next_response_seconds) : "—"} definition="Average elapsed time from each customer reply to the next agent reply." /><Metric label="SLA compliance" value={summary.data && summary.data.sla_instances > 0 ? formatPercent(summary.data.sla_compliance_percent / 100) : "—"} definition="Satisfied SLA instances divided by met or breached instances." /><Metric label="Backlog" value={summary.data ? formatCompact(summary.data.backlog_conversations + summary.data.backlog_tickets) : "—"} definition="Open conversations and tickets at the end of the period." /><Metric label="Reopened tickets" value={summary.data ? formatCompact(summary.data.tickets_reopened) : "—"} definition="Tickets moved from resolved or closed back to an active state." /><Metric label="Active SLA timers" value={formatCompact(active)} definition="Timers currently running across this workspace." /><Metric label="Breached timers" value={formatCompact(breaches)} definition="Timers that have crossed their business-hours deadline." /></CardBody></Card></Section>
       <Section title="Conversation volume"><Card><CardBody>{conversationPoints.length ? <AreaChart height={220} series={[{ key: "conversations", label: "Conversations", points: conversationPoints, tone: 1 }]} formatLabel={(label) => label.slice(5)} /> : <EmptyState icon={Inbox} title="No conversation events yet" description="The chart will populate after the analytics worker folds events." />}</CardBody></Card></Section>
@@ -41,5 +44,4 @@ export default function SupportReport() {
   </PageBody></Page>;
 }
 
-function fromFor(range: string) { const days = range === "7d" ? 7 : range === "90d" ? 90 : 30; return new Date(Date.now() - days * 86400000).toISOString(); }
 function sum(points: { v: number }[]) { return points.reduce((total, point) => total + point.v, 0); }

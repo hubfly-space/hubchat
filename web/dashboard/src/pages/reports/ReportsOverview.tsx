@@ -34,7 +34,7 @@ import type { Paginated } from "@hubchat/shared";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useWorkspace } from "../../app/workspace-context";
-import { useAnalyticsRollups, type AnalyticsRollup } from "../../lib/analytics";
+import { reportWindow, useAnalyticsRollups, type AnalyticsRollup } from "../../lib/analytics";
 
 export const RANGES = [
   { value: "7d", label: "7 days" },
@@ -56,10 +56,9 @@ export default function ReportsOverview() {
   const [selectedReportID, setSelectedReportID] = useState("");
   const [deletingReport, setDeletingReport] = useState<SavedReport | null>(null);
   const [deletingSchedule, setDeletingSchedule] = useState<ReportSchedule | null>(null);
-  const days = range === "7d" ? 7 : range === "90d" ? 90 : 30;
-  const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-  const conversations = useAnalyticsRollups(["reports", "conversations", range], "conversations.created", from);
-  const tickets = useAnalyticsRollups(["reports", "tickets", range], "tickets.created", from);
+  const period = reportWindow(range, workspace.timezone);
+  const conversations = useAnalyticsRollups(["reports", "conversations", range, period.timezone], "conversations.created", period.from, period.to, period.timezone);
+  const tickets = useAnalyticsRollups(["reports", "tickets", range, period.timezone], "tickets.created", period.from, period.to, period.timezone);
   const reports = useInfinite<SavedReport>(["saved-reports"], (cursor, signal) => {
     const params = new URLSearchParams({ limit: "25" });
     if (cursor) params.set("cursor", cursor);
@@ -74,7 +73,7 @@ export default function ReportsOverview() {
       return api.get<Paginated<ReportSchedule>>(`/reports/${encodeURIComponent(selectedReportID)}/schedules?${params.toString()}`, { signal });
     },
   );
-  const summary = useQuery<Summary>(["reports", "summary", range], (signal) => api.get(`/analytics/summary?from=${encodeURIComponent(new Date(Date.now() - days * 86400000).toISOString())}`, { signal }));
+  const summary = useQuery<Summary>(["reports", "summary", range, period.timezone], (signal) => api.get(`/analytics/summary?from=${encodeURIComponent(period.from)}&to=${encodeURIComponent(period.to)}&timezone=${encodeURIComponent(period.timezone)}`, { signal }));
 
   const conversationPoints = toPoints(conversations.items);
   const ticketPoints = toPoints(tickets.items);
@@ -86,13 +85,13 @@ export default function ReportsOverview() {
       name: `Support overview (${range})`,
       definition: { metrics: ["conversations.created", "tickets.created"] },
       date_range: range === "7d" ? "last_7_days" : range === "90d" ? "last_90_days" : "last_30_days",
-      timezone: "UTC",
+      timezone: period.timezone,
     }, { idempotencyKey: idempotencyKey() });
     return api.post<ReportSchedule>(`/reports/${encodeURIComponent(report.id)}/schedules`, {
       cadence,
       recipients: [recipient.trim()],
       format: "csv",
-      options: { hour: 9, minute: 0, timezone: "UTC" },
+      options: { hour: 9, minute: 0, timezone: period.timezone },
     }, { idempotencyKey: idempotencyKey() });
   }, { invalidates: [["saved-reports"]], onSuccess: (created) => { setSelectedReportID(created.report_id); setScheduleOpen(false); setRecipient(""); } });
   const toggleSchedule = useMutation<{ schedule: ReportSchedule; enabled: boolean }, ReportSchedule>(({ schedule: item, enabled }) => api.patch("/reports/" + encodeURIComponent(item.report_id) + "/schedules/" + encodeURIComponent(item.id), {
@@ -115,8 +114,7 @@ export default function ReportsOverview() {
     },
   });
   const exportCSV = () => {
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-    void downloadFile(`/analytics/export.csv?metrics=${encodeURIComponent("conversations.created,tickets.created")}&from=${encodeURIComponent(from)}`, `hubchat-reports-${range}.csv`, workspace.id).catch(() => undefined);
+    void downloadFile(`/analytics/export.csv?metrics=${encodeURIComponent("conversations.created,tickets.created")}&from=${encodeURIComponent(period.from)}&to=${encodeURIComponent(period.to)}&timezone=${encodeURIComponent(period.timezone)}`, `hubchat-reports-${range}.csv`, workspace.id).catch(() => undefined);
   };
 
   return (
@@ -135,7 +133,7 @@ export default function ReportsOverview() {
 
       <PageBody>
         <Callout tone="info" icon={<Info />} className="mb-5">
-          Figures are folded from the append-only event log in UTC day buckets. A rollup is empty until the worker has processed the workspace events.
+          Figures are folded from the append-only event log in UTC day buckets. The selected window is interpreted in {period.timezone}. A rollup is empty until the worker has processed the workspace events.
         </Callout>
 
         {loading ? <p className="text-sm text-fg-muted">Loading live report rollups…</p> : failed ? <EmptyState icon={Inbox} title="Reports unavailable" description="The analytics rollup API could not be loaded." action={<Button variant="secondary" size="sm" onClick={() => { conversations.refetch(); tickets.refetch(); summary.refetch(); }}>Try again</Button>} /> : (
