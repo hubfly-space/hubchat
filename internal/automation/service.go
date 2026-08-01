@@ -19,6 +19,7 @@ import (
 	"github.com/hubchat/hubchat/internal/ticket"
 	"github.com/hubchat/hubchat/internal/webhook"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 var (
@@ -822,9 +823,19 @@ func (s *Service) recordExecution(ctx context.Context, workspaceID string, rule 
 func scanRule(row interface{ Scan(...any) error }) (*Rule, error) {
 	var item Rule
 	var conditions, actions []byte
-	err := row.Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.Description, &item.Trigger, &conditions, &actions, &item.Position, &item.Enabled, &item.MaxRunsPerHour, &item.Version, &item.LastRunAt, &item.RunCount24h, &item.ErrorCount24h, &item.CreatedAt, &item.UpdatedAt)
+	var maxRunsPerHour pgtype.Int4
+	var lastRunAt pgtype.Timestamptz
+	err := row.Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.Description, &item.Trigger, &conditions, &actions, &item.Position, &item.Enabled, &maxRunsPerHour, &item.Version, &lastRunAt, &item.RunCount24h, &item.ErrorCount24h, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		return nil, err
+	}
+	if maxRunsPerHour.Valid {
+		value := int(maxRunsPerHour.Int32)
+		item.MaxRunsPerHour = &value
+	}
+	if lastRunAt.Valid {
+		value := lastRunAt.Time
+		item.LastRunAt = &value
 	}
 	_ = json.Unmarshal(conditions, &item.Conditions)
 	_ = json.Unmarshal(actions, &item.Actions)
@@ -833,8 +844,29 @@ func scanRule(row interface{ Scan(...any) error }) (*Rule, error) {
 func scanExecution(row interface{ Scan(...any) error }) (*Execution, error) {
 	var item Execution
 	var actions []byte
-	if err := row.Scan(&item.ID, &item.WorkspaceID, &item.RuleID, &item.RuleVersion, &item.EventID, &item.SubjectType, &item.SubjectID, &item.Outcome, &item.Depth, &item.CausationID, &actions, &item.Error, &item.DurationMS, &item.DryRun, &item.OccurredAt); err != nil {
+	var eventID, subjectType, subjectID, causationID, executionError pgtype.Text
+	var durationMS pgtype.Int4
+	if err := row.Scan(&item.ID, &item.WorkspaceID, &item.RuleID, &item.RuleVersion, &eventID, &subjectType, &subjectID, &item.Outcome, &item.Depth, &causationID, &actions, &executionError, &durationMS, &item.DryRun, &item.OccurredAt); err != nil {
 		return nil, err
+	}
+	if eventID.Valid {
+		value := eventID.String
+		item.EventID = &value
+	}
+	if subjectType.Valid {
+		item.SubjectType = subjectType.String
+	}
+	if subjectID.Valid {
+		item.SubjectID = subjectID.String
+	}
+	if causationID.Valid {
+		item.CausationID = causationID.String
+	}
+	if executionError.Valid {
+		item.Error = executionError.String
+	}
+	if durationMS.Valid {
+		item.DurationMS = int(durationMS.Int32)
 	}
 	_ = json.Unmarshal(actions, &item.ActionsApplied)
 	return &item, nil

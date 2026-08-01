@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/hubchat/hubchat/internal/database"
 	"github.com/hubchat/hubchat/internal/events"
@@ -433,6 +434,11 @@ func (s *Service) RunEventConsumer(ctx context.Context, signals <-chan events.Si
 func (s *Service) Deliver(ctx context.Context, deliveryID string) error {
 	var d Delivery
 	var payload []byte
+	var eventID pgtype.Text
+	var responseStatus pgtype.Int4
+	var durationMS pgtype.Int4
+	var nextAttemptAt pgtype.Timestamptz
+	var deliveredAt pgtype.Timestamptz
 	var encrypted []byte
 	var endpointURL string
 	err := s.pool.QueryRow(ctx, `
@@ -440,13 +446,33 @@ func (s *Service) Deliver(ctx context.Context, deliveryID string) error {
 		SET attempt=d.attempt+1
 		FROM webhook_endpoints e
 		WHERE d.id=$1 AND d.endpoint_id=e.id AND d.status IN ('pending','failed')
-		RETURNING d.id,d.workspace_id,d.endpoint_id,d.event_id,d.event_type,d.payload,d.status,d.attempt,d.max_attempts,d.response_status,d.response_body,d.duration_ms,d.error,d.next_attempt_at,d.delivered_at,d.created_at,e.url,e.secret
-	`, deliveryID).Scan(&d.ID, &d.WorkspaceID, &d.EndpointID, &d.EventID, &d.EventType, &payload, &d.Status, &d.Attempt, &d.MaxAttempts, &d.ResponseStatus, &d.ResponseBody, &d.DurationMS, &d.Error, &d.NextAttemptAt, &d.DeliveredAt, &d.CreatedAt, &endpointURL, &encrypted)
+		RETURNING d.id,d.workspace_id,d.endpoint_id,d.event_id,d.event_type,d.payload,d.status,d.attempt,d.max_attempts,d.response_status,coalesce(d.response_body,''),d.duration_ms,coalesce(d.error,''),d.next_attempt_at,d.delivered_at,d.created_at,e.url,e.secret
+	`, deliveryID).Scan(&d.ID, &d.WorkspaceID, &d.EndpointID, &eventID, &d.EventType, &payload, &d.Status, &d.Attempt, &d.MaxAttempts, &responseStatus, &d.ResponseBody, &durationMS, &d.Error, &nextAttemptAt, &deliveredAt, &d.CreatedAt, &endpointURL, &encrypted)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("webhook: claim delivery: %w", err)
+	}
+	if eventID.Valid {
+		value := eventID.String
+		d.EventID = &value
+	}
+	if responseStatus.Valid {
+		value := int(responseStatus.Int32)
+		d.ResponseStatus = &value
+	}
+	if durationMS.Valid {
+		value := int(durationMS.Int32)
+		d.DurationMS = &value
+	}
+	if nextAttemptAt.Valid {
+		value := nextAttemptAt.Time
+		d.NextAttemptAt = &value
+	}
+	if deliveredAt.Valid {
+		value := deliveredAt.Time
+		d.DeliveredAt = &value
 	}
 	secret, err := s.decrypt(encrypted)
 	if err != nil {
@@ -512,7 +538,7 @@ func (s *Service) Deliveries(ctx context.Context, workspaceID, endpointID string
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.pool.Query(ctx, `SELECT d.id,d.workspace_id,d.endpoint_id,d.event_id,d.event_type,d.status,d.attempt,d.max_attempts,d.response_status,d.response_body,d.duration_ms,d.error,d.next_attempt_at,d.delivered_at,d.created_at FROM webhook_deliveries d WHERE d.workspace_id=$1 AND d.endpoint_id=$2 AND ($3::timestamptz IS NULL OR (d.created_at,d.id)<($3,$4)) ORDER BY d.created_at DESC,d.id DESC LIMIT $5`, workspaceID, endpointID, nullableTime(before), beforeID, limit)
+	rows, err := s.pool.Query(ctx, `SELECT d.id,d.workspace_id,d.endpoint_id,d.event_id,d.event_type,d.status,d.attempt,d.max_attempts,d.response_status,coalesce(d.response_body,''),d.duration_ms,coalesce(d.error,''),d.next_attempt_at,d.delivered_at,d.created_at FROM webhook_deliveries d WHERE d.workspace_id=$1 AND d.endpoint_id=$2 AND ($3::timestamptz IS NULL OR (d.created_at,d.id)<($3,$4)) ORDER BY d.created_at DESC,d.id DESC LIMIT $5`, workspaceID, endpointID, nullableTime(before), beforeID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("webhook: deliveries: %w", err)
 	}
@@ -520,8 +546,33 @@ func (s *Service) Deliveries(ctx context.Context, workspaceID, endpointID string
 	result := make([]Delivery, 0)
 	for rows.Next() {
 		var d Delivery
-		if err := rows.Scan(&d.ID, &d.WorkspaceID, &d.EndpointID, &d.EventID, &d.EventType, &d.Status, &d.Attempt, &d.MaxAttempts, &d.ResponseStatus, &d.ResponseBody, &d.DurationMS, &d.Error, &d.NextAttemptAt, &d.DeliveredAt, &d.CreatedAt); err != nil {
+		var eventID pgtype.Text
+		var responseStatus pgtype.Int4
+		var durationMS pgtype.Int4
+		var nextAttemptAt pgtype.Timestamptz
+		var deliveredAt pgtype.Timestamptz
+		if err := rows.Scan(&d.ID, &d.WorkspaceID, &d.EndpointID, &eventID, &d.EventType, &d.Status, &d.Attempt, &d.MaxAttempts, &responseStatus, &d.ResponseBody, &durationMS, &d.Error, &nextAttemptAt, &deliveredAt, &d.CreatedAt); err != nil {
 			return nil, err
+		}
+		if eventID.Valid {
+			value := eventID.String
+			d.EventID = &value
+		}
+		if responseStatus.Valid {
+			value := int(responseStatus.Int32)
+			d.ResponseStatus = &value
+		}
+		if durationMS.Valid {
+			value := int(durationMS.Int32)
+			d.DurationMS = &value
+		}
+		if nextAttemptAt.Valid {
+			value := nextAttemptAt.Time
+			d.NextAttemptAt = &value
+		}
+		if deliveredAt.Valid {
+			value := deliveredAt.Time
+			d.DeliveredAt = &value
 		}
 		result = append(result, d)
 	}

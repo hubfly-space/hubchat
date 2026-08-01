@@ -8,6 +8,7 @@ if (!baseURL) {
 const origin = new URL(baseURL).origin;
 const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const email = `journey-${suffix}@example.com`;
+const customerEmail = `customer-${suffix}@example.com`;
 const password = "journey-password-2026!";
 const cookies = new Map();
 let requestNumber = 0;
@@ -55,6 +56,41 @@ async function request(path, { method = "GET", body, expected = 200 } = {}) {
     throw new Error(`${method} ${path}: status ${response.status}, expected ${expected}: ${text.slice(0, 1200)}`);
   }
   return value;
+}
+
+async function uploadFile(path, { fields, filename, contents, contentType = "text/plain", expected = 201 }) {
+  const form = new FormData();
+  for (const [name, value] of Object.entries(fields)) form.set(name, value);
+  form.set("file", new Blob([contents], { type: contentType }), filename);
+  const headers = new Headers({ Accept: "application/json", Origin: origin });
+  if (cookieHeader()) headers.set("Cookie", cookieHeader());
+  headers.set("X-Idempotency-Key", `production-journey-${++requestNumber}`);
+  const response = await fetch(new URL(path, baseURL), { method: "POST", headers, body: form });
+  rememberCookies(response);
+  const text = await response.text();
+  let value = null;
+  if (text) {
+    try {
+      value = JSON.parse(text);
+    } catch {
+      value = text;
+    }
+  }
+  if (response.status !== expected) {
+    throw new Error(`POST ${path}: status ${response.status}, expected ${expected}: ${text.slice(0, 1200)}`);
+  }
+  return value;
+}
+
+async function downloadText(path, expected = 200) {
+  const headers = new Headers({ Accept: "text/plain" });
+  if (cookieHeader()) headers.set("Cookie", cookieHeader());
+  const response = await fetch(new URL(path, baseURL), { headers });
+  const text = await response.text();
+  if (response.status !== expected) {
+    throw new Error(`GET ${path}: status ${response.status}, expected ${expected}: ${text.slice(0, 1200)}`);
+  }
+  return text;
 }
 
 function requireValue(value, label) {
@@ -286,10 +322,33 @@ const visitorBody = { public_key: publicKey, url: widgetURL, token: visitorToken
 
 const identified = await request("/api/v1/widget/identify", {
   method: "POST",
-  body: { ...visitorBody, name: "Journey Customer", email: `customer-${suffix}@example.com`, external_id: `journey-customer-${suffix}` },
+  body: { ...visitorBody, name: "Journey Customer", email: customerEmail, external_id: `journey-customer-${suffix}` },
 });
 const customerID = requireValue(identified?.customer?.id, "identified customer id");
 log("anonymous visitor identity");
+
+await request("/api/v1/portal/auth/magic-link", {
+  method: "POST",
+  body: { portal: portalID, email: customerEmail, next: "/tickets" },
+  expected: 202,
+});
+const emailJobs = await request("/api/v1/jobs?queue=email&limit=100");
+const magicJob = emailJobs?.data?.find((job) => job?.type === "email.send" && job?.payload?.to === customerEmail && String(job?.payload?.body ?? "").includes("/portal/sign-in"));
+const magicLinkBody = String(magicJob?.payload?.body ?? "");
+const tokenMatch = magicLinkBody.match(/[?&]token=([^&\s]+)/);
+if (!tokenMatch) throw new Error("portal magic-link email job did not contain a redeemable token");
+const portalToken = decodeURIComponent(tokenMatch[1]);
+const portalSession = await request("/api/v1/portal/auth/magic-link/redeem", {
+  method: "POST",
+  body: { token: portalToken },
+  expected: 200,
+});
+if (portalSession?.session?.portal_id !== portalID || portalSession?.viewer?.id !== customerID) {
+  throw new Error("portal magic-link redemption did not create the identified customer session");
+}
+const portalMe = await request(`/api/v1/portal/me?portal=${encodeURIComponent(portalID)}`);
+if (portalMe?.viewer?.id !== customerID) throw new Error("portal session did not resolve the customer profile");
+log("portal magic-link delivery and authenticated session");
 
 const feedbackBoard = await request("/api/v1/feedback/boards", {
   method: "POST",
@@ -345,6 +404,56 @@ const ticket = await request(`/api/v1/conversations/${conversationID}/ticket`, {
 if (!ticket?.id || ticket.conversation_id !== conversationID) throw new Error("ticket conversion did not preserve the conversation link");
 log("conversation to ticket conversion");
 
+const portalTickets = await request(`/api/v1/portal/tickets?portal=${encodeURIComponent(portalID)}`);
+if (!Array.isArray(portalTickets?.data) || !portalTickets.data.some((item) => item.id === ticket.id)) {
+  throw new Error("authenticated portal ticket list did not include the customer ticket");
+}
+const portalAttachment = await uploadFile(`/api/v1/portal/tickets/${ticket.id}/files?portal=${encodeURIComponent(portalID)}`, {
+  fields: {},
+  filename: `portal-${suffix}.txt`,
+  contents: "Portal reply attachment payload.",
+});
+const portalAttachmentID = requireValue(portalAttachment?.id, "portal attachment id");
+const portalReplyBody = {
+  client_id: `production-journey-portal-reply-${suffix}`,
+  body: "The customer portal reply is idempotent and supports attachments.",
+  file_ids: [portalAttachmentID],
+};
+const firstPortalReply = await request(`/api/v1/portal/tickets/${ticket.id}/replies?portal=${encodeURIComponent(portalID)}`, {
+  method: "POST",
+  body: portalReplyBody,
+  expected: 201,
+});
+const replayedPortalReply = await request(`/api/v1/portal/tickets/${ticket.id}/replies?portal=${encodeURIComponent(portalID)}`, {
+  method: "POST",
+  body: portalReplyBody,
+  expected: 201,
+});
+if (!firstPortalReply?.id || replayedPortalReply?.id !== firstPortalReply.id || firstPortalReply?.attachments?.length !== 1) {
+  throw new Error("portal reply retry did not preserve one message and its attachment");
+}
+const portalDownloadedAttachment = await downloadText(`/api/v1/portal/files/${portalAttachmentID}?portal=${encodeURIComponent(portalID)}`);
+if (portalDownloadedAttachment !== "Portal reply attachment payload.") {
+  throw new Error("portal attachment download did not preserve the uploaded content");
+}
+const portalTicketDetail = await request(`/api/v1/portal/tickets/${ticket.id}?portal=${encodeURIComponent(portalID)}`);
+if (!Array.isArray(portalTicketDetail?.messages) || !portalTicketDetail.messages.some((item) => item.id === firstPortalReply.id)) {
+  throw new Error("portal ticket detail did not include the customer reply");
+}
+log("authenticated portal ticket reply, idempotency, and attachment access");
+
+const attachment = await uploadFile("/api/v1/files", {
+  fields: { owner_type: "ticket", owner_id: ticket.id },
+  filename: `journey-${suffix}.txt`,
+  contents: "Production journey attachment payload.",
+});
+const attachmentID = requireValue(attachment?.id, "attachment id");
+const downloadedAttachment = await downloadText(`/api/v1/files/${attachmentID}`);
+if (downloadedAttachment !== "Production journey attachment payload.") {
+  throw new Error("downloaded attachment did not preserve the uploaded content");
+}
+log("ticket attachment upload and authorized download");
+
 const automationRule = await request("/api/v1/automation/rules", {
   method: "POST",
   body: {
@@ -363,7 +472,6 @@ const automationRuleID = requireValue(automationRule?.id, "automation rule id");
 const execution = await request(`/api/v1/automation/rules/${automationRuleID}/dry-run`, {
   method: "POST",
   body: {
-    event_id: `journey-event-${suffix}`,
     subject_type: "ticket",
     subject_id: ticket.id,
     depth: 0,
