@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -113,6 +114,57 @@ func TestStartCreatesConversationWithOpeningMessage(t *testing.T) {
 	}
 	if msg.Sequence != 1 {
 		t.Fatalf("expected the opening message to be sequence 1, got %d", msg.Sequence)
+	}
+}
+
+func TestLargeInboxListRemainsTenantScopedUnderConcurrentReads(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+
+	svc := newTestService(t, pool)
+	workspaceA := seedWorkspace(t, ctx, pool)
+	workspaceB := seedWorkspace(t, ctx, pool)
+	for index := 0; index < 160; index++ {
+		if _, _, err := svc.Start(ctx, workspaceA.WorkspaceID, workspaceA.InboxID, "widget", nil, nil, nil, "Visitor", fmt.Sprintf("Inbox message %d", index)); err != nil {
+			t.Fatalf("seed workspace A conversation %d: %v", index, err)
+		}
+	}
+	if _, _, err := svc.Start(ctx, workspaceB.WorkspaceID, workspaceB.InboxID, "widget", nil, nil, nil, "Other visitor", "Other workspace message"); err != nil {
+		t.Fatalf("seed workspace B conversation: %v", err)
+	}
+
+	const workers = 8
+	const readsPerWorker = 20
+	errorsCh := make(chan error, workers*readsPerWorker)
+	var group sync.WaitGroup
+	group.Add(workers)
+	for worker := 0; worker < workers; worker++ {
+		go func() {
+			defer group.Done()
+			for read := 0; read < readsPerWorker; read++ {
+				items, err := svc.List(ctx, workspaceA.WorkspaceID, conversation.ListFilter{InboxID: workspaceA.InboxID, Limit: 50})
+				if err != nil {
+					errorsCh <- err
+					continue
+				}
+				if len(items) != 50 {
+					errorsCh <- fmt.Errorf("concurrent inbox page returned %d rows, want 50", len(items))
+					continue
+				}
+				for _, item := range items {
+					if item.WorkspaceID != workspaceA.WorkspaceID || item.InboxID != workspaceA.InboxID {
+						errorsCh <- fmt.Errorf("inbox page leaked conversation %s from workspace %s/inbox %s", item.ID, item.WorkspaceID, item.InboxID)
+						break
+					}
+				}
+			}
+		}()
+	}
+	group.Wait()
+	close(errorsCh)
+	for err := range errorsCh {
+		t.Error(err)
 	}
 }
 

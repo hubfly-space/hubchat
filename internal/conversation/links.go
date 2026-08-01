@@ -39,15 +39,31 @@ type ConversationLink struct {
 // which endpoint was stored as source. That makes the UI symmetric even for
 // directional relations such as duplicate_of and follow_up.
 func (s *Service) Links(ctx context.Context, workspaceID, conversationID string) ([]ConversationLink, error) {
+	return s.LinksPage(ctx, workspaceID, conversationID, time.Time{}, "", 0)
+}
+
+// LinksPage returns relationships in stable newest-first order. The cursor is
+// the created_at/id pair used by the API's opaque pagination envelope.
+func (s *Service) LinksPage(ctx context.Context, workspaceID, conversationID string, before time.Time, beforeID string, limit int) ([]ConversationLink, error) {
 	if _, err := s.repo.byID(ctx, workspaceID, conversationID); err != nil {
 		return nil, err
 	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	where := "workspace_id=$1 AND (source_id=$2 OR target_id=$2)"
+	args := []any{workspaceID, conversationID}
+	if !before.IsZero() {
+		where += " AND (created_at,id)<($3,$4)"
+		args = append(args, before, beforeID)
+	}
+	args = append(args, limit)
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, workspace_id, source_id, target_id, relation, created_by, created_at
 		FROM conversation_links
-		WHERE workspace_id=$1 AND (source_id=$2 OR target_id=$2)
+		WHERE `+where+`
 		ORDER BY created_at DESC, id DESC
-	`, workspaceID, conversationID)
+		LIMIT $`+fmt.Sprint(len(args)), args...)
 	if err != nil {
 		return nil, fmt.Errorf("conversation: list links: %w", err)
 	}
