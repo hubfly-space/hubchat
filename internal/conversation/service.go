@@ -3,8 +3,8 @@
 //
 // # Responsibilities
 //
-// The operational core: create, reply, note, assign, snooze, merge, split,
-// resolve. Owns the per-conversation sequence counter that realtime resume
+// The operational core: create, reply, note, assign, snooze, merge, link,
+// split, resolve. Owns the per-conversation sequence counter that realtime resume
 // depends on.
 //
 // # Boundary

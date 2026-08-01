@@ -72,10 +72,12 @@ const (
 	FeedbackLinked Action = "feedback.linked"
 	FeedbackMerged Action = "feedback.merged"
 
-	ConversationDeleted Action = "conversation.deleted"
-	MessageRedacted     Action = "message.redacted"
-	CustomerMerged      Action = "customer.merged"
-	CustomerDeleted     Action = "customer.deleted"
+	ConversationDeleted  Action = "conversation.deleted"
+	ConversationLinked   Action = "conversation.linked"
+	ConversationUnlinked Action = "conversation.unlinked"
+	MessageRedacted      Action = "message.redacted"
+	CustomerMerged       Action = "customer.merged"
+	CustomerDeleted      Action = "customer.deleted"
 	// SensitiveRevealed records a deliberate reveal of a masked field
 	// (§12 audit on reveal).
 	SensitiveRevealed  Action = "customer.sensitive_revealed"
