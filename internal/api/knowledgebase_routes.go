@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/httpserver"
@@ -37,7 +39,12 @@ func registerKnowledgeBaseRoutes(mux *http.ServeMux, deps Deps) {
 
 func handlePublicChangelog(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		entries, err := deps.Knowledgebase.ListPublishedChangelog(r.Context(), r.PathValue("workspaceID"), 100)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed changelog cursor.")
+			return
+		}
+		entries, err := deps.Knowledgebase.ListPublishedChangelogPage(r.Context(), r.PathValue("workspaceID"), cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			writeKnowledgebaseInternal(w, r)
 			return
@@ -46,18 +53,41 @@ func handlePublicChangelog(deps Deps) http.HandlerFunc {
 		for _, item := range entries {
 			items = append(items, map[string]any{"id": item.ID, "title": item.Title, "body": item.Body, "kind": item.Kind, "published_at": item.PublishedAt})
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		page := NewPage(entries, limit, func(item knowledgebase.ChangelogEntry) Cursor {
+			at := time.Time{}
+			if item.PublishedAt != nil {
+				at = *item.PublishedAt
+			}
+			return Cursor{At: at, ID: item.ID}
+		})
+		pageItems := make([]map[string]any, 0, len(page.Data))
+		for _, item := range page.Data {
+			pageItems = append(pageItems, map[string]any{"id": item.ID, "title": item.Title, "body": item.Body, "kind": item.Kind, "published_at": item.PublishedAt})
+		}
+		httpserver.WriteJSON(w, http.StatusOK, Page[map[string]any]{Data: pageItems, NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
 }
 
 func handleListChangelog(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := deps.Knowledgebase.ListChangelog(r.Context(), actorFromRequest(r).WorkspaceID, 200)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed changelog cursor.")
+			return
+		}
+		items, err := deps.Knowledgebase.ListChangelogPage(r.Context(), actorFromRequest(r).WorkspaceID, cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			writeKnowledgebaseInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		page := NewPage(items, limit, func(item knowledgebase.ChangelogEntry) Cursor {
+			at := item.CreatedAt
+			if item.PublishedAt != nil {
+				at = *item.PublishedAt
+			}
+			return Cursor{At: at, ID: item.ID}
+		})
+		httpserver.WriteJSON(w, http.StatusOK, page)
 	}
 }
 
@@ -119,12 +149,19 @@ func handlePublishChangelog(deps Deps) http.HandlerFunc {
 
 func handleListKnowledgeBases(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := deps.Knowledgebase.ListKnowledgeBases(r.Context(), actorFromRequest(r).WorkspaceID)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed knowledge-base cursor.")
+			return
+		}
+		items, err := deps.Knowledgebase.ListKnowledgeBasesPage(r.Context(), actorFromRequest(r).WorkspaceID, cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			writeKnowledgebaseInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(items, limit, func(item knowledgebase.KnowledgeBase) Cursor {
+			return Cursor{At: item.CreatedAt, ID: item.ID}
+		}))
 	}
 }
 
@@ -146,12 +183,28 @@ func handleCreateKnowledgeBase(deps Deps) http.HandlerFunc {
 
 func handleListCollections(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := deps.Knowledgebase.ListCollections(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"))
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed collection cursor.")
+			return
+		}
+		beforePosition := 0
+		hasCursor := !cursor.IsZero()
+		if hasCursor {
+			beforePosition, err = strconv.Atoi(cursor.Value)
+			if err != nil || cursor.ID == "" {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed collection cursor.")
+				return
+			}
+		}
+		items, err := deps.Knowledgebase.ListCollectionsPage(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"), beforePosition, cursor.ID, hasCursor, limit+1)
 		if err != nil {
 			writeKnowledgebaseError(w, r, err)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(items, limit, func(item knowledgebase.Collection) Cursor {
+			return Cursor{Value: strconv.Itoa(item.Position), ID: item.ID}
+		}))
 	}
 }
 
@@ -237,12 +290,41 @@ func handlePublishArticle(deps Deps) http.HandlerFunc {
 
 func handlePublicArticleSearch(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := deps.Knowledgebase.SearchPublished(r.Context(), r.PathValue("workspaceID"), r.URL.Query().Get("knowledge_base"), r.URL.Query().Get("collection"), r.URL.Query().Get("q"), r.URL.Query().Get("language"), r.URL.Query().Get("surface"), 20)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed article cursor.")
+			return
+		}
+		pageLimit := limit
+		if pageLimit > 50 {
+			pageLimit = 50
+		}
+		var beforeRank *float32
+		if !cursor.IsZero() {
+			value, parseErr := strconv.ParseFloat(cursor.Value, 32)
+			if parseErr != nil {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed article cursor.")
+				return
+			}
+			rank := float32(value)
+			beforeRank = &rank
+		}
+		items, err := deps.Knowledgebase.SearchPublishedPage(r.Context(), r.PathValue("workspaceID"), r.URL.Query().Get("knowledge_base"), r.URL.Query().Get("collection"), r.URL.Query().Get("q"), r.URL.Query().Get("language"), beforeRank, cursor.At, cursor.ID, pageLimit+1)
 		if err != nil {
 			writeKnowledgebaseInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		page := NewPage(items, pageLimit, func(item knowledgebase.SearchResult) Cursor {
+			at := time.Time{}
+			if item.Article.PublishedAt != nil {
+				at = *item.Article.PublishedAt
+			}
+			return Cursor{Value: strconv.FormatFloat(float64(item.Rank), 'g', -1, 32), At: at, ID: item.Article.ID}
+		})
+		if cursor.IsZero() {
+			deps.Knowledgebase.RecordSearch(r.Context(), r.PathValue("workspaceID"), r.URL.Query().Get("q"), r.URL.Query().Get("language"), r.URL.Query().Get("surface"), len(page.Data))
+		}
+		httpserver.WriteJSON(w, http.StatusOK, page)
 	}
 }
 
