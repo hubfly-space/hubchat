@@ -86,12 +86,20 @@ func handleListAnalyticsRollups(deps Deps) http.HandlerFunc {
 }
 func handleListReports(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := deps.Analytics.ListReports(r.Context(), actorFromRequest(r).WorkspaceID)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		items, err := deps.Analytics.ListReportsPage(r.Context(), actorFromRequest(r).WorkspaceID, cursor.Value, cursor.ID, limit+1)
 		if err != nil {
 			writeAnalyticsInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		page := NewPage(items, limit, func(item analytics.Report) Cursor {
+			return Cursor{Value: item.Name, ID: item.ID}
+		})
+		httpserver.WriteJSON(w, http.StatusOK, page)
 	}
 }
 func handleCreateReport(deps Deps) http.HandlerFunc {

@@ -106,3 +106,38 @@ func TestReportSchedulesAreWorkspaceScopedAndClaimedOnce(t *testing.T) {
 		t.Fatalf("second scheduled report run processed=%d err=%v", processed, err)
 	}
 }
+
+func TestListReportsPageIsWorkspaceScopedAndStable(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	for _, workspace := range []struct{ id, name, slug string }{
+		{"wrk_reports_page_a", "Reports A", "reports-page-a"},
+		{"wrk_reports_page_b", "Reports B", "reports-page-b"},
+	} {
+		if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id,name,slug) VALUES ($1,$2,$3)`, workspace.id, workspace.name, workspace.slug); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service := New(pool)
+	for _, name := range []string{"Alpha", "Beta", "Gamma"} {
+		if _, err := service.CreateReport(ctx, "wrk_reports_page_a", "", ReportInput{Name: name, Definition: map[string]any{"metrics": []string{"tickets.created"}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := service.CreateReport(ctx, "wrk_reports_page_b", "", ReportInput{Name: "Other workspace", Definition: map[string]any{}}); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := service.ListReportsPage(ctx, "wrk_reports_page_a", "", "", 3)
+	if err != nil || len(first) != 3 {
+		t.Fatalf("first report page = %d rows, err=%v", len(first), err)
+	}
+	second, err := service.ListReportsPage(ctx, "wrk_reports_page_a", first[1].Name, first[1].ID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 1 || second[0].Name != "Gamma" || second[0].WorkspaceID != "wrk_reports_page_a" {
+		t.Fatalf("second report page = %+v", second)
+	}
+}

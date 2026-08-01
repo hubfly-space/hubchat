@@ -26,17 +26,25 @@ type apiKeyRequest struct {
 
 func handleListAPIKeys(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
 		actor := actorFromRequest(r)
-		keys, err := deps.APIKeys.List(r.Context(), actor.WorkspaceID)
+		keys, err := deps.APIKeys.ListPage(r.Context(), actor.WorkspaceID, cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			writeAPIKeyInternalError(w, r)
 			return
 		}
-		out := make([]map[string]any, 0, len(keys))
-		for _, key := range keys {
+		keyPage := NewPage(keys, limit, func(key apikey.Key) Cursor {
+			return Cursor{At: key.CreatedAt, ID: key.ID}
+		})
+		out := make([]map[string]any, 0, len(keyPage.Data))
+		for _, key := range keyPage.Data {
 			out = append(out, apiKeyJSON(key))
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+		httpserver.WriteJSON(w, http.StatusOK, Page[map[string]any]{Data: out, NextCursor: keyPage.NextCursor, HasMore: keyPage.HasMore})
 	}
 }
 

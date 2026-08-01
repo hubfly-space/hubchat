@@ -158,6 +158,7 @@ func New(deps Deps) http.Handler {
 	registerAnalyticsRoutes(mux, deps)
 	registerEmailChannelRoutes(mux, deps)
 	registerJobRoutes(mux, deps)
+	registerOpsRoutes(mux, deps)
 	registerPortabilityRoutes(mux, deps)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
