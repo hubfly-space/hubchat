@@ -16,6 +16,16 @@ should send an `Idempotency-Key`. Successful replays include
 `Idempotent-Replay: true`; reuse with a different body is rejected, and
 concurrent attempts return `409 idempotency_in_flight`.
 
+The automation content endpoints separate safe support use from configuration:
+`GET /api/v1/automation/replies` and its `/{id}/use` action require
+`conversation.reply`, so agents can use approved saved replies without
+receiving `automation.manage`. Creating or changing saved replies remains
+restricted to automation managers. Macros remain management-only until their
+state-changing action execution path can enforce the capability required by
+each action. Saved-reply bodies may use `{{customer.name}}` and
+`{{ticket.number}}`; the dashboard expands those variables when an agent
+inserts a reply into the composer.
+
 The `GET /api/v1/customers/export` and `GET /api/v1/companies/export` endpoints
 return authenticated, workspace-scoped CSV snapshots. Customer exports require
 the `customer.read_sensitive` capability and are capped at 10,000 rows; use the
@@ -57,6 +67,22 @@ contract. A baseline entry is a documentation signal, not permission to rely
 on an untyped payload: add the endpoint's request and response schemas to the
 template before publishing a stable integration.
 
+The core support resources publish typed models for conversations, messages,
+tickets, customers, saved replies, cursor pages, and their primary write
+inputs. `scripts/generate-ts-api.mjs` derives the additive browser artifact at
+`web/shared/src/types/generated-api.ts` and an operation catalog from the
+generated OpenAPI document. Run `make openapi-check` after changing the
+contract; it regenerates and validates both artifacts. Existing dashboard
+imports remain compatible while endpoint clients migrate to the generated
+`ApiRequest<OperationId>` and `ApiResponse<OperationId>` types.
+
+Macros are human-triggered, workspace-scoped actions. `POST
+/v1/automation/macros/{id}/use` requires `subject_type` (`conversation` or
+`ticket`) and `subject_id`; the server checks personal/team visibility and
+every action's capability before executing anything. Macro reply text is sent
+as a conversation reply, while state-changing actions use the same automation
+action engine as deterministic rules.
+
 The embeddable browser contract is documented separately in
 [`widget-sdk.md`](widget-sdk.md), including the typed `window.Hubchat` API and
 the signed-identity and metadata rules for widget visitors.
@@ -78,6 +104,15 @@ message endpoints return the newest window by default, expose `has_more` and
 The existing `after` sequence parameter remains available for realtime HTTP
 fallback and resume; `before` is retained as a compatibility alias for older
 clients.
+
+Conversation and ticket follower endpoints are also cursor-paginated. They
+return member IDs ordered by their opaque member identifier; pass the returned
+`next_cursor` unchanged to continue through a large follower set.
+
+Customer attribute definitions and ticket field definitions use the same page
+envelope. Attribute cursors preserve key/id order; field cursors preserve the
+configured position/id order, so schema editors can safely load and reorder
+large definitions sets.
 
 Workspace archive exports support `POST /api/v1/portability/exports/preview`
 before `POST /api/v1/portability/exports`. The preview is read-only and returns

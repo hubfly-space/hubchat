@@ -29,6 +29,11 @@ active delivery; production pages do not silently fall back to fixtures.
 
 What runs today:
 
+The live composer can insert workspace-approved saved replies for agents,
+expanding `{{customer.name}}` and `{{ticket.number}}` and recording usage;
+automation macros remain restricted to management until their state-changing
+action permissions are enforced per action.
+
 | | |
 |---|---|
 | `make build` | Produces a single ~18 MB binary with all three frontends embedded |

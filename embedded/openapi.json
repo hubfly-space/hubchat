@@ -173,7 +173,14 @@
         ],
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Json"
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationPage"
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -192,11 +199,25 @@
           }
         ],
         "requestBody": {
-          "$ref": "#/components/requestBodies/Json"
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateConversationRequest"
+              }
+            }
+          }
         },
         "responses": {
           "201": {
-            "$ref": "#/components/responses/Json"
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conversation"
+                }
+              }
+            }
           },
           "202": {
             "$ref": "#/components/responses/Json"
@@ -327,7 +348,14 @@
         "summary": "Get a resource",
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Json"
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conversation"
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -341,11 +369,25 @@
       "patch": {
         "summary": "Update a resource",
         "requestBody": {
-          "$ref": "#/components/requestBodies/Json"
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateConversationRequest"
+              }
+            }
+          }
         },
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Json"
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conversation"
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -371,11 +413,25 @@
           }
         ],
         "requestBody": {
-          "$ref": "#/components/requestBodies/Json"
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTicketRequest"
+              }
+            }
+          }
         },
         "responses": {
           "201": {
-            "$ref": "#/components/responses/Json"
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ticket"
+                }
+              }
+            }
           },
           "202": {
             "$ref": "#/components/responses/Json"
@@ -408,7 +464,14 @@
         ],
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Json"
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagePage"
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -427,11 +490,25 @@
           }
         ],
         "requestBody": {
-          "$ref": "#/components/requestBodies/Json"
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateConversationMessageRequest"
+              }
+            }
+          }
         },
         "responses": {
           "201": {
-            "$ref": "#/components/responses/Json"
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
           },
           "202": {
             "$ref": "#/components/responses/Json"
@@ -459,7 +536,14 @@
         ],
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Json"
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketPage"
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -478,11 +562,25 @@
           }
         ],
         "requestBody": {
-          "$ref": "#/components/requestBodies/Json"
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTicketRequest"
+              }
+            }
+          }
         },
         "responses": {
           "201": {
-            "$ref": "#/components/responses/Json"
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ticket"
+                }
+              }
+            }
           },
           "202": {
             "$ref": "#/components/responses/Json"
@@ -507,7 +605,14 @@
         "summary": "Get a resource",
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Json"
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ticket"
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -521,11 +626,25 @@
       "patch": {
         "summary": "Update a resource",
         "requestBody": {
-          "$ref": "#/components/requestBodies/Json"
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTicketRequest"
+              }
+            }
+          }
         },
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Json"
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ticket"
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -550,7 +669,14 @@
         ],
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Json"
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerPage"
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -596,7 +722,14 @@
         "summary": "Get a resource",
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Json"
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -610,11 +743,25 @@
       "patch": {
         "summary": "Update a resource",
         "requestBody": {
-          "$ref": "#/components/requestBodies/Json"
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCustomerRequest"
+              }
+            }
+          }
         },
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Json"
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -668,18 +815,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/events": {
@@ -2117,6 +2253,199 @@
         ]
       }
     },
+    "/v1/automation/macros": {
+      "get": {
+        "summary": "List resources",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MacroPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "listAutomationMacros",
+        "tags": [
+          "Automation"
+        ]
+      },
+      "post": {
+        "summary": "Create a resource",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MacroInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Macro"
+                }
+              }
+            }
+          },
+          "202": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "createAutomationMacro",
+        "tags": [
+          "Automation"
+        ]
+      }
+    },
+    "/v1/automation/macros/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        }
+      ],
+      "get": {
+        "summary": "Get a resource",
+        "responses": {
+          "200": {
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Macro"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "getAutomationMacro",
+        "tags": [
+          "Automation"
+        ]
+      },
+      "patch": {
+        "summary": "Update a resource",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MacroInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Macro"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "updateAutomationMacro",
+        "tags": [
+          "Automation"
+        ]
+      },
+      "delete": {
+        "summary": "Delete a resource",
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "deleteAutomationMacro",
+        "tags": [
+          "Automation"
+        ]
+      }
+    },
+    "/v1/automation/macros/{id}/use": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        }
+      ],
+      "post": {
+        "summary": "Execute a macro on a support subject",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MacroExecutionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MacroExecution"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "useAutomationMacro",
+        "tags": [
+          "Automation"
+        ],
+        "description": "Execute a macro against an explicitly selected conversation or ticket."
+      }
+    },
     "/v1/automation/executions": {
       "get": {
         "summary": "List resources",
@@ -2137,6 +2466,78 @@
           }
         },
         "operationId": "listAutomationExecutions",
+        "tags": [
+          "Automation"
+        ]
+      }
+    },
+    "/v1/automation/replies": {
+      "get": {
+        "summary": "List resources",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedReplyPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "listAutomationReplies",
+        "tags": [
+          "Automation"
+        ]
+      },
+      "post": {
+        "summary": "Create a resource",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedReplyInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedReply"
+                }
+              }
+            }
+          },
+          "202": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "createAutomationReply",
         "tags": [
           "Automation"
         ]
@@ -3580,23 +3981,12 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/openapi.json": {
       "get": {
-        "operationId": "getOpenapi json",
+        "operationId": "getOpenapiJson",
         "summary": "get /v1/openapi.json",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [],
@@ -3624,23 +4014,12 @@
           "404": {
             "description": "The resource was not found."
           }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
         }
       }
     },
     "/v1/api-keys/{id}": {
       "delete": {
-        "operationId": "deleteApi keysId",
+        "operationId": "deleteApiKeysId",
         "summary": "delete /v1/api-keys/{id}",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [
@@ -3682,23 +4061,12 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/api-keys/{id}/rotate": {
       "post": {
-        "operationId": "postApi keysIdRotate",
+        "operationId": "postApiKeysIdRotate",
         "summary": "post /v1/api-keys/{id}/rotate",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [
@@ -3844,7 +4212,7 @@
     },
     "/v1/auth/magic-link": {
       "post": {
-        "operationId": "postAuthMagic link",
+        "operationId": "postAuthMagicLink",
         "summary": "post /v1/auth/magic-link",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [],
@@ -3888,7 +4256,7 @@
     },
     "/v1/auth/magic-link/redeem": {
       "post": {
-        "operationId": "postAuthMagic linkRedeem",
+        "operationId": "postAuthMagicLinkRedeem",
         "summary": "post /v1/auth/magic-link/redeem",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [],
@@ -3932,7 +4300,7 @@
     },
     "/v1/auth/verify-email": {
       "post": {
-        "operationId": "postAuthVerify email",
+        "operationId": "postAuthVerifyEmail",
         "summary": "post /v1/auth/verify-email",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [],
@@ -4020,7 +4388,7 @@
     },
     "/v1/auth/verify-email/resend": {
       "post": {
-        "operationId": "postAuthVerify emailResend",
+        "operationId": "postAuthVerifyEmailResend",
         "summary": "post /v1/auth/verify-email/resend",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [],
@@ -4136,17 +4504,6 @@
           "404": {
             "description": "The resource was not found."
           }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
         }
       }
     },
@@ -4189,23 +4546,12 @@
           "404": {
             "description": "The resource was not found."
           }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
         }
       }
     },
     "/v1/auth/sessions/revoke-others": {
       "post": {
-        "operationId": "postAuthSessionsRevoke others",
+        "operationId": "postAuthSessionsRevokeOthers",
         "summary": "post /v1/auth/sessions/revoke-others",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [],
@@ -4276,17 +4622,6 @@
           },
           "404": {
             "description": "The resource was not found."
-          }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
           }
         }
       }
@@ -4629,23 +4964,12 @@
           "404": {
             "description": "The resource was not found."
           }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
         }
       }
     },
     "/v1/automation/rules/{id}/dry-run": {
       "post": {
-        "operationId": "postAutomationRulesIdDry run",
+        "operationId": "postAutomationRulesIdDryRun",
         "summary": "post /v1/automation/rules/{id}/dry-run",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [
@@ -4658,256 +4982,6 @@
             }
           }
         ],
-        "responses": {
-          "200": {
-            "description": "Successful response.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "The request is invalid."
-          },
-          "401": {
-            "description": "Authentication is required."
-          },
-          "403": {
-            "description": "The actor lacks the required capability."
-          },
-          "404": {
-            "description": "The resource was not found."
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/automation/macros": {
-      "get": {
-        "operationId": "getAutomationMacros",
-        "summary": "get /v1/automation/macros",
-        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "Successful response.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "The request is invalid."
-          },
-          "401": {
-            "description": "Authentication is required."
-          },
-          "403": {
-            "description": "The actor lacks the required capability."
-          },
-          "404": {
-            "description": "The resource was not found."
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "operationId": "postAutomationMacros",
-        "summary": "post /v1/automation/macros",
-        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "Successful response.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "The request is invalid."
-          },
-          "401": {
-            "description": "Authentication is required."
-          },
-          "403": {
-            "description": "The actor lacks the required capability."
-          },
-          "404": {
-            "description": "The resource was not found."
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/automation/macros/{id}/use": {
-      "post": {
-        "operationId": "postAutomationMacrosIdUse",
-        "summary": "post /v1/automation/macros/{id}/use",
-        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful response.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "The request is invalid."
-          },
-          "401": {
-            "description": "Authentication is required."
-          },
-          "403": {
-            "description": "The actor lacks the required capability."
-          },
-          "404": {
-            "description": "The resource was not found."
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/automation/replies": {
-      "get": {
-        "operationId": "getAutomationReplies",
-        "summary": "get /v1/automation/replies",
-        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "Successful response.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "The request is invalid."
-          },
-          "401": {
-            "description": "Authentication is required."
-          },
-          "403": {
-            "description": "The actor lacks the required capability."
-          },
-          "404": {
-            "description": "The resource was not found."
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "operationId": "postAutomationReplies",
-        "summary": "post /v1/automation/replies",
-        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
-        "parameters": [],
         "responses": {
           "200": {
             "description": "Successful response.",
@@ -5044,18 +5118,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/companies": {
@@ -5093,18 +5156,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       },
       "post": {
         "operationId": "postCompanies",
@@ -5198,18 +5250,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       },
       "patch": {
         "operationId": "patchCompaniesId",
@@ -5378,18 +5419,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/companies/{id}/attributes": {
@@ -5494,18 +5524,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/companies/{id}/customers/{customerID}": {
@@ -5624,18 +5643,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/conversations/counts": {
@@ -5673,18 +5681,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/conversations/{id}/assignee": {
@@ -6145,18 +6142,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/conversations/{id}/followers": {
@@ -6203,18 +6189,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/conversations/{id}/followers/me": {
@@ -6317,18 +6292,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/conversations/{id}/read": {
@@ -6623,18 +6587,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/customers/{id}/owner": {
@@ -6805,18 +6758,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/customers/{id}/attributes": {
@@ -6987,18 +6929,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/customers/{id}/sessions": {
@@ -7045,18 +6976,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/customers/{id}/export": {
@@ -7103,18 +7023,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/customers/merge/preview": {
@@ -7275,7 +7184,7 @@
     },
     "/v1/blocked-contacts": {
       "post": {
-        "operationId": "postBlocked contacts",
+        "operationId": "postBlockedContacts",
         "summary": "post /v1/blocked-contacts",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [],
@@ -7324,7 +7233,7 @@
     },
     "/v1/attribute-definitions": {
       "get": {
-        "operationId": "getAttribute definitions",
+        "operationId": "getAttributeDefinitions",
         "summary": "get /v1/attribute-definitions",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [],
@@ -7334,8 +7243,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/AttributeDefinitionPage"
                 }
               }
             }
@@ -7357,21 +7265,10 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       },
       "post": {
-        "operationId": "postAttribute definitions",
+        "operationId": "postAttributeDefinitions",
         "summary": "post /v1/attribute-definitions",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [],
@@ -7420,7 +7317,7 @@
     },
     "/v1/attribute-definitions/{id}": {
       "patch": {
-        "operationId": "patchAttribute definitionsId",
+        "operationId": "patchAttributeDefinitionsId",
         "summary": "patch /v1/attribute-definitions/{id}",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [
@@ -7476,7 +7373,7 @@
         }
       },
       "delete": {
-        "operationId": "deleteAttribute definitionsId",
+        "operationId": "deleteAttributeDefinitionsId",
         "summary": "delete /v1/attribute-definitions/{id}",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [
@@ -7518,18 +7415,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/feedback/boards/{id}": {
@@ -7576,18 +7462,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/feedback/items/{id}": {
@@ -7634,18 +7509,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/feedback/roadmap": {
@@ -7683,18 +7547,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/feedback/items/{id}/comments": {
@@ -7741,18 +7594,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       },
       "post": {
         "operationId": "postFeedbackItemsIdComments",
@@ -7966,17 +7808,6 @@
           "404": {
             "description": "The resource was not found."
           }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
         }
       }
     },
@@ -8076,18 +7907,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       },
       "post": {
         "operationId": "postInboxes",
@@ -8181,18 +8001,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       },
       "patch": {
         "operationId": "patchInboxesId",
@@ -8293,18 +8102,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/inboxes/{id}/default": {
@@ -8400,18 +8198,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       },
       "post": {
         "operationId": "postInvites",
@@ -8505,18 +8292,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/invites/lookup/{token}": {
@@ -8563,18 +8339,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/invites/redeem": {
@@ -8744,7 +8509,7 @@
     },
     "/v1/knowledge-bases/{id}/collections": {
       "get": {
-        "operationId": "getKnowledge basesIdCollections",
+        "operationId": "getKnowledgeBasesIdCollections",
         "summary": "get /v1/knowledge-bases/{id}/collections",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [
@@ -8786,21 +8551,10 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       },
       "post": {
-        "operationId": "postKnowledge basesIdCollections",
+        "operationId": "postKnowledgeBasesIdCollections",
         "summary": "post /v1/knowledge-bases/{id}/collections",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [
@@ -8916,7 +8670,7 @@
     },
     "/v1/public/knowledge-bases/{workspaceID}/articles/{slug}": {
       "get": {
-        "operationId": "getPublicKnowledge basesWorkspaceIDArticlesSlug",
+        "operationId": "getPublicKnowledgeBasesWorkspaceIDArticlesSlug",
         "summary": "get /v1/public/knowledge-bases/{workspaceID}/articles/{slug}",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [
@@ -8961,23 +8715,12 @@
           "404": {
             "description": "The resource was not found."
           }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
         }
       }
     },
     "/v1/public/knowledge-bases/{workspaceID}/articles/{slug}/feedback": {
       "post": {
-        "operationId": "postPublicKnowledge basesWorkspaceIDArticlesSlugFeedback",
+        "operationId": "postPublicKnowledgeBasesWorkspaceIDArticlesSlugFeedback",
         "summary": "post /v1/public/knowledge-bases/{workspaceID}/articles/{slug}/feedback",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [
@@ -9071,18 +8814,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/roles": {
@@ -9120,18 +8852,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/members/{id}/role": {
@@ -9294,18 +9015,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/members/me/presence": {
@@ -9359,7 +9069,7 @@
     },
     "/v1/members/me/accepting-conversations": {
       "patch": {
-        "operationId": "patchMembersMeAccepting conversations",
+        "operationId": "patchMembersMeAcceptingConversations",
         "summary": "patch /v1/members/me/accepting-conversations",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [],
@@ -9441,18 +9151,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/notifications/count": {
@@ -9490,18 +9189,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/notifications/preferences": {
@@ -9539,18 +9227,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       },
       "put": {
         "operationId": "putNotificationsPreferences",
@@ -9660,7 +9337,7 @@
     },
     "/v1/notifications/read-all": {
       "post": {
-        "operationId": "postNotificationsRead all",
+        "operationId": "postNotificationsReadAll",
         "summary": "post /v1/notifications/read-all",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [],
@@ -9742,18 +9419,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       },
       "post": {
         "operationId": "postPortals",
@@ -9847,18 +9513,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       },
       "patch": {
         "operationId": "patchPortalsId",
@@ -9947,23 +9602,12 @@
           "404": {
             "description": "The resource was not found."
           }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
         }
       }
     },
     "/v1/portal/auth/magic-link": {
       "post": {
-        "operationId": "postPortalAuthMagic link",
+        "operationId": "postPortalAuthMagicLink",
         "summary": "post /v1/portal/auth/magic-link",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [],
@@ -10007,7 +9651,7 @@
     },
     "/v1/portal/auth/magic-link/redeem": {
       "post": {
-        "operationId": "postPortalAuthMagic linkRedeem",
+        "operationId": "postPortalAuthMagicLinkRedeem",
         "summary": "post /v1/portal/auth/magic-link/redeem",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [],
@@ -10123,17 +9767,6 @@
           "404": {
             "description": "The resource was not found."
           }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
         }
       },
       "post": {
@@ -10217,17 +9850,6 @@
           },
           "404": {
             "description": "The resource was not found."
-          }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
           }
         }
       }
@@ -10377,17 +9999,6 @@
           "404": {
             "description": "The resource was not found."
           }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
         }
       }
     },
@@ -10426,18 +10037,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/workspace/settings": {
@@ -10475,18 +10075,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/workspace/general": {
@@ -10720,18 +10309,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/sla/policies/{id}": {
@@ -10778,18 +10356,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       },
       "patch": {
         "operationId": "patchSlaPoliciesId",
@@ -10892,18 +10459,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/public/surveys/{workspaceID}/{id}": {
@@ -10953,17 +10509,6 @@
           "404": {
             "description": "The resource was not found."
           }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
         }
       }
     },
@@ -11002,18 +10547,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       },
       "post": {
         "operationId": "postTags",
@@ -11107,18 +10641,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/tags/{id}/merge": {
@@ -11214,18 +10737,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       },
       "post": {
         "operationId": "postTeams",
@@ -11375,18 +10887,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/teams/{id}/members/{memberId}": {
@@ -11505,18 +11006,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/tickets/export": {
@@ -11554,18 +11044,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/tickets/duplicates": {
@@ -11603,18 +11082,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/tickets/{id}/assignee": {
@@ -12125,18 +11593,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/tickets/{id}/activity": {
@@ -12183,18 +11640,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/tickets/{id}/tags": {
@@ -12307,18 +11753,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/tickets/{id}/followers": {
@@ -12365,18 +11800,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/tickets/{id}/followers/me": {
@@ -12479,18 +11903,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/tickets/{id}/links": {
@@ -12537,18 +11950,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       },
       "post": {
         "operationId": "postTicketsIdLinks",
@@ -12659,23 +12061,12 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/tickets/{id}/field-values/{key}": {
       "put": {
-        "operationId": "putTicketsIdField valuesKey",
+        "operationId": "putTicketsIdFieldValuesKey",
         "summary": "put /v1/tickets/{id}/field-values/{key}",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [
@@ -12741,7 +12132,7 @@
     },
     "/v1/field-definitions": {
       "get": {
-        "operationId": "getField definitions",
+        "operationId": "getFieldDefinitions",
         "summary": "get /v1/field-definitions",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [],
@@ -12751,8 +12142,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/FieldDefinitionPage"
                 }
               }
             }
@@ -12774,21 +12164,10 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       },
       "post": {
-        "operationId": "postField definitions",
+        "operationId": "postFieldDefinitions",
         "summary": "post /v1/field-definitions",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [],
@@ -12837,7 +12216,7 @@
     },
     "/v1/field-definitions/{id}": {
       "patch": {
-        "operationId": "patchField definitionsId",
+        "operationId": "patchFieldDefinitionsId",
         "summary": "patch /v1/field-definitions/{id}",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [
@@ -12893,7 +12272,7 @@
         }
       },
       "delete": {
-        "operationId": "deleteField definitionsId",
+        "operationId": "deleteFieldDefinitionsId",
         "summary": "delete /v1/field-definitions/{id}",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [
@@ -12935,23 +12314,12 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/field-definitions/reorder": {
       "put": {
-        "operationId": "putField definitionsReorder",
+        "operationId": "putFieldDefinitionsReorder",
         "summary": "put /v1/field-definitions/reorder",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [],
@@ -13042,18 +12410,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       },
       "patch": {
         "operationId": "patchWebhooksId",
@@ -13154,23 +12511,12 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/webhooks/{id}/rotate-secret": {
       "post": {
-        "operationId": "postWebhooksIdRotate secret",
+        "operationId": "postWebhooksIdRotateSecret",
         "summary": "post /v1/webhooks/{id}/rotate-secret",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [
@@ -13270,18 +12616,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/webhooks/{id}/deliveries/{deliveryID}/replay": {
@@ -13443,18 +12778,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       },
       "post": {
         "operationId": "postWidgets",
@@ -13548,18 +12872,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       },
       "put": {
         "operationId": "putWidgetsId",
@@ -13660,18 +12973,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/widgets/{id}/versions": {
@@ -13718,18 +13020,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/widgets/{id}/rollback": {
@@ -13834,18 +13125,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       },
       "put": {
         "operationId": "putWidgetsIdDomains",
@@ -14012,23 +13292,12 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/widgets/{id}/identity-secret": {
       "get": {
-        "operationId": "getWidgetsIdIdentity secret",
+        "operationId": "getWidgetsIdIdentitySecret",
         "summary": "get /v1/widgets/{id}/identity-secret",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [
@@ -14070,18 +13339,7 @@
           {
             "bearerAuth": []
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/v1/widget/config": {
@@ -14113,17 +13371,6 @@
           },
           "404": {
             "description": "The resource was not found."
-          }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
           }
         }
       }
@@ -14290,17 +13537,6 @@
           "404": {
             "description": "The resource was not found."
           }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
         }
       }
     },
@@ -14342,17 +13578,6 @@
           },
           "404": {
             "description": "The resource was not found."
-          }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
           }
         }
       }
@@ -14493,17 +13718,6 @@
           "404": {
             "description": "The resource was not found."
           }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
         }
       }
     },
@@ -14545,17 +13759,6 @@
           },
           "404": {
             "description": "The resource was not found."
-          }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
           }
         }
       },
@@ -14754,17 +13957,6 @@
           "404": {
             "description": "The resource was not found."
           }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
-          }
         }
       }
     },
@@ -14797,17 +13989,6 @@
           },
           "404": {
             "description": "The resource was not found."
-          }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
           }
         }
       }
@@ -14850,17 +14031,6 @@
           },
           "404": {
             "description": "The resource was not found."
-          }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
           }
         }
       }
@@ -15000,17 +14170,6 @@
           },
           "404": {
             "description": "The resource was not found."
-          }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
           }
         }
       },
@@ -15165,17 +14324,6 @@
           },
           "404": {
             "description": "The resource was not found."
-          }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true
-              }
-            }
           }
         }
       }
@@ -15409,6 +14557,10 @@
           }
         }
       },
+      "Timestamp": {
+        "type": "string",
+        "format": "date-time"
+      },
       "EventEnvelope": {
         "type": "object",
         "required": [
@@ -15430,8 +14582,7 @@
             "$ref": "#/components/schemas/Id"
           },
           "occurred_at": {
-            "type": "string",
-            "format": "date-time"
+            "$ref": "#/components/schemas/Timestamp"
           },
           "sequence": {
             "type": "integer",
@@ -15440,6 +14591,1526 @@
           "data": {
             "type": "object",
             "additionalProperties": true
+          }
+        }
+      },
+      "Workspace": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "default_language",
+          "timezone",
+          "ticket_prefix",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "default_language": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "ticket_prefix": {
+            "type": "string"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "ConversationSLA": {
+        "type": "object",
+        "required": [
+          "policy_id",
+          "state",
+          "first_response_remaining",
+          "next_response_remaining",
+          "resolution_remaining",
+          "paused_reason"
+        ],
+        "properties": {
+          "policy_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "state": {
+            "type": "string"
+          },
+          "first_response_remaining": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "next_response_remaining": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "resolution_remaining": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "paused_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Attachment": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "mime_type",
+          "size_bytes",
+          "url",
+          "thumbnail_url"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "thumbnail_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          }
+        }
+      },
+      "Conversation": {
+        "type": "object",
+        "required": [
+          "id",
+          "workspace_id",
+          "inbox_id",
+          "channel",
+          "subject",
+          "state",
+          "priority",
+          "customer_id",
+          "visitor_id",
+          "assignee_id",
+          "team_id",
+          "tag_ids",
+          "ticket_id",
+          "unread",
+          "message_count",
+          "last_message_preview",
+          "last_message_at",
+          "last_customer_at",
+          "snoozed_until",
+          "sla",
+          "viewers",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "inbox_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "channel": {
+            "type": "string"
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "string"
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "visitor_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "assignee_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tag_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          "ticket_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unread": {
+            "type": "boolean"
+          },
+          "message_count": {
+            "type": "integer"
+          },
+          "last_message_preview": {
+            "type": "string"
+          },
+          "last_message_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "last_customer_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "snoozed_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "sla": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConversationSLA"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "viewers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "Message": {
+        "type": "object",
+        "required": [
+          "id",
+          "client_id",
+          "conversation_id",
+          "workspace_id",
+          "kind",
+          "author_type",
+          "author_id",
+          "author_name",
+          "author_avatar_url",
+          "body",
+          "event_type",
+          "event_data",
+          "attachments",
+          "quoted_message_id",
+          "delivery",
+          "edited_at",
+          "redacted_at",
+          "sequence",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "client_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "conversation_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "author_type": {
+            "type": "string"
+          },
+          "author_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "author_name": {
+            "type": "string"
+          },
+          "author_avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          },
+          "body": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event_data": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/Attachment"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "quoted_message_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "delivery": {
+            "type": "string"
+          },
+          "edited_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "redacted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "Ticket": {
+        "type": "object",
+        "required": [
+          "id",
+          "workspace_id",
+          "number",
+          "prefix",
+          "title",
+          "description",
+          "status",
+          "priority",
+          "type",
+          "customer_id",
+          "company_id",
+          "inbox_id",
+          "channel",
+          "assignee_id",
+          "team_id",
+          "conversation_id",
+          "parent_id",
+          "child_ids",
+          "linked_ticket_ids",
+          "tag_ids",
+          "field_values",
+          "sla",
+          "viewers",
+          "due_at",
+          "version",
+          "created_at",
+          "updated_at",
+          "resolved_at",
+          "closed_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "number": {
+            "type": "integer"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "string"
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "company_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "inbox_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "channel": {
+            "type": "string"
+          },
+          "assignee_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "conversation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "child_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          "linked_ticket_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          "tag_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          "field_values": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "sla": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConversationSLA"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "viewers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          "due_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "resolved_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "closed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "Customer": {
+        "type": "object",
+        "required": [
+          "id",
+          "workspace_id",
+          "name",
+          "email",
+          "phone",
+          "avatar_url",
+          "external_id",
+          "verification",
+          "company_ids",
+          "language",
+          "timezone",
+          "attributes",
+          "masked_attribute_keys",
+          "tag_ids",
+          "owner_id",
+          "presence",
+          "current_url",
+          "first_seen_at",
+          "last_seen_at",
+          "last_contacted_at",
+          "version"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "email"
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          },
+          "external_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "verification": {
+            "type": "string"
+          },
+          "company_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "masked_attribute_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tag_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          "owner_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "presence": {
+            "type": "string"
+          },
+          "current_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          },
+          "first_seen_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "last_seen_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_contacted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "version": {
+            "type": "integer"
+          }
+        }
+      },
+      "FieldValidation": {
+        "type": "object",
+        "properties": {
+          "min": {
+            "type": "number"
+          },
+          "max": {
+            "type": "number"
+          },
+          "min_length": {
+            "type": "integer"
+          },
+          "max_length": {
+            "type": "integer"
+          },
+          "pattern": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AttributeDefinition": {
+        "type": "object",
+        "required": [
+          "id",
+          "workspace_id",
+          "entity_type",
+          "key",
+          "label",
+          "type",
+          "description",
+          "options",
+          "allowed_sources",
+          "required_capability",
+          "sensitive",
+          "searchable",
+          "validation",
+          "retention_days",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "entity_type": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowed_sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "required_capability": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sensitive": {
+            "type": "boolean"
+          },
+          "searchable": {
+            "type": "boolean"
+          },
+          "validation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FieldValidation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "retention_days": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "FieldDefinition": {
+        "type": "object",
+        "required": [
+          "id",
+          "workspace_id",
+          "key",
+          "label",
+          "type",
+          "description",
+          "options",
+          "required",
+          "visibility",
+          "sensitive",
+          "searchable",
+          "allowed_sources",
+          "required_capability",
+          "validation",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "options": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "visibility": {
+            "type": "string"
+          },
+          "sensitive": {
+            "type": "boolean"
+          },
+          "searchable": {
+            "type": "boolean"
+          },
+          "allowed_sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "required_capability": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "validation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FieldValidation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "PageOf": {
+        "type": "object",
+        "required": [
+          "data",
+          "has_more",
+          "next_cursor"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {}
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ConversationPage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageOf"
+          }
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Conversation"
+            }
+          }
+        }
+      },
+      "MessagePage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageOf"
+          }
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            }
+          }
+        }
+      },
+      "TicketPage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageOf"
+          }
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ticket"
+            }
+          }
+        }
+      },
+      "CustomerPage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageOf"
+          }
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Customer"
+            }
+          }
+        }
+      },
+      "SavedReplyPage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageOf"
+          }
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SavedReply"
+            }
+          }
+        }
+      },
+      "AttributeDefinitionPage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageOf"
+          }
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AttributeDefinition"
+            }
+          }
+        }
+      },
+      "FieldDefinitionPage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageOf"
+          }
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldDefinition"
+            }
+          }
+        }
+      },
+      "CreateConversationRequest": {
+        "type": "object",
+        "required": [
+          "inbox_id",
+          "channel",
+          "body"
+        ],
+        "properties": {
+          "inbox_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "channel": {
+            "type": "string"
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "author_name": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "file_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        }
+      },
+      "CreateConversationMessageRequest": {
+        "type": "object",
+        "required": [
+          "body"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "reply",
+              "note"
+            ]
+          },
+          "author_name": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "file_ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        }
+      },
+      "CreateTicketRequest": {
+        "type": "object",
+        "required": [
+          "title",
+          "inbox_id"
+        ],
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "priority": {
+            "type": "string",
+            "default": "normal"
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "company_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "inbox_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "channel": {
+            "type": "string",
+            "default": "manual"
+          },
+          "assignee_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "conversation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parent_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "due_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "field_values": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "UpdateConversationRequest": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateTicketRequest": {
+        "type": "object",
+        "required": [
+          "expected_version"
+        ],
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "due_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "expected_version": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateCustomerRequest": {
+        "type": "object",
+        "required": [
+          "version"
+        ],
+        "properties": {
+          "version": {
+            "type": "integer"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "email"
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "SavedReply": {
+        "type": "object",
+        "required": [
+          "id",
+          "workspace_id",
+          "name",
+          "shortcut",
+          "folder",
+          "scope",
+          "body",
+          "usage_count",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "name": {
+            "type": "string"
+          },
+          "shortcut": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "folder": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "usage_count": {
+            "type": "integer"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "SavedReplyInput": {
+        "type": "object",
+        "required": [
+          "name",
+          "body"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "shortcut": {
+            "type": "string"
+          },
+          "folder": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "owner_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "team_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "body": {
+            "type": "string"
+          }
+        }
+      },
+      "MacroAction": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "params"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "Macro": {
+        "type": "object",
+        "required": [
+          "id",
+          "workspace_id",
+          "name",
+          "folder",
+          "scope",
+          "owner_id",
+          "team_id",
+          "body",
+          "actions",
+          "usage_count",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "name": {
+            "type": "string"
+          },
+          "folder": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "team",
+              "workspace"
+            ]
+          },
+          "owner_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "team_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "body": {
+            "type": "string"
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MacroAction"
+            }
+          },
+          "usage_count": {
+            "type": "integer"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "MacroPage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageOf"
+          }
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Macro"
+            }
+          }
+        }
+      },
+      "MacroInput": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "folder": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "team",
+              "workspace"
+            ],
+            "default": "workspace"
+          },
+          "owner_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "team_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "body": {
+            "type": "string"
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MacroAction"
+            }
+          }
+        }
+      },
+      "MacroExecutionRequest": {
+        "type": "object",
+        "required": [
+          "subject_type",
+          "subject_id"
+        ],
+        "properties": {
+          "subject_type": {
+            "type": "string",
+            "enum": [
+              "conversation",
+              "ticket"
+            ]
+          },
+          "subject_id": {
+            "$ref": "#/components/schemas/Id"
+          }
+        }
+      },
+      "MacroExecution": {
+        "type": "object",
+        "required": [
+          "macro_id",
+          "subject_type",
+          "subject_id",
+          "actions_applied"
+        ],
+        "properties": {
+          "macro_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "subject_type": {
+            "type": "string"
+          },
+          "subject_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "actions_applied": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MacroAction"
+            }
           }
         }
       }

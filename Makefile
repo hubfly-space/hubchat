@@ -122,6 +122,7 @@ test: ## Go unit tests
 openapi-check: ## Validate the checked-in public API contract
 	node scripts/generate-openapi.mjs
 	node scripts/check-openapi.mjs
+	node scripts/generate-ts-api.mjs
 
 # Deliberately a separate variable from HUBCHAT_DATABASE_URL: these tests
 # truncate tenant data, so pointing them at a database has to be a choice
