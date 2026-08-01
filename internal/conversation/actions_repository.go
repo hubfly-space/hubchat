@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -237,11 +238,39 @@ func (r *repository) unfollow(ctx context.Context, tx pgx.Tx, conversationID, me
 }
 
 func (r *repository) followerIDs(ctx context.Context, workspaceID, conversationID string) ([]string, error) {
+	var out []string
+	var before string
+	for {
+		page, err := r.followerIDsPage(ctx, workspaceID, conversationID, before, 201)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, page...)
+		if len(page) < 201 {
+			return out, nil
+		}
+		before = page[len(page)-1]
+	}
+}
+
+func (r *repository) followerIDsPage(ctx context.Context, workspaceID, conversationID, before string, limit int) ([]string, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := "c.workspace_id = $1 AND cf.conversation_id = $2"
+	args := []any{workspaceID, conversationID}
+	if before != "" {
+		where += " AND cf.member_id > $3"
+		args = append(args, before)
+	}
+	args = append(args, limit)
+	limitPlaceholder := fmt.Sprintf("$%d", len(args))
 	rows, err := r.pool.Query(ctx, `
 		SELECT cf.member_id FROM conversation_followers cf
 		JOIN conversations c ON c.id = cf.conversation_id
-		WHERE c.workspace_id = $1 AND cf.conversation_id = $2
-	`, workspaceID, conversationID)
+		WHERE `+where+`
+		ORDER BY cf.member_id ASC
+		LIMIT `+limitPlaceholder, args...)
 	if err != nil {
 		return nil, err
 	}

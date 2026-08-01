@@ -130,11 +130,39 @@ func (r *repository) attributeDefinitionByKey(ctx context.Context, workspaceID, 
 }
 
 func (r *repository) listAttributeDefinitions(ctx context.Context, workspaceID, entityType string) ([]AttributeDefinition, error) {
+	var out []AttributeDefinition
+	var beforeKey, beforeID string
+	for {
+		page, err := r.listAttributeDefinitionsPage(ctx, workspaceID, entityType, beforeKey, beforeID, 201)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, page...)
+		if len(page) < 201 {
+			return out, nil
+		}
+		last := page[len(page)-1]
+		beforeKey, beforeID = last.Key, last.ID
+	}
+}
+
+func (r *repository) listAttributeDefinitionsPage(ctx context.Context, workspaceID, entityType, beforeKey, beforeID string, limit int) ([]AttributeDefinition, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := "workspace_id = $1 AND entity_type = $2 AND archived_at IS NULL"
+	args := []any{workspaceID, entityType}
+	if beforeKey != "" || beforeID != "" {
+		where += " AND (key, id) > ($3, $4)"
+		args = append(args, beforeKey, beforeID)
+	}
+	args = append(args, limit)
+	limitPlaceholder := fmt.Sprintf("$%d", len(args))
 	rows, err := r.pool.Query(ctx, `SELECT `+attributeDefinitionColumns+`
 		FROM attribute_definitions
-		WHERE workspace_id = $1 AND entity_type = $2 AND archived_at IS NULL
-		ORDER BY key
-	`, workspaceID, entityType)
+		WHERE `+where+`
+		ORDER BY key, id
+		LIMIT `+limitPlaceholder, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +317,27 @@ func (s *Service) ListAttributeDefinitions(ctx context.Context, workspaceID, ent
 	if !validAttrEntityTypes[entityType] {
 		return nil, ErrAttrInvalidEntity
 	}
-	return s.repo.listAttributeDefinitions(ctx, workspaceID, entityType)
+	var out []AttributeDefinition
+	var beforeKey, beforeID string
+	for {
+		page, err := s.repo.listAttributeDefinitionsPage(ctx, workspaceID, entityType, beforeKey, beforeID, 201)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, page...)
+		if len(page) < 201 {
+			return out, nil
+		}
+		last := page[len(page)-1]
+		beforeKey, beforeID = last.Key, last.ID
+	}
+}
+
+func (s *Service) ListAttributeDefinitionsPage(ctx context.Context, workspaceID, entityType, beforeKey, beforeID string, limit int) ([]AttributeDefinition, error) {
+	if !validAttrEntityTypes[entityType] {
+		return nil, ErrAttrInvalidEntity
+	}
+	return s.repo.listAttributeDefinitionsPage(ctx, workspaceID, entityType, beforeKey, beforeID, limit)
 }
 
 func orEmptyStrings(v []string) []string {

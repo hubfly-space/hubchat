@@ -694,6 +694,13 @@ func TestCountsMatchTheSidebarBadges(t *testing.T) {
 	if err := svc.Follow(ctx, ws.WorkspaceID, mine.ID, ws.MemberID); err != nil {
 		t.Fatalf("follow: %v", err)
 	}
+	followerPage, err := svc.FollowersPage(ctx, ws.WorkspaceID, mine.ID, "", 1)
+	if err != nil {
+		t.Fatalf("followers page: %v", err)
+	}
+	if len(followerPage) != 1 || followerPage[0] != ws.MemberID {
+		t.Fatalf("expected one cursor-paged follower, got %v", followerPage)
+	}
 
 	spam, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "Spam one")
 	if err != nil {

@@ -395,6 +395,12 @@ func (s *Service) Followers(ctx context.Context, workspaceID, conversationID str
 	return s.repo.followerIDs(ctx, workspaceID, conversationID)
 }
 
+// FollowersPage returns follower member IDs in stable order for the API's
+// opaque cursor pagination contract.
+func (s *Service) FollowersPage(ctx context.Context, workspaceID, conversationID, before string, limit int) ([]string, error) {
+	return s.repo.followerIDsPage(ctx, workspaceID, conversationID, before, limit)
+}
+
 // MarkRead records that memberID has seen everything in the conversation up
 // to its latest message. Read state tracks the newest message only — a
 // per-message read receipt for every reader would be a write on every open
