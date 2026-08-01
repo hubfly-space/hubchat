@@ -38,6 +38,7 @@ import {
   formatDateTime,
   formatRelativeShort,
   type AttributeDefinition,
+  type ApiCustomer360,
   type Company,
   type Conversation,
   type Customer,
@@ -141,6 +142,10 @@ function CustomerDetailBody({ customer }: { customer: Customer }) {
       return api.get<Paginated<ContactSession>>(`/customers/${customer.id}/sessions?${params.toString()}`, { signal });
     },
   );
+  const customer360Query = useQuery<ApiCustomer360>(
+    ["customer-360", customer.id],
+    (signal) => api.get(`/customers/${encodeURIComponent(customer.id)}/360`, { signal }),
+  );
 
   const theirConversations = conversationsQuery.items;
   const theirTickets = ticketsQuery.items;
@@ -208,6 +213,7 @@ function CustomerDetailBody({ customer }: { customer: Customer }) {
           <Tabs value={tab} onValueChange={setTab}>
             <TabsList
               items={[
+                { value: "360", label: "360 view" },
                 { value: "activity", label: "Activity", count: events.length },
                 { value: "conversations", label: "Conversations", count: theirConversations.length },
                 { value: "tickets", label: "Tickets", count: theirTickets.length },
@@ -284,6 +290,9 @@ function CustomerDetailBody({ customer }: { customer: Customer }) {
           {/* Tab panels --------------------------------------------------- */}
           <div className="min-w-0">
             <Tabs value={tab} onValueChange={setTab}>
+              <TabsContent value="360">
+                <Customer360Tab query={customer360Query} customerID={customer.id} />
+              </TabsContent>
               <TabsContent value="activity">
                 <Section title="Event timeline" description="Structured events sent by your application (§6.10).">
                   <Card>
@@ -469,6 +478,58 @@ function CustomerDetailBody({ customer }: { customer: Customer }) {
       />
     </Page>
   );
+}
+
+function Customer360Tab({ query, customerID }: { query: ReturnType<typeof useQuery<ApiCustomer360>>; customerID: string }) {
+  if (query.isLoading) return <p className="text-sm text-fg-muted">Loading customer context…</p>;
+  if (query.error) return <EmptyState icon={UserRound} title="Customer context unavailable" description="Could not load the related feedback, surveys, articles, and identity history." action={<Button variant="secondary" size="sm" onClick={query.refetch}>Try again</Button>} />;
+  const data = query.data;
+  if (!data) return <EmptyState icon={UserRound} title="No customer context" />;
+
+  return (
+    <div className="space-y-5">
+      <Callout tone="info">
+        This view combines recent records owned by other modules. Sensitive customer attributes remain behind the audited reveal control in Attributes.
+      </Callout>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="Feedback" value={data.feedback.length} truncated={data.feedback_truncated} />
+        <MetricCard label="Survey responses" value={data.surveys.length} truncated={data.surveys_truncated} />
+        <MetricCard label="Article feedback" value={data.articles.length} truncated={data.articles_truncated} />
+        <MetricCard label="Linked identities" value={data.identities.length} truncated={data.identities_truncated} />
+      </div>
+
+      <Section title="Feedback" description="Ideas this customer submitted, voted on, or follows.">
+        <Card><CardBody className="p-0">
+          {data.feedback.length === 0 ? <EmptyState size="sm" title="No feedback activity" /> : <ul className="divide-y divide-line-subtle">{data.feedback.map((item) => <li key={item.id}><Link to={`/feedback/${item.id}`} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-hover"><span className="min-w-0 flex-1"><span className="block truncate text-sm text-fg">{item.title}</span><span className="block text-xs text-fg-muted">{item.board_name} · {item.vote_count} votes · {item.comment_count} comments · {formatRelativeShort(item.created_at, new Date())} ago</span></span><Badge tone="neutral">{item.status.replaceAll("_", " ")}</Badge></Link></li>)}</ul>}
+        </CardBody></Card>
+      </Section>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Section title="Survey responses" description="Submitted identified responses associated with this customer.">
+          <Card><CardBody className="p-0">{data.surveys.length === 0 ? <EmptyState size="sm" title="No survey responses" /> : <ul className="divide-y divide-line-subtle">{data.surveys.map((item) => <li key={item.id} className="px-4 py-3"><div className="flex items-center justify-between gap-3"><span className="text-sm text-fg">{item.survey_name}</span><Badge tone="neutral">{item.survey_type.toUpperCase()}{item.score === undefined ? "" : ` · ${item.score}`}</Badge></div>{item.comment && <p className="mt-1 whitespace-pre-wrap text-xs text-fg-secondary">{item.comment}</p>}{item.submitted_at && <p className="mt-1 text-2xs text-fg-muted">{formatDateTime(item.submitted_at)}</p>}</li>)}</ul>}</CardBody></Card>
+        </Section>
+
+        <Section title="Article feedback" description="Knowledge-base helpfulness signals from this customer.">
+          <Card><CardBody className="p-0">{data.articles.length === 0 ? <EmptyState size="sm" title="No article feedback" /> : <ul className="divide-y divide-line-subtle">{data.articles.map((item) => <li key={item.id}><Link to={`/kb/article/${encodeURIComponent(item.slug)}`} className="block px-4 py-3 transition-colors hover:bg-surface-hover"><div className="flex items-center justify-between gap-3"><span className="truncate text-sm text-fg">{item.title}</span><Badge tone={item.helpful ? "success" : "warning"}>{item.helpful ? "Helpful" : "Not helpful"}</Badge></div>{item.comment && <p className="mt-1 line-clamp-2 text-xs text-fg-secondary">{item.comment}</p>}<p className="mt-1 text-2xs text-fg-muted">{formatDateTime(item.created_at)}</p></Link></li>)}</ul>}</CardBody></Card>
+        </Section>
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Section title="Identity history" description="Verified and alternate email addresses and phone numbers linked to this record.">
+          <Card><CardBody className="p-0">{data.identities.length === 0 ? <EmptyState size="sm" title="No linked identities" /> : <ul className="divide-y divide-line-subtle">{data.identities.map((item) => <li key={`${item.kind}-${item.id}`} className="flex items-center gap-3 px-4 py-3"><span className="w-16 shrink-0 text-2xs font-semibold uppercase tracking-caps text-fg-muted">{item.kind}</span><span className="min-w-0 flex-1 truncate text-sm text-fg">{item.value}</span>{item.is_primary && <Badge tone="neutral">Primary</Badge>}{item.verified_at && <Badge tone="success">Verified</Badge>}</li>)}</ul>}</CardBody></Card>
+        </Section>
+
+        <Section title="Merge history" description="Audited identity merges involving this customer.">
+          <Card><CardBody className="p-0">{data.merges.length === 0 ? <EmptyState size="sm" title="No merges recorded" /> : <ul className="divide-y divide-line-subtle">{data.merges.map((item) => <li key={item.id} className="px-4 py-3"><div className="flex items-center justify-between gap-3"><span className="font-mono text-xs text-fg">{item.id}</span><Badge tone={item.reversed_at ? "neutral" : "warning"}>{item.reversed_at ? "Reversed" : "Merged"}</Badge></div><p className="mt-1 text-xs text-fg-muted">{item.winner_id === customerID ? "This customer kept the identity" : "This customer was absorbed"} · {formatDateTime(item.created_at)}</p></li>)}</ul>}</CardBody></Card>
+        </Section>
+      </div>
+    </div>
+  );
+}
+
+function MetricCard({ label, value, truncated }: { label: string; value: number; truncated: boolean }) {
+  return <Card><CardBody><p className="text-2xs font-semibold uppercase tracking-caps text-fg-muted">{label}</p><p className="mt-2 text-xl font-semibold tabular text-fg">{value}{truncated ? "+" : ""}</p>{truncated && <p className="mt-1 text-2xs text-fg-muted">Recent records shown</p>}</CardBody></Card>;
 }
 
 function AttributesTab({ customer }: { customer: Customer }) {

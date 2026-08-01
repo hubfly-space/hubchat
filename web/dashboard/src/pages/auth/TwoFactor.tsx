@@ -2,7 +2,7 @@ import { api, ApiError, Button, Callout, clearQueryCache, Field, Input } from "@
 import { useMutation } from "@hubchat/shared";
 import { ShieldCheck } from "lucide-react";
 import { useRef, useState } from "react";
-import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 const LENGTH = 6;
 
@@ -11,20 +11,25 @@ type LocationState = { challenge?: string; next?: string | null };
 export default function TwoFactor() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [params] = useSearchParams();
   const state = (location.state as LocationState | null) ?? {};
+  const challenge = state.challenge ?? params.get("challenge") ?? undefined;
+  const next = state.next ?? params.get("next");
+  const pendingCookieChallenge = params.get("pending") === "1";
 
   const [digits, setDigits] = useState<string[]>(Array(LENGTH).fill(""));
   const [recoveryCode, setRecoveryCode] = useState("");
   const [useRecovery, setUseRecovery] = useState(false);
+  const [trustDevice, setTrustDevice] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputs = useRef<(HTMLInputElement | null)[]>([]);
 
-  const verify = useMutation<{ challenge: string; code: string }, unknown>(
+  const verify = useMutation<{ challenge: string; code: string; trust_device: boolean }, unknown>(
     (body) => api.post("/auth/totp/challenge", body),
     {
       onSuccess: () => {
         clearQueryCache();
-        navigate(state.next ?? "/overview", { replace: true });
+        navigate(next ?? "/overview", { replace: true });
       },
       onError: (caught) => {
         setError(
@@ -39,7 +44,7 @@ export default function TwoFactor() {
   // Arriving here without a challenge means someone opened the URL directly
   // rather than being sent here by a real sign-in — there is nothing to
   // verify against, so send them back to start over.
-  if (!state.challenge) {
+  if (!challenge && !pendingCookieChallenge) {
     return <Navigate to="/login" replace />;
   }
 
@@ -63,7 +68,7 @@ export default function TwoFactor() {
     event.preventDefault();
     setError(null);
     const code = useRecovery ? recoveryCode : digits.join("");
-    void verify.mutate({ challenge: state.challenge!, code }).catch(() => {});
+    void verify.mutate({ challenge: challenge ?? "", code, trust_device: trustDevice }).catch(() => {});
   };
 
   return (
@@ -132,6 +137,21 @@ export default function TwoFactor() {
         <Button type="submit" variant="primary" size="lg" fullWidth loading={verify.isPending}>
           Verify
         </Button>
+
+        <label className="flex items-start gap-2 text-sm text-fg-muted">
+          <input
+            type="checkbox"
+            checked={trustDevice}
+            onChange={(event) => setTrustDevice(event.target.checked)}
+            className="mt-0.5 size-4 accent-accent"
+          />
+          <span>
+            Trust this device for 30 days
+            <span className="mt-0.5 block text-xs text-fg-disabled">
+              Use this only on a private device. You can revoke it from account security.
+            </span>
+          </span>
+        </label>
       </form>
 
       <div className="mt-6 flex flex-col gap-2 text-center text-xs">

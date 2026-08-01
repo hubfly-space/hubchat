@@ -8,8 +8,9 @@ import {
   Input,
   Separator,
   useMutation,
+  useQuery,
 } from "@hubchat/shared";
-import { Github, Mail } from "lucide-react";
+import { Mail } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
@@ -23,11 +24,18 @@ type Credentials = { email: string; password: string };
 type SignInResponse =
   | { id: string; name: string; email: string }
   | { challenge: string; expires_at: string };
+type OAuthProviders = { providers: Array<{ provider: string; label: string }> };
 
 export default function Login() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const [error, setError] = useState<string | null>(null);
+  const [email, setEmail] = useState("");
+  const oauthProviders = useQuery<OAuthProviders>(["auth", "oauth-providers"], (signal) =>
+    api.get("/auth/oauth/providers", { signal }),
+  );
+
+  const oauthError = params.get("oauth_error");
 
   const signIn = useMutation<Credentials, SignInResponse>(
     (credentials) => api.post("/auth/login", credentials),
@@ -77,6 +85,9 @@ export default function Login() {
   };
 
   const loading = signIn.isPending;
+  const magicLink = useMutation<{ email: string; next: string }, { status: string }>((body) =>
+    api.post("/auth/magic-link", body),
+  );
 
   return (
     <>
@@ -91,6 +102,18 @@ export default function Login() {
         </Callout>
       )}
 
+      {oauthError && (
+        <Callout tone="danger" className="mb-4">
+          {oauthError === "cancelled"
+            ? "Sign-in was cancelled."
+            : oauthError === "expired"
+              ? "That sign-in attempt expired. Please try again."
+              : oauthError === "not_allowed"
+                ? "This identity is not allowed to access Hubchat."
+                : "The organization sign-in could not be completed. Please try again."}
+        </Callout>
+      )}
+
       <form onSubmit={submit} className="flex flex-col gap-4">
         <Field label="Email" htmlFor="email">
           <Input
@@ -101,6 +124,8 @@ export default function Login() {
             required
             inputSize="lg"
             placeholder="you@company.com"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
           />
         </Field>
 
@@ -135,14 +160,35 @@ export default function Login() {
       </div>
 
       <div className="flex flex-col gap-2">
-        <Button variant="secondary" size="lg" fullWidth leading={<Mail />}>
-          Email me a sign-in link
-        </Button>
-        {/* OAuth providers are adapter-configured (§11.1); the button only
-            renders when the deployment has one enabled. */}
-        <Button variant="secondary" size="lg" fullWidth leading={<Github />}>
-          Continue with GitHub
-        </Button>
+        {oauthProviders.data?.providers.map((provider) => {
+          const next = params.get("next") ?? "";
+          const deploymentBase = (window.location.pathname.split("/app/").at(0) ?? "").replace(/\/$/, "");
+          const href = `${deploymentBase}/api/v1/auth/oauth/${encodeURIComponent(provider.provider)}/start${next ? `?next=${encodeURIComponent(next)}` : ""}`;
+          return (
+            <Button key={provider.provider} asChild variant="secondary" size="lg" fullWidth>
+              <a href={href}>Continue with {provider.label}</a>
+            </Button>
+          );
+        })}
+        {magicLink.isSuccess ? (
+          <Callout tone="success">
+            If an account exists for that address, a sign-in link is on its way. It expires in 15 minutes.
+          </Callout>
+        ) : (
+          <Button
+            type="button"
+            variant="secondary"
+            size="lg"
+            fullWidth
+            leading={<Mail />}
+            loading={magicLink.isPending}
+            disabled={!email.trim()}
+            onClick={() => void magicLink.mutate({ email: email.trim(), next: params.get("next") ?? "" }).catch(() => {})}
+          >
+            Email me a sign-in link
+          </Button>
+        )}
+        {Boolean(magicLink.error) && <p className="text-xs text-danger">Could not request a sign-in link. Please try again.</p>}
       </div>
 
       <p className="mt-8 text-center text-xs text-fg-muted">
