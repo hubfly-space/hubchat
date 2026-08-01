@@ -27,8 +27,10 @@ reporting, legal-hold retention overrides, all declared privacy retention
 sweeps, workspace archive operations, and workspace-scoped SCIM member
 provisioning have live service/API slices. Provider Google and Microsoft Entra
 member adapters, plus several enterprise/management screens, are live; SAML,
-additional provider adapters, and some advanced deployment controls remain
-under active delivery. Production pages do not silently fall back to fixtures.
+additional provider adapters, customer SSO, and some advanced deployment
+controls remain under active delivery. Workspace custom roles are live, with
+capability bundles enforced by the server. Production pages do not silently
+fall back to fixtures.
 
 ### Optional member OAuth/OIDC sign-in
 

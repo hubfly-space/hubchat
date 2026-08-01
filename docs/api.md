@@ -29,6 +29,18 @@ the member's sessions, trusted devices, and workspace API keys issued by that
 member. A SCIM key is rejected when its workspace path does not match the key's
 workspace, even if the caller knows another workspace ID.
 
+## Workspace custom roles
+
+`GET /api/v1/roles` returns the six built-in roles plus the current workspace's
+custom roles. Members with `member.manage` can create, update, and delete
+custom roles through `POST /api/v1/roles`, `PATCH /api/v1/roles/{id}`, and
+`DELETE /api/v1/roles/{id}`. Custom keys are immutable after creation and use
+lowercase `snake_case` identifiers. Capability names are validated against the
+server catalog, role changes are audited and published as workspace events,
+and a role cannot be deleted while a member still uses it. Member role changes
+and invitations resolve roles inside the current workspace, so a role ID or
+key from another tenant cannot be assigned or modified.
+
 All errors use the standard envelope described in
 [`api-conventions.md`](api-conventions.md), including a request ID. List
 endpoints use opaque cursor pagination. Retryable creates, updates, and actions

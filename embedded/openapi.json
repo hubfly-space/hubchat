@@ -9294,6 +9294,156 @@
             "bearerAuth": []
           }
         ]
+      },
+      "post": {
+        "operationId": "postRoles",
+        "summary": "post /v1/roles",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/roles/{id}": {
+      "patch": {
+        "operationId": "patchRolesId",
+        "summary": "patch /v1/roles/{id}",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteRolesId",
+        "summary": "delete /v1/roles/{id}",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
       }
     },
     "/v1/members/{id}/role": {
