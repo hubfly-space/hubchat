@@ -249,6 +249,48 @@ func (r *repository) listMembers(ctx context.Context, workspaceID string) ([]Mem
 	return out, rows.Err()
 }
 
+func (s *Service) ListMembersPage(ctx context.Context, workspaceID, query, beforeName, beforeID string, limit int) ([]MemberProfile, error) {
+	return s.repo.listMembersPage(ctx, workspaceID, query, beforeName, beforeID, limit)
+}
+
+func (r *repository) listMembersPage(ctx context.Context, workspaceID, query, beforeName, beforeID string, limit int) ([]MemberProfile, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := "m.workspace_id = $1 AND ($2 = '' OR u.name ILIKE '%' || $2 || '%' OR u.email::text ILIKE '%' || $2 || '%')"
+	args := []any{workspaceID, query}
+	if beforeName != "" {
+		where += " AND (u.name,m.id) > ($3,$4)"
+		args = append(args, beforeName, beforeID)
+	}
+	args = append(args, limit)
+	rows, err := r.pool.Query(ctx, `
+		SELECT m.id, u.id, u.name, u.email::text, u.avatar_url, m.role,
+		       m.presence, m.accepting_conversations, m.last_seen_at, m.created_at,
+		       coalesce(array_agg(tm.team_id) FILTER (WHERE tm.team_id IS NOT NULL), '{}') AS team_ids
+		FROM workspace_members m
+		JOIN users u ON u.id = m.user_id
+		LEFT JOIN team_members tm ON tm.member_id = m.id
+		WHERE `+where+`
+		GROUP BY m.id, u.id, u.name, u.email, u.avatar_url, m.role,
+		         m.presence, m.accepting_conversations, m.last_seen_at, m.created_at
+		ORDER BY u.name, m.id
+		LIMIT $`+strconv.Itoa(len(args)), args...)
+	if err != nil {
+		return nil, fmt.Errorf("workspace: list members page: %w", err)
+	}
+	defer rows.Close()
+	out := []MemberProfile{}
+	for rows.Next() {
+		var m MemberProfile
+		if err := rows.Scan(&m.ID, &m.UserID, &m.Name, &m.Email, &m.AvatarURL, &m.Role, &m.Presence, &m.Accepting, &m.LastSeenAt, &m.CreatedAt, &m.TeamIDs); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 func (r *repository) listTeams(ctx context.Context, workspaceID string) ([]Team, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT t.id, t.name, t.description, t.lead_id, t.routing_strategy, t.routing_config, t.created_at,

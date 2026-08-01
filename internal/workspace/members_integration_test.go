@@ -489,6 +489,26 @@ func TestListTeamsPageUsesStableNameCursor(t *testing.T) {
 	}
 }
 
+func TestListMembersPageUsesNameCursorAndSearch(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	svc := newTestService(t, pool)
+	workspaceID, _, _ := seedOwnerWorkspace(t, ctx, pool, svc, "members-page-owner@owner.test")
+	for _, email := range []string{"alice@example.com", "bob@example.com"} {
+		userID := seedTestUser(t, ctx, pool, email)
+		addMember(t, ctx, pool, workspaceID, userID, "agent")
+	}
+	first, err := svc.ListMembersPage(ctx, workspaceID, "@example.com", "", "", 1)
+	if err != nil || len(first) != 1 || first[0].Email != "alice@example.com" {
+		t.Fatalf("first member page = %#v, err=%v", first, err)
+	}
+	second, err := svc.ListMembersPage(ctx, workspaceID, "@example.com", first[0].Name, first[0].ID, 1)
+	if err != nil || len(second) != 1 || second[0].Email != "bob@example.com" {
+		t.Fatalf("second member page = %#v, err=%v", second, err)
+	}
+}
+
 func TestDuplicateTeamNameIsRefused(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.Reset(t, pool)

@@ -121,6 +121,10 @@ func (s *Service) List(ctx context.Context, workspaceID string) ([]Widget, error
 	return s.repo.list(ctx, workspaceID)
 }
 
+func (s *Service) ListPage(ctx context.Context, workspaceID string, before time.Time, beforeID string, limit int) ([]Widget, error) {
+	return s.repo.listPage(ctx, workspaceID, before, beforeID, limit)
+}
+
 func (s *Service) Get(ctx context.Context, workspaceID, id string) (*Widget, error) {
 	return s.repo.byID(ctx, workspaceID, id)
 }
@@ -315,6 +319,13 @@ func (s *Service) Domains(ctx context.Context, workspaceID, widgetID string) ([]
 		return nil, err
 	}
 	return s.repo.domains(ctx, widgetID)
+}
+
+func (s *Service) DomainsPage(ctx context.Context, workspaceID, widgetID string, before time.Time, beforeID string, limit int) ([]Domain, error) {
+	if _, err := s.repo.byID(ctx, workspaceID, widgetID); err != nil {
+		return nil, err
+	}
+	return s.repo.domainsPage(ctx, widgetID, before, beforeID, limit)
 }
 
 // AddDomain allowlists one origin hostname. A bare "*" is refused outright

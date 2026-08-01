@@ -467,6 +467,69 @@ func TestVisitorMessagesNeverIncludeInternalNotes(t *testing.T) {
 	}
 }
 
+func TestWidgetListPageUsesCreatedCursorAndWorkspaceScope(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	h := newHarness(pool)
+	wsA := seedWorkspace(t, ctx, pool)
+	wsB := seedWorkspace(t, ctx, pool)
+	if _, err := h.Widget.Create(ctx, wsA.WorkspaceID, wsA.MemberID, "First", &wsA.InboxID); err != nil {
+		t.Fatalf("create first widget: %v", err)
+	}
+	if _, err := h.Widget.Create(ctx, wsA.WorkspaceID, wsA.MemberID, "Second", &wsA.InboxID); err != nil {
+		t.Fatalf("create second widget: %v", err)
+	}
+	if _, err := h.Widget.Create(ctx, wsB.WorkspaceID, wsB.MemberID, "Other", &wsB.InboxID); err != nil {
+		t.Fatalf("create other widget: %v", err)
+	}
+	first, err := h.Widget.ListPage(ctx, wsA.WorkspaceID, time.Time{}, "", 1)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first widget page = %#v, err=%v", first, err)
+	}
+	second, err := h.Widget.ListPage(ctx, wsA.WorkspaceID, first[0].CreatedAt, first[0].ID, 1)
+	if err != nil || len(second) != 1 || second[0].WorkspaceID != wsA.WorkspaceID {
+		t.Fatalf("second widget page = %#v, err=%v", second, err)
+	}
+}
+
+func TestWidgetDomainsPageUsesCreatedCursorAndWorkspaceScope(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	h := newHarness(pool)
+	wsA := seedWorkspace(t, ctx, pool)
+	wsB := seedWorkspace(t, ctx, pool)
+	wA, err := h.Widget.Create(ctx, wsA.WorkspaceID, wsA.MemberID, "Domains", &wsA.InboxID)
+	if err != nil {
+		t.Fatalf("create widget: %v", err)
+	}
+	wB, err := h.Widget.Create(ctx, wsB.WorkspaceID, wsB.MemberID, "Other", &wsB.InboxID)
+	if err != nil {
+		t.Fatalf("create other widget: %v", err)
+	}
+	for _, domain := range []string{"a.example.com", "b.example.com"} {
+		if _, err := h.Widget.AddDomain(ctx, wsA.WorkspaceID, wsA.MemberID, wA.ID, domain); err != nil {
+			t.Fatalf("add domain: %v", err)
+		}
+	}
+	if _, err := h.Widget.AddDomain(ctx, wsB.WorkspaceID, wsB.MemberID, wB.ID, "other.example.com"); err != nil {
+		t.Fatalf("add other domain: %v", err)
+	}
+	first, err := h.Widget.DomainsPage(ctx, wsA.WorkspaceID, wA.ID, time.Time{}, "", 1)
+	if err != nil || len(first) != 1 || first[0].Domain != "a.example.com" {
+		t.Fatalf("first domain page = %#v, err=%v", first, err)
+	}
+	second, err := h.Widget.DomainsPage(ctx, wsA.WorkspaceID, wA.ID, first[0].CreatedAt, first[0].ID, 1)
+	if err != nil || len(second) != 1 || second[0].Domain != "b.example.com" {
+		t.Fatalf("second domain page = %#v, err=%v", second, err)
+	}
+	other, err := h.Widget.DomainsPage(ctx, wsB.WorkspaceID, wA.ID, time.Time{}, "", 10)
+	if !errors.Is(err, widget.ErrNotFound) || len(other) != 0 {
+		t.Fatalf("cross-workspace domain page = %#v, err=%v", other, err)
+	}
+}
+
 func TestWidgetTenantIsolation(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.Reset(t, pool)
