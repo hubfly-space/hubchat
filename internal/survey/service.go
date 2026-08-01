@@ -227,15 +227,15 @@ func (s *Service) Create(ctx context.Context, workspaceID string, input Input) (
 	if delivery == nil {
 		delivery = []string{"email"}
 	}
-	trigger, _ := json.Marshal(input.Trigger)
-	completion, _ := json.Marshal(input.Completion)
+	trigger := surveyJSONObject(input.Trigger)
+	completion := surveyJSONObject(input.Completion)
 	id := ids.New(ids.PrefixSurvey)
 	err = database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `INSERT INTO surveys(id,workspace_id,name,type,delivery,trigger,completion,anonymous,max_responses,expires_at) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9,$10)`, id, workspaceID, name, typ, delivery, trigger, completion, input.Anonymous, input.MaxResponses, input.ExpiresAt); err != nil {
 			return err
 		}
 		for index, question := range questions {
-			options, _ := json.Marshal(question.Options)
+			options := surveyJSONArray(question.Options)
 			condition, _ := json.Marshal(question.Condition)
 			if _, err := tx.Exec(ctx, `INSERT INTO survey_questions(id,survey_id,prompt,type,options,required,condition,position) VALUES($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8)`, ids.New(ids.PrefixSurveyQuestion), id, question.Prompt, question.Type, options, question.Required, condition, index); err != nil {
 				return err
@@ -247,6 +247,33 @@ func (s *Service) Create(ctx context.Context, workspaceID string, input Input) (
 		return nil, fmt.Errorf("survey: create: %w", err)
 	}
 	return s.Get(ctx, workspaceID, id)
+}
+
+// PostgreSQL JSONB defaults only apply when a column is omitted. Survey
+// creation supplies these columns explicitly, so encoding a nil Go map/slice
+// as JSON null would store a JSON null in columns whose contract is an object
+// or array and make archive import fail later. Keep the wire shape stable at
+// the service boundary instead.
+func surveyJSONObject(value map[string]any) []byte {
+	if value == nil {
+		return []byte("{}")
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil || string(encoded) == "null" {
+		return []byte("{}")
+	}
+	return encoded
+}
+
+func surveyJSONArray(value []string) []byte {
+	if value == nil {
+		return []byte("[]")
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil || string(encoded) == "null" {
+		return []byte("[]")
+	}
+	return encoded
 }
 
 func (s *Service) List(ctx context.Context, workspaceID string) ([]Survey, error) {

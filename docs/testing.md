@@ -135,7 +135,8 @@ replays it, publishes and searches a knowledge-base article, records
 article helpfulness, creates and answers an anonymous CSAT survey, submits and
 votes on widget feedback, converts the conversation to a ticket, dry-runs and
 executes an automation rule from a committed ticket event, uploads and
-downloads a ticket attachment, and checks workspace export preview. The
+downloads a ticket attachment, executes and validates a workspace
+export/import archive, and checks the resulting manifest and row counts. The
 journey runs with HTTP, realtime, worker, and scheduler roles enabled.
 Run it directly against an already running binary with:
 

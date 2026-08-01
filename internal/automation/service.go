@@ -789,6 +789,9 @@ func (s *Service) ListExecutionsPage(ctx context.Context, workspaceID, ruleID st
 const ruleQuery = `SELECT r.id,r.workspace_id,r.name,coalesce(r.description,''),r.trigger,r.conditions,r.actions,r.position,r.enabled,r.max_runs_per_hour,r.version,r.last_run_at,(SELECT count(*) FROM automation_executions e WHERE e.rule_id=r.id AND e.outcome='matched' AND e.occurred_at>now()-interval '24 hours'),(SELECT count(*) FROM automation_executions e WHERE e.rule_id=r.id AND e.outcome='failed' AND e.occurred_at>now()-interval '24 hours'),r.created_at,r.updated_at FROM automation_rules r`
 
 func (s *Service) recordExecution(ctx context.Context, workspaceID string, rule *Rule, eventID, subjectType, subjectID, causationID string, depth int, outcome string, applied []Action, executionErr error, dryRun bool, started time.Time) (*Execution, error) {
+	if applied == nil {
+		applied = []Action{}
+	}
 	id := ids.New(ids.PrefixAutomationExecution)
 	actionsJSON, _ := json.Marshal(applied)
 	var event any

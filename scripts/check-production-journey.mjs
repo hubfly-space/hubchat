@@ -662,6 +662,52 @@ const exportPreview = await request("/api/v1/portability/exports/preview", {
 if (!Array.isArray(exportPreview?.tables) || typeof exportPreview?.row_count !== "number") {
   throw new Error("workspace export preview did not return table summaries");
 }
-log("workspace export preview");
+const exportRequest = await request("/api/v1/portability/exports", {
+  method: "POST",
+  body: { kind: "workspace", scope: {} },
+  expected: 202,
+});
+const exportID = requireValue(exportRequest?.id, "workspace export id");
+let completedExport;
+for (let attempt = 0; attempt < 60; attempt += 1) {
+  completedExport = await request(`/api/v1/portability/exports/${encodeURIComponent(exportID)}`);
+  if (completedExport?.state === "completed" || completedExport?.state === "failed") break;
+  await new Promise((resolve) => setTimeout(resolve, 100));
+}
+if (completedExport?.state !== "completed" || typeof completedExport?.file_id !== "string") {
+  throw new Error(`workspace export did not complete: ${completedExport?.state ?? "unknown"}`);
+}
+const exportManifest = await request(`/api/v1/portability/exports/${encodeURIComponent(exportID)}/manifest`);
+if (exportManifest?.export_id !== exportID || exportManifest?.file_id !== completedExport.file_id || !exportManifest?.checksum) {
+  throw new Error("workspace export manifest did not verify the completed archive");
+}
+const importRequest = await request("/api/v1/portability/imports", {
+  method: "POST",
+  body: { file_id: completedExport.file_id, kind: "workspace", auto_start: false },
+  expected: 202,
+});
+const importID = requireValue(importRequest?.id, "workspace import id");
+const importPreview = await request(`/api/v1/portability/imports/${encodeURIComponent(importID)}/preview`, {
+  method: "POST",
+  expected: 200,
+});
+if (!Array.isArray(importPreview?.data) || !importPreview.data.some((item) => item?.name === "inboxes")) {
+  throw new Error("workspace import preview did not include archive tables");
+}
+await request(`/api/v1/portability/imports/${encodeURIComponent(importID)}/confirm`, {
+  method: "POST",
+  body: { backup_verified: true },
+  expected: 202,
+});
+let completedImport;
+for (let attempt = 0; attempt < 60; attempt += 1) {
+  completedImport = await request(`/api/v1/portability/imports/${encodeURIComponent(importID)}`);
+  if (completedImport?.state === "completed" || completedImport?.state === "failed") break;
+  await new Promise((resolve) => setTimeout(resolve, 100));
+}
+if (completedImport?.state !== "completed" || completedImport?.processed_rows !== completedImport?.total_rows) {
+  throw new Error(`workspace import did not complete: ${completedImport?.state ?? "unknown"}`);
+}
+log("workspace export, manifest verification, and validated import");
 
-console.log("Production HTTP/realtime journey OK (setup, portal, SLA, webhook, knowledge base, survey, widget, feedback, conversation, realtime, ticket, portal reply, attachments, automation, export preview)");
+console.log("Production HTTP/realtime journey OK (setup, portal, SLA, webhook, knowledge base, survey, widget, feedback, conversation, realtime, ticket, portal reply, attachments, automation, export/import)");
