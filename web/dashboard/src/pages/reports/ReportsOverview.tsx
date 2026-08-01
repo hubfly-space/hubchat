@@ -59,6 +59,7 @@ export default function ReportsOverview() {
   const [recipient, setRecipient] = useState("");
   const [cadence, setCadence] = useState("weekly");
   const [selectedReportID, setSelectedReportID] = useState("");
+  const [deletingReport, setDeletingReport] = useState<SavedReport | null>(null);
   const [deletingSchedule, setDeletingSchedule] = useState<ReportSchedule | null>(null);
   const days = range === "7d" ? 7 : range === "90d" ? 90 : 30;
   const query = (metric: string) => {
@@ -113,6 +114,13 @@ export default function ReportsOverview() {
   const deleteSchedule = useMutation<ReportSchedule, void>((item) => api.delete("/reports/" + encodeURIComponent(item.report_id) + "/schedules/" + encodeURIComponent(item.id), { idempotencyKey: idempotencyKey() }), {
     invalidates: [["report-schedules", selectedReportID]],
     onSuccess: () => setDeletingSchedule(null),
+  });
+  const deleteReport = useMutation<SavedReport, void>((item) => api.delete(`/reports/${encodeURIComponent(item.id)}`, { idempotencyKey: idempotencyKey() }), {
+    invalidates: [["saved-reports"]],
+    onSuccess: () => {
+      if (deletingReport?.id === selectedReportID) setSelectedReportID("");
+      setDeletingReport(null);
+    },
   });
   const exportCSV = () => {
     const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
@@ -184,7 +192,7 @@ export default function ReportsOverview() {
                               <button type="button" className="text-left text-sm font-medium text-fg hover:underline" onClick={() => setSelectedReportID(report.id)}>{report.name}</button>
                               <p className="mt-1 text-xs text-fg-muted">{report.date_range.replaceAll("_", " ")} · {report.timezone || "UTC"}</p>
                             </div>
-                            <Button variant="secondary" size="xs" onClick={() => setSelectedReportID(report.id)}>{selectedReportID === report.id ? "Selected" : "Manage"}</Button>
+                            <div className="flex shrink-0 gap-1"><Button variant="secondary" size="xs" onClick={() => setSelectedReportID(report.id)}>{selectedReportID === report.id ? "Selected" : "Manage"}</Button><Button variant="ghost" size="xs" iconOnly leading={<Trash2 />} aria-label={`Delete ${report.name}`} onClick={() => setDeletingReport(report)} /></div>
                           </div>
                           {selectedReportID === report.id && (
                             <div className="mt-4 border-t border-line-subtle pt-3">
@@ -237,6 +245,16 @@ export default function ReportsOverview() {
           </div>
         </DialogContent>
       </Dialog>
+      <ConfirmDialog
+        open={Boolean(deletingReport)}
+        onOpenChange={(open) => { if (!open) setDeletingReport(null); }}
+        title="Delete saved report"
+        description={deletingReport ? `This removes the saved report “${deletingReport.name}” and its delivery schedules. Historical rollups remain available.` : "This removes the saved report and its delivery schedules."}
+        confirmLabel="Delete report"
+        destructive
+        loading={deleteReport.isPending}
+        onConfirm={() => { if (deletingReport) void deleteReport.mutate(deletingReport).catch(() => {}) }}
+      />
       <ConfirmDialog
         open={Boolean(deletingSchedule)}
         onOpenChange={(open) => { if (!open) setDeletingSchedule(null); }}

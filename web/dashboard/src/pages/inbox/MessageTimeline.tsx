@@ -1,6 +1,5 @@
 import {
   Avatar,
-  Button,
   Tooltip,
   cn,
   formatBytes,
@@ -13,7 +12,6 @@ import {
   CheckCheck,
   Download,
   Lock,
-  MoreHorizontal,
   Paperclip,
   Workflow,
 } from "lucide-react";
@@ -91,7 +89,6 @@ function CustomerMessage({ message }: { message: Message }) {
         </div>
         <MessageMeta message={message} align="left" />
       </div>
-      <MessageActions />
     </div>
   );
 }
@@ -99,7 +96,6 @@ function CustomerMessage({ message }: { message: Message }) {
 function AgentMessage({ message }: { message: Message }) {
   return (
     <div className="group/msg flex max-w-[76%] items-end gap-2 self-end">
-      <MessageActions />
       <div className="min-w-0">
         <div
           className={cn(
@@ -224,14 +220,6 @@ function MessageMeta({ message, align }: { message: Message; align: "left" | "ri
         </Tooltip>
       )}
     </p>
-  );
-}
-
-function MessageActions() {
-  return (
-    <div className="self-center opacity-0 transition-opacity group-hover/msg:opacity-100 group-focus-within/msg:opacity-100">
-      <Button variant="ghost" size="xs" iconOnly aria-label="Message actions" leading={<MoreHorizontal />} />
-    </div>
   );
 }
 
