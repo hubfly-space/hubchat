@@ -1,10 +1,10 @@
 /**
  * Hubchat domain types — the browser-side mirror of the v1 API contract.
  *
- * These are hand-maintained today. Once the Go handlers stabilise, this file
- * becomes generated output from the OpenAPI document (§14 boundary rules) and
- * hand edits stop. Until then: change a type here and the corresponding Go
- * struct in the same commit.
+ * Compatibility domain types remain hand-maintained while the additive
+ * OpenAPI-derived operation catalog is adopted endpoint by endpoint. Changes
+ * to these compatibility types still require a corresponding Go contract
+ * change in the same commit.
  *
  * Conventions that mirror the server:
  *   · every id is an opaque prefixed string  — never parse it
@@ -12,6 +12,15 @@
  *   · every tenant-owned entity carries workspace_id
  *   · field names stay snake_case so payloads round-trip untouched
  */
+
+// Additive generated contract surface. Existing dashboard imports remain
+// stable while endpoint clients migrate to the OpenAPI-derived models.
+export type {
+  ApiOperationId,
+  ApiOperationCatalog,
+  ApiRequest,
+  ApiResponse,
+} from "./generated-api";
 
 // ---------------------------------------------------------------- primitives
 

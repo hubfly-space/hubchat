@@ -21,11 +21,12 @@ import {
   Textarea,
   Tooltip,
   invalidate,
+  useInfinite,
   useMutation,
-  useQuery,
   type Column,
   type FieldDefinition,
   type FieldType,
+  type Paginated,
 } from "@hubchat/shared";
 import { ArrowDown, ArrowUp, EyeOff, ListChecks, Lock, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -51,11 +52,12 @@ export default function TicketFields() {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<FieldDefinition | null>(null);
 
-  const fields = useQuery<{ data: FieldDefinition[] }>(
-    ["field-definitions", "ticket"],
-    (signal) => api.get(`/field-definitions?entity_type=ticket`, { signal }),
-  );
-  const definitions = fields.data?.data ?? [];
+  const fields = useInfinite<FieldDefinition>(["field-definitions", "ticket"], (cursor, signal) => {
+    const params = new URLSearchParams({ entity_type: "ticket", limit: "50" });
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<FieldDefinition>>(`/field-definitions?${params.toString()}`, { signal });
+  });
+  const definitions = fields.items;
 
   const archive = useMutation<string, unknown>(
     (id) => api.delete(`/field-definitions/${id}`),
@@ -153,54 +155,57 @@ export default function TicketFields() {
         <Section title="Fields" description="Order here is the order agents and customers see.">
           <Card>
             <CardBody className="p-0">
-              <DataTable
-                aria-label="Ticket fields"
-                rows={definitions}
-                columns={columns}
-                rowKey={(field) => field.id}
-                loading={fields.isLoading}
-                rowActions={(field) => {
-                  const index = definitions.findIndex((d) => d.id === field.id);
-                  return (
-                  <div className="flex items-center gap-0.5">
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      iconOnly
-                      aria-label="Move up"
-                      disabled={index === 0}
-                      leading={<ArrowUp />}
-                      onClick={() => void move(index, -1)}
+              {fields.error ? <div className="p-4"><EmptyState icon={ListChecks} title="Ticket fields unavailable" description="Could not load custom field definitions." action={<Button variant="secondary" size="sm" onClick={fields.refetch}>Try again</Button>} /></div> : <>
+                <DataTable
+                  aria-label="Ticket fields"
+                  rows={definitions}
+                  columns={columns}
+                  rowKey={(field) => field.id}
+                  loading={fields.isLoading}
+                  rowActions={(field) => {
+                    const index = definitions.findIndex((d) => d.id === field.id);
+                    return (
+                    <div className="flex items-center gap-0.5">
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        iconOnly
+                        aria-label="Move up"
+                        disabled={index === 0 || fields.hasMore}
+                        leading={<ArrowUp />}
+                        onClick={() => void move(index, -1)}
+                      />
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        iconOnly
+                        aria-label="Move down"
+                        disabled={index === definitions.length - 1 || fields.hasMore}
+                        leading={<ArrowDown />}
+                        onClick={() => void move(index, 1)}
+                      />
+                      <Button variant="ghost" size="xs" iconOnly aria-label="Edit field" leading={<Pencil />} onClick={() => setEditing(field)} />
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        iconOnly
+                        aria-label="Archive field"
+                        leading={<Trash2 />}
+                        onClick={() => void archive.mutate(field.id).catch(() => {})}
+                      />
+                    </div>
+                    );
+                  }}
+                  empty={
+                    <EmptyState
+                      icon={ListChecks}
+                      title="No custom fields"
+                      description="Add one when your team starts asking the same follow-up question every time."
                     />
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      iconOnly
-                      aria-label="Move down"
-                      disabled={index === definitions.length - 1}
-                      leading={<ArrowDown />}
-                      onClick={() => void move(index, 1)}
-                    />
-                    <Button variant="ghost" size="xs" iconOnly aria-label="Edit field" leading={<Pencil />} onClick={() => setEditing(field)} />
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      iconOnly
-                      aria-label="Archive field"
-                      leading={<Trash2 />}
-                      onClick={() => void archive.mutate(field.id).catch(() => {})}
-                    />
-                  </div>
-                  );
-                }}
-                empty={
-                  <EmptyState
-                    icon={ListChecks}
-                    title="No custom fields"
-                    description="Add one when your team starts asking the same follow-up question every time."
-                  />
-                }
-              />
+                  }
+                />
+                {fields.hasMore && <div className="border-t border-line-subtle p-3"><p className="mb-2 text-center text-2xs text-fg-muted">Load every field before reordering.</p><div className="flex justify-center"><Button variant="secondary" size="sm" loading={fields.isFetching} onClick={() => void fields.fetchNext()}>Load more fields</Button></div></div>}
+              </>}
             </CardBody>
           </Card>
         </Section>
