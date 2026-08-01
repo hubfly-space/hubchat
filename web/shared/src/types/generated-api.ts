@@ -782,6 +782,7 @@ export type ApiOperationId =
   | "getWorkspaceUsage"
   | "linkConversation"
   | "linkFeedbackSupportWork"
+  | "listAllFeedbackItems"
   | "listAnalyticsNoResultSearches"
   | "listAnalyticsRollups"
   | "listAPIKeys"
@@ -1493,6 +1494,9 @@ export type ApiOperationCatalog = {
   "linkFeedbackSupportWork": { method: "POST"; path: "/v1/feedback/items/{id}/links"; request: {
   [key: string]: unknown;
 }; response: {
+  [key: string]: unknown;
+}; };
+  "listAllFeedbackItems": { method: "GET"; path: "/v1/feedback/items"; request: unknown; response: {
   [key: string]: unknown;
 }; };
   "listAnalyticsNoResultSearches": { method: "GET"; path: "/v1/analytics/searches/no-results"; request: unknown; response: ApiAnalyticsSearchTermPage; };

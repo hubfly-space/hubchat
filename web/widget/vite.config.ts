@@ -16,9 +16,8 @@ import { defineConfig } from "vite";
  *   app.js        — the interface. Fetched on first open, never on page load.
  *                   Mounted into a shadow root so no style crosses either way.
  *
- * CSS is inlined into the JS bundle rather than emitted as a separate file:
- * the shadow root needs the stylesheet as a string, and a second network
- * request for it would leave the panel unstyled for a frame.
+ * CSS is inlined into the JS bundle for the normal path and emitted as
+ * app.css for browsers where the host blocks inline Shadow DOM styles.
  */
 export default defineConfig({
   base: "/widget/",
@@ -56,6 +55,7 @@ export default defineConfig({
       entry: fileURLToPath(new URL("./src/main.tsx", import.meta.url)),
       formats: ["es"],
       fileName: () => "app.js",
+      cssFileName: "app",
     },
     rollupOptions: {
       output: {

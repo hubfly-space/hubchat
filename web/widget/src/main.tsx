@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Widget } from "./panel/Widget";
+import "./styles.css";
 import styles from "./styles.css?inline";
 import type { WidgetConfig } from "./types";
 
@@ -49,6 +50,17 @@ export function mount({
   document.body.appendChild(container);
 
   const shadow = container.attachShadow({ mode: "open" });
+
+  // The inline sheet is the fastest path, but some host CSPs reject style
+  // elements and older embedded browsers do not implement constructable
+  // stylesheets. The library build emits the same compiled CSS as
+  // `/widget/app.css`; a stylesheet link gives those browsers a standards-
+  // based fallback without allowing host-page CSS to cross the shadow root.
+  const externalStyles = document.createElement("link");
+  externalStyles.rel = "stylesheet";
+  externalStyles.href = `${host}/widget/app.css`;
+  externalStyles.setAttribute("data-hubchat-widget-external-styles", "true");
+  shadow.appendChild(externalStyles);
 
   // Keep the style tag as the portable path. Some embedded browsers expose
   // constructable stylesheets but do not reliably apply them to a shadow root
