@@ -77,7 +77,7 @@ export default function EventStream() {
     <Page>
       <PageHeader
         title="Event stream"
-        description="Application events arriving from the SDK, the REST API, and the widget."
+        description="Application events arriving from the SDK, the REST API, and the widget. Sensitive payload keys are redacted unless your role allows sensitive customer access."
         actions={
           <Button
             variant={live ? "secondary" : "primary"}

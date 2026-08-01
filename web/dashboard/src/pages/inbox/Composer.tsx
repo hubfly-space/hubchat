@@ -20,16 +20,11 @@ import {
   type Paginated,
 } from "@hubchat/shared";
 import {
-  Bold,
-  Italic,
-  Link2,
-  List,
   Lock,
   MessageSquare,
   MessageSquareReply,
   Paperclip,
   Send,
-  Smile,
   Zap,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -45,9 +40,8 @@ export type ComposerProps = {
   ticketNumber?: string;
   /**
    * Drafts autosave to localStorage under this key, per conversation, so a
-   * reload or a tab switch never loses what someone was typing. Formatting
-   * buttons remain intentionally presentation-only, while attachments and
-   * saved replies are real API-backed actions.
+   * reload or a tab switch never loses what someone was typing. Attachments
+   * and saved replies are real API-backed actions.
    */
   conversationId: string;
   onSend: (body: string, kind: ComposerMode, fileIDs: string[]) => Promise<void>;
@@ -275,28 +269,10 @@ export function Composer({ workspaceId, canUseMacros = false, customerName, tick
 
         <div className="flex items-center justify-between gap-2 border-t border-line-subtle px-2 py-1.5">
           <div className="flex items-center gap-0.5">
-            <Tooltip content="Bold" shortcut="mod+b">
-              <Button variant="ghost" size="xs" iconOnly aria-label="Bold" leading={<Bold />} />
-            </Tooltip>
-            <Tooltip content="Italic" shortcut="mod+i">
-              <Button variant="ghost" size="xs" iconOnly aria-label="Italic" leading={<Italic />} />
-            </Tooltip>
-            <Tooltip content="Link" shortcut="mod+shift+k">
-              <Button variant="ghost" size="xs" iconOnly aria-label="Insert link" leading={<Link2 />} />
-            </Tooltip>
-            <Tooltip content="List">
-              <Button variant="ghost" size="xs" iconOnly aria-label="Bulleted list" leading={<List />} />
-            </Tooltip>
-
-            <span className="mx-1 h-4 w-px bg-line" aria-hidden="true" />
-
             <Tooltip content="Attach file">
               <Button variant="ghost" size="xs" iconOnly aria-label="Attach file" loading={uploading} leading={<Paperclip />} onClick={() => fileInputRef.current?.click()} />
             </Tooltip>
             <input ref={fileInputRef} type="file" multiple className="sr-only" onChange={(event) => void chooseFiles(event.target.files)} />
-            <Tooltip content="Emoji">
-              <Button variant="ghost" size="xs" iconOnly aria-label="Insert emoji" leading={<Smile />} />
-            </Tooltip>
 
             {workspaceId && (
               <Menu>

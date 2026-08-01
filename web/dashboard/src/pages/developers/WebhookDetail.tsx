@@ -49,8 +49,12 @@ const EVENTS = [
   "customer.created",
   "customer.updated",
   "feedback.created",
+  "feedback.vote_recorded",
   "feedback.status_changed",
   "article.published",
+  "article.viewed",
+  "article.feedback_recorded",
+  "article.search_recorded",
   "changelog.published",
   "survey.response_created",
 ];
