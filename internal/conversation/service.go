@@ -133,6 +133,9 @@ func (s *Service) Start(
 		if err := s.repo.insert(ctx, tx, conversationID, workspaceID, inboxID, channel, subject, customerID, visitorID); err != nil {
 			return err
 		}
+		if err := s.routeNewConversation(ctx, tx, workspaceID, conversationID, inboxID, customerID); err != nil {
+			return err
+		}
 
 		if err := s.repo.lockConversation(ctx, tx, workspaceID, conversationID); err != nil {
 			return err

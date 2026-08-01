@@ -431,7 +431,13 @@ func (s *Service) CompanyCustomers(ctx context.Context, workspaceID, companyID s
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	return s.repo.companyCustomers(ctx, workspaceID, companyID, limit)
+	return s.List(ctx, workspaceID, ListFilter{CompanyID: companyID, Limit: limit})
+}
+
+// CompanyCustomersPage exposes the same stable customer-directory ordering for
+// a company's roster, so large accounts do not stop at the first 50 contacts.
+func (s *Service) CompanyCustomersPage(ctx context.Context, workspaceID, companyID string, before time.Time, beforeID string, limit int) ([]Customer, error) {
+	return s.List(ctx, workspaceID, ListFilter{CompanyID: companyID, Before: before, BeforeID: beforeID, Limit: limit})
 }
 
 func (s *Service) companyInWorkspace(ctx context.Context, workspaceID, companyID string) (bool, error) {
