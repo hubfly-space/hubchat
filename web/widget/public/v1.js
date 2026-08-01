@@ -76,15 +76,17 @@
 
   function boot(options) {
     if (state.booted) return;
-    state.booted = true;
-    state.config = options || {};
+    var nextConfig = options || {};
 
-    if (!state.config.key) {
+    if (!nextConfig.key) {
       if (window.console && console.warn) {
         console.warn("[hubchat] boot() requires a `key`.");
       }
       return;
     }
+
+    state.booted = true;
+    state.config = nextConfig;
 
     // Fetch the public configuration first. It is small, cacheable, and tells
     // us whether this origin is even allowed to render a launcher — so a
@@ -98,7 +100,8 @@
 
     fetch(url, { credentials: "omit" })
       .then(function (response) {
-        return response.ok ? response.json() : null;
+        if (!response.ok) throw new Error("widget configuration request failed");
+        return response.json();
       })
       .then(function (config) {
         if (!config || !config.enabled) return;
@@ -124,7 +127,12 @@
         }
       })
       .catch(function () {
-        /* Offline, blocked, or the workspace is down. Stay silent. */
+        // Keep boot retryable after a transient network failure. Calls made
+        // while the request was in flight remain queued and replay when a
+        // later boot succeeds; a broken support endpoint must not strand the
+        // host page in a permanently half-booted state.
+        state.booted = false;
+        state.config = null;
       });
   }
 

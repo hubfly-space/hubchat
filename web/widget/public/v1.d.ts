@@ -30,6 +30,12 @@ export type HubchatLifecycleEvent =
   | "conversation:started"
   | "unread:changed";
 
+export type HubchatLifecyclePayload =
+  | undefined
+  | { count: number }
+  | { id: string; body: string }
+  | { id: string };
+
 export interface HubchatSDK {
   (method: "boot", options: HubchatBootOptions): void;
   (method: "show" | "open" | "hide" | "close" | "toggle" | "reset"): void;
@@ -40,7 +46,7 @@ export interface HubchatSDK {
   (method: "startConversation", options?: { message?: string }): void;
   (method: "openArticle", options: { slug: string }): void;
   (method: "openForm" | "openTicketForm" | "openFeedback" | "openFeedbackForm", options?: { slug?: string }): void;
-  (method: "on", options: { event: HubchatLifecycleEvent; handler: (payload: unknown) => void }): void;
+  (method: "on", options: { event: HubchatLifecycleEvent; handler: (payload: HubchatLifecyclePayload) => void }): void;
   /** Commands queued by the loader before boot or lazy app loading completes. */
   q: Array<[string, unknown?]>;
 }
@@ -50,4 +56,3 @@ declare global {
     Hubchat: HubchatSDK;
   }
 }
-

@@ -16,6 +16,7 @@
 // Additive generated contract surface. Existing dashboard imports remain
 // stable while endpoint clients migrate to the OpenAPI-derived models.
 export type {
+  ApiCustomer360,
   ApiOperationId,
   ApiOperationCatalog,
   ApiRequest,
