@@ -35,9 +35,10 @@ func New(prefix string) string {
 // are free to use whatever reads clearly, because no client ever sees them.
 const (
 	// Accounts and tenancy.
-	PrefixUser         = "usr"
-	PrefixSession      = "ses"
-	PrefixOAuthAccount = "oau"
+	PrefixUser          = "usr"
+	PrefixSession       = "ses"
+	PrefixOAuthAccount  = "oau"
+	PrefixTrustedDevice = "tdv"
 	// Email verification tokens are never exposed; "evt" is the event log's.
 	PrefixEmailToken = "emv"
 	PrefixResetToken = "prt"
@@ -139,4 +140,5 @@ const (
 	PrefixFeatureFlag     = "flg"
 	PrefixExport          = "exp"
 	PrefixImport          = "imp"
+	PrefixLegalHold       = "lh"
 )

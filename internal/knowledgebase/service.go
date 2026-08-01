@@ -414,8 +414,33 @@ func (s *Service) FindArticleBySlug(ctx context.Context, workspaceID, knowledgeB
 }
 
 func (s *Service) GetPublishedBySlug(ctx context.Context, workspaceID, slug string) (*Article, error) {
+	return s.GetPublishedBySlugSurface(ctx, workspaceID, slug, "")
+}
+
+// GetPublishedBySlugSurface increments the published article view counter and
+// records the same committed action in the workspace event log. The surface is
+// an allowlisted reporting dimension (for example, portal or widget), not
+// arbitrary customer payload.
+func (s *Service) GetPublishedBySlugSurface(ctx context.Context, workspaceID, slug, surface string) (*Article, error) {
+	surface = normalizeSurface(surface)
 	var id string
-	err := s.pool.QueryRow(ctx, `UPDATE articles SET view_count=view_count+1 WHERE workspace_id=$1 AND slug=$2 AND state='published' RETURNING id`, workspaceID, strings.ToLower(strings.TrimSpace(slug))).Scan(&id)
+	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `UPDATE articles SET view_count=view_count+1 WHERE workspace_id=$1 AND slug=$2 AND state='published' RETURNING id`, workspaceID, strings.ToLower(strings.TrimSpace(slug))).Scan(&id); err != nil {
+			return err
+		}
+		if s.events == nil {
+			return nil
+		}
+		_, err := s.events.Append(ctx, tx, events.Event{
+			WorkspaceID: workspaceID,
+			Type:        events.ArticleViewed,
+			EntityType:  "article",
+			EntityID:    id,
+			ActorType:   events.ActorVisitor,
+			Data:        map[string]any{"surface": strings.TrimSpace(surface)},
+		})
+		return err
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -445,7 +470,20 @@ func (s *Service) RecordArticleFeedback(ctx context.Context, workspaceID, articl
 		if helpful {
 			column = "helpful_count"
 		}
-		_, err = tx.Exec(ctx, `UPDATE articles SET `+column+`=`+column+`+1,updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, articleID)
+		if _, err = tx.Exec(ctx, `UPDATE articles SET `+column+`=`+column+`+1,updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, articleID); err != nil {
+			return err
+		}
+		if s.events == nil {
+			return nil
+		}
+		_, err = s.events.Append(ctx, tx, events.Event{
+			WorkspaceID: workspaceID,
+			Type:        events.ArticleFeedbackRecorded,
+			EntityType:  "article",
+			EntityID:    articleID,
+			ActorType:   events.ActorVisitor,
+			Data:        map[string]any{"helpful": helpful},
+		})
 		return err
 	})
 }
@@ -776,17 +814,39 @@ func (s *Service) SearchPublished(ctx context.Context, workspaceID, kbSlug, coll
 	if surface == "" {
 		surface = "portal"
 	}
-	_, _ = s.pool.Exec(ctx, `INSERT INTO article_searches(id,workspace_id,query,result_count,language,surface) VALUES($1,$2,$3,$4,NULLIF($5,''),$6)`, ids.New(ids.PrefixArticleSearch), workspaceID, strings.TrimSpace(query), len(result), language, surface)
+	s.RecordSearch(ctx, workspaceID, query, language, surface, len(result))
 	return result, nil
 }
 
 // RecordSearch records one logical public search. Paginated follow-up requests
 // deliberately do not create duplicate analytics rows.
 func (s *Service) RecordSearch(ctx context.Context, workspaceID, query, language, surface string, resultCount int) {
-	if surface == "" {
-		surface = "portal"
+	surface = normalizeSurface(surface)
+	_ = database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `INSERT INTO article_searches(id,workspace_id,query,result_count,language,surface) VALUES($1,$2,$3,$4,NULLIF($5,''),$6)`, ids.New(ids.PrefixArticleSearch), workspaceID, strings.TrimSpace(query), resultCount, language, surface); err != nil {
+			return err
+		}
+		if s.events == nil {
+			return nil
+		}
+		_, err := s.events.Append(ctx, tx, events.Event{
+			WorkspaceID: workspaceID,
+			Type:        events.ArticleSearchRecorded,
+			EntityType:  "article_search",
+			ActorType:   events.ActorVisitor,
+			Data:        map[string]any{"result_count": resultCount, "surface": surface},
+		})
+		return err
+	})
+}
+
+func normalizeSurface(surface string) string {
+	switch strings.ToLower(strings.TrimSpace(surface)) {
+	case "widget":
+		return "widget"
+	default:
+		return "portal"
 	}
-	_, _ = s.pool.Exec(ctx, `INSERT INTO article_searches(id,workspace_id,query,result_count,language,surface) VALUES($1,$2,$3,$4,NULLIF($5,''),$6)`, ids.New(ids.PrefixArticleSearch), workspaceID, strings.TrimSpace(query), resultCount, language, surface)
 }
 
 func (s *Service) SearchPublishedPage(ctx context.Context, workspaceID, kbSlug, collectionSlug, query, language string, beforeRank *float32, before time.Time, beforeID string, limit int) ([]SearchResult, error) {

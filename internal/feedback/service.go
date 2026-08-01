@@ -813,7 +813,21 @@ func (s *Service) Vote(ctx context.Context, workspaceID, itemID, customerID stri
 		if _, err := tx.Exec(ctx, `INSERT INTO feedback_votes(item_id,customer_id,workspace_id) VALUES($1,$2,$3)`, itemID, customerID, workspaceID); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `UPDATE feedback_items SET vote_count=vote_count+1,updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, itemID)
+		if _, err := tx.Exec(ctx, `UPDATE feedback_items SET vote_count=vote_count+1,updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, itemID); err != nil {
+			return err
+		}
+		if s.events == nil {
+			return nil
+		}
+		_, err := s.events.Append(ctx, tx, events.Event{
+			WorkspaceID: workspaceID,
+			Type:        events.FeedbackVoteRecorded,
+			EntityType:  "feedback_item",
+			EntityID:    itemID,
+			ActorType:   events.ActorCustomer,
+			ActorID:     customerID,
+			Data:        map[string]any{"board_id": boardID},
+		})
 		return err
 	})
 }
