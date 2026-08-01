@@ -20,12 +20,14 @@ import {
   Page,
   PageBody,
   PageHeader,
+  Pagination,
   Section,
   Tooltip,
   useMutation,
-  useQuery,
+  useInfinite,
   formatRelativeShort,
   type Widget,
+  type Paginated,
 } from "@hubchat/shared";
 import { Copy, Globe, MoreHorizontal, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -36,8 +38,8 @@ export default function WidgetList() {
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
 
-  const list = useQuery<{ data: Widget[] }>(["widgets"], (signal) => api.get("/widgets", { signal }));
-  const widgets = list.data?.data ?? [];
+  const list = useInfinite<Widget>(["widgets"], (cursor, signal) => api.get<Paginated<Widget>>(`/widgets?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
+  const widgets = list.items;
 
   const remove = useMutation<string, unknown>((id) => api.delete(`/widgets/${id}`), {
     invalidates: [["widgets"]],
@@ -57,7 +59,7 @@ export default function WidgetList() {
 
       <PageBody>
         <Section>
-          {list.isLoading ? null : widgets.length === 0 ? (
+          {list.isLoading ? <p className="p-4 text-sm text-fg-muted">Loading widgets…</p> : list.error ? <Callout tone="danger">{list.error instanceof ApiError ? list.error.message : "Could not load widgets."}</Callout> : widgets.length === 0 ? (
             <EmptyState
               icon={Sparkles}
               title="No widgets yet"
@@ -158,6 +160,7 @@ export default function WidgetList() {
                   </CardBody>
                 </Card>
               ))}
+              {list.hasMore && <Pagination hasPrevious={false} hasNext onPrevious={() => undefined} onNext={() => void list.fetchNext()} summary={`${widgets.length} widgets loaded`} />}
             </div>
           )}
         </Section>

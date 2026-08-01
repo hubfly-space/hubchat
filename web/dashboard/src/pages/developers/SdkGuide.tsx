@@ -13,7 +13,9 @@ import {
   Tabs,
   TabsContent,
   TabsList,
+  useAllPages,
   useQuery,
+  type Paginated,
   type Widget,
 } from "@hubchat/shared";
 import { ShieldAlert } from "lucide-react";
@@ -40,8 +42,8 @@ export default function SdkGuide() {
   const deploymentOrigin = window.location.origin;
   const websocketOrigin = deploymentOrigin.replace(/^http/, "ws");
 
-  const widgets = useQuery<{ data: Widget[] }>(["widgets"], (signal) => api.get("/widgets", { signal }));
-  const widget = widgets.data?.data[0];
+  const widgets = useAllPages<Widget>(["widgets", "lookup"], (cursor, signal) => api.get<Paginated<Widget>>(`/widgets?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
+  const widget = widgets.items[0];
   const publicKey = widget?.public_key ?? "pk_…";
 
   const secret = useQuery<{ secret: string }>(

@@ -21,8 +21,8 @@ import {
   TagChip,
   Toolbar,
   downloadFile,
+  useAllPages,
   useInfinite,
-  useQuery,
   useToast,
   formatRelativeShort,
   type Column,
@@ -71,8 +71,8 @@ export default function CustomerList() {
   const [conditions, setConditions] = useState<FilterCondition[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  const companies = useQuery<{ data: Company[] }>(["companies", "picker"], (signal) =>
-    api.get("/companies?limit=100", { signal }),
+  const companies = useAllPages<Company>(["companies", "picker", "lookup"], (cursor, signal) =>
+    api.get<Paginated<Company>>(`/companies?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }),
   );
 
   const filterFields: FilterFieldDef[] = useMemo(
@@ -100,10 +100,10 @@ export default function CustomerList() {
         label: "Company",
         icon: <Users />,
         operators: ["is"],
-        options: (companies.data?.data ?? []).map((c) => ({ value: c.id, label: c.name })),
+        options: companies.items.map((c) => ({ value: c.id, label: c.name })),
       },
     ],
-    [tags, companies.data],
+    [tags, companies.items],
   );
 
   const filterParams = useMemo(() => {
@@ -118,7 +118,7 @@ export default function CustomerList() {
     return api.get<Paginated<Customer>>(`/customers?${params.toString()}`, { signal });
   });
 
-  const companyById = useMemo(() => new Map((companies.data?.data ?? []).map((c) => [c.id, c])), [companies.data]);
+  const companyById = useMemo(() => new Map(companies.items.map((c) => [c.id, c])), [companies.items]);
   const memberById = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
 
   const [bulkPending, setBulkPending] = useState(false);
