@@ -24,7 +24,8 @@ import {
   Page,
   PageBody,
   PageHeader,
-  QueryBoundary,
+  Pagination,
+  Pagination,
   RadioGroup,
   SearchInput,
   Switch,
@@ -35,12 +36,15 @@ import {
   Tooltip,
   formatRelativeShort,
   invalidate,
+  useInfinite,
   useMutation,
   useQuery,
   type BadgeTone,
   type Column,
   type Member,
   type MemberRole,
+  type Paginated,
+  type Paginated,
   type Team,
 } from "@hubchat/shared";
 import { MoreHorizontal, ShieldAlert, UserMinus, UserPlus, UsersRound } from "lucide-react";
@@ -73,9 +77,13 @@ export default function Members() {
   const [query, setQuery] = useState("");
   const [managingTeamsFor, setManagingTeamsFor] = useState<Member | null>(null);
 
-  const members = useQuery<{ data: Member[] }>(["members"], (signal) => api.get("/members", { signal }));
+  const members = useInfinite<Member>(["members", query], (cursor, signal) => {
+    const params = new URLSearchParams({ q: query, limit: "50" });
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<Member>>(`/members?${params.toString()}`, { signal });
+  });
   const teams = useQuery<{ data: Team[] }>(["teams"], (signal) => api.get("/teams", { signal }));
-  const invites = useQuery<{ data: Invite[] }>(["invites"], (signal) => api.get("/invites", { signal }));
+  const invites = useInfinite<Invite>(["invites"], (cursor, signal) => api.get<Paginated<Invite>>(`/invites?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
 
   const setRole = useMutation<{ id: string; role: string }, unknown>(
     ({ id, role }) => api.patch(`/members/${id}/role`, { role }),
@@ -92,9 +100,7 @@ export default function Members() {
 
   const teamById = new Map((teams.data?.data ?? []).map((team) => [team.id, team]));
 
-  const rows = (members.data?.data ?? []).filter((member) =>
-    `${member.name} ${member.email}`.toLowerCase().includes(query.toLowerCase()),
-  );
+  const rows = members.items;
 
   const columns: Column<Member>[] = [
     {
@@ -175,7 +181,7 @@ export default function Members() {
             <TabsList
               items={[
                 { value: "active", label: "Active", count: rows.length },
-                { value: "invites", label: "Pending invites", count: invites.data?.data.length ?? 0 },
+                { value: "invites", label: "Pending invites", count: invites.items.length },
               ]}
             />
           </Tabs>
@@ -210,8 +216,7 @@ export default function Members() {
 
         <Tabs value={tab} onValueChange={setTab}>
           <TabsContent value="active">
-            <QueryBoundary query={members}>
-              {() => (
+            {members.isLoading ? <p className="p-4 text-sm text-fg-muted">Loading members…</p> : members.error ? <Callout tone="danger">{members.error instanceof ApiError ? members.error.message : "Could not load members."}</Callout> : (
                 <Card>
                   <CardBody className="p-0">
                     <DataTable
@@ -263,9 +268,9 @@ export default function Members() {
                       empty={<EmptyState icon={UsersRound} title="No members match" description="Try a different search." />}
                     />
                   </CardBody>
+                  {members.hasMore && <Pagination hasPrevious={false} hasNext onPrevious={() => undefined} onNext={() => void members.fetchNext()} summary={`${rows.length} members loaded`} />}
                 </Card>
               )}
-            </QueryBoundary>
 
             <Callout tone="info" className="mt-4" icon={<ShieldAlert />}>
               Roles are bundles of capabilities. What a role can actually do is enforced in the
@@ -275,15 +280,14 @@ export default function Members() {
           </TabsContent>
 
           <TabsContent value="invites">
-            <QueryBoundary query={invites}>
-              {({ data }) => (
+            {invites.isLoading ? <p className="p-4 text-sm text-fg-muted">Loading invitations…</p> : invites.error ? <Callout tone="danger">{invites.error instanceof ApiError ? invites.error.message : "Could not load invitations."}</Callout> : (
                 <Card>
                   <CardBody className="p-0">
-                    {data.length === 0 ? (
+                    {invites.items.length === 0 ? (
                       <EmptyState icon={UserPlus} size="sm" title="No pending invitations" />
                     ) : (
                       <ul className="divide-y divide-line-subtle">
-                        {data.map((invite) => (
+                        {invites.items.map((invite) => (
                           <li key={invite.id} className="flex items-center gap-3 px-4 py-3">
                             <span className="min-w-0 flex-1">
                               <span className="block truncate text-sm text-fg">{invite.email}</span>
@@ -305,9 +309,9 @@ export default function Members() {
                       </ul>
                     )}
                   </CardBody>
+                  {invites.hasMore && <Pagination hasPrevious={false} hasNext onPrevious={() => undefined} onNext={() => void invites.fetchNext()} summary={`${invites.items.length} invitations loaded`} />}
                 </Card>
               )}
-            </QueryBoundary>
           </TabsContent>
         </Tabs>
       </PageBody>

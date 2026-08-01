@@ -27,7 +27,7 @@ import {
   type Job,
   type Paginated,
 } from "@hubchat/shared";
-import { Activity, Ban, RotateCcw } from "lucide-react";
+import { Activity, Ban, RotateCcw, Webhook } from "lucide-react";
 import { useState } from "react";
 
 const STATE: Record<Job["state"], { label: string; tone: BadgeTone }> = {
@@ -46,6 +46,15 @@ type JobSummary = {
   dead: number;
 };
 
+type OpsSummary = {
+  jobs: JobSummary;
+  webhooks: { pending: number; failed_24h: number; exhausted: number; auto_disabled: number };
+  email: { mailboxes: number; delivery_errors_24h: number; bounces_24h: number; suppressions: number };
+  storage: { backend: string; committed_files: number; bytes: number; pending_uploads: number };
+  realtime: { connections: number };
+  computed_at: string;
+};
+
 /** Background job inspection (§8.7). */
 export default function Jobs() {
   const [filter, setFilter] = useState<"all" | Job["state"]>("all");
@@ -59,11 +68,12 @@ export default function Jobs() {
     },
   );
   const summary = useQuery<JobSummary>(["jobs-summary"], (signal) => api.get("/jobs/summary", { signal }));
-  const retry = useMutation<string, unknown>((id) => api.post(`/jobs/${encodeURIComponent(id)}/retry`), { invalidates: [["jobs"], ["jobs-summary"]] });
-  const cancel = useMutation<string, unknown>((id) => api.post(`/jobs/${encodeURIComponent(id)}/cancel`), { invalidates: [["jobs"], ["jobs-summary"]] });
+  const ops = useQuery<OpsSummary>(["ops-summary"], (signal) => api.get("/ops/summary", { signal }));
+  const retry = useMutation<string, unknown>((id) => api.post(`/jobs/${encodeURIComponent(id)}/retry`), { invalidates: [["jobs"], ["jobs-summary"], ["ops-summary"]] });
+  const cancel = useMutation<string, unknown>((id) => api.post(`/jobs/${encodeURIComponent(id)}/cancel`), { invalidates: [["jobs"], ["jobs-summary"], ["ops-summary"]] });
   const [cancelling, setCancelling] = useState<Job | null>(null);
   const rows = jobs.items;
-  const dead = summary.data?.dead ?? 0;
+  const dead = ops.data?.jobs.dead ?? summary.data?.dead ?? 0;
 
   const columns: Column<Job>[] = [
     {
@@ -132,6 +142,13 @@ export default function Jobs() {
       />
 
       <PageBody width="full">
+        {ops.error ? (
+          <Callout tone="warning" className="mb-5" title="Operational health is unavailable">
+            Queue controls are still available, but webhook, email, storage, and realtime health could not be loaded.{" "}
+            <Button variant="ghost" size="xs" onClick={ops.refetch}>Try again</Button>
+          </Callout>
+        ) : null}
+
         {dead > 0 && (
           <Callout
             tone="danger"
@@ -142,6 +159,22 @@ export default function Jobs() {
             not blocking the rest of the queue.
           </Callout>
         )}
+
+        {ops.data && <Section title="Operational health" description={"Workspace services as of " + new Date(ops.data.computed_at).toLocaleString() + ". Counts are scoped to this workspace."}>
+          <Card>
+            <CardBody className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+              <Metric label="Realtime connections" value={ops.data.realtime.connections} definition="Currently connected dashboard, portal, and widget sessions on this process." />
+              <Metric label="Webhook failures (24h)" value={ops.data.webhooks.failed_24h} higherIsBetter={false} definition="Webhook deliveries that failed in the last 24 hours." />
+              <Metric label="Email errors (24h)" value={ops.data.email.delivery_errors_24h} higherIsBetter={false} definition="Provider delivery failures and bounces recorded in the last 24 hours." />
+              <Metric label="Storage" value={ops.data.storage.bytes.toLocaleString() + " bytes"} definition={ops.data.storage.committed_files + " committed files on the " + ops.data.storage.backend + " backend."} />
+            </CardBody>
+            {(ops.data.webhooks.exhausted > 0 || ops.data.webhooks.auto_disabled > 0 || ops.data.storage.pending_uploads > 0) && <div className="border-t border-line px-5 py-3 text-xs text-fg-muted">
+              {ops.data.webhooks.exhausted > 0 && <span className="mr-4"><Webhook className="mr-1 inline size-3.5" />{ops.data.webhooks.exhausted} exhausted webhook deliveries</span>}
+              {ops.data.webhooks.auto_disabled > 0 && <span className="mr-4">{ops.data.webhooks.auto_disabled} webhook endpoint{ops.data.webhooks.auto_disabled === 1 ? "" : "s"} auto-disabled</span>}
+              {ops.data.storage.pending_uploads > 0 && <span>{ops.data.storage.pending_uploads} pending upload{ops.data.storage.pending_uploads === 1 ? "" : "s"}</span>}
+            </div>}
+          </Card>
+        </Section>}
 
         {jobs.error ? <EmptyState icon={Activity} title="Job queue unavailable" description={jobs.error instanceof ApiError ? jobs.error.message : "Try again in a moment."} action={<Button variant="secondary" size="sm" onClick={jobs.refetch}>Try again</Button>} /> : <Section>
           <Card>

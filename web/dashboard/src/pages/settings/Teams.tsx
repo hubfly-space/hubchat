@@ -16,7 +16,7 @@ import {
   Page,
   PageBody,
   PageHeader,
-  QueryBoundary,
+  Pagination,
   Section,
   Select,
   SettingsRow,
@@ -24,10 +24,12 @@ import {
   cn,
   invalidate,
   useMutation,
+  useInfinite,
   useQuery,
   type Member,
   type RoutingStrategy,
   type Team,
+  type Paginated,
 } from "@hubchat/shared";
 import { Plus, Trash2, Users } from "lucide-react";
 import { useState } from "react";
@@ -47,10 +49,10 @@ export default function Teams() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
-  const teams = useQuery<{ data: Team[] }>(["teams"], (signal) => api.get("/teams", { signal }));
+  const teams = useInfinite<Team>(["teams"], (cursor, signal) => api.get<Paginated<Team>>(`/teams?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
   const members = useQuery<{ data: Member[] }>(["members"], (signal) => api.get("/members", { signal }));
 
-  const list = teams.data?.data ?? [];
+  const list = teams.items;
   const active = list.find((team) => team.id === activeId) ?? list[0] ?? null;
 
   return (
@@ -66,8 +68,7 @@ export default function Teams() {
       />
 
       <PageBody>
-        <QueryBoundary query={teams}>
-          {() =>
+        {teams.isLoading ? <p className="p-4 text-sm text-fg-muted">Loading teams…</p> : teams.error ? <Callout tone="danger">{teams.error instanceof ApiError ? teams.error.message : "Could not load teams."}</Callout> : (
             list.length === 0 ? (
               <EmptyState icon={Users} title="No teams yet" description="Create one to start routing work." />
             ) : (
@@ -99,8 +100,8 @@ export default function Teams() {
                 </div>
               </div>
             )
-          }
-        </QueryBoundary>
+          )}
+        {teams.hasMore && <Pagination hasPrevious={false} hasNext onPrevious={() => undefined} onNext={() => void teams.fetchNext()} summary={`${list.length} teams loaded`} />}
       </PageBody>
 
       {creating ? (
@@ -178,10 +179,13 @@ function TeamDetail({ team, members, onDeleted }: { team: Team; members: Member[
   const [description, setDescription] = useState(team.description ?? "");
   const [leadId, setLeadId] = useState(team.lead_id ?? "");
   const [routing, setRouting] = useState<RoutingStrategy>(team.routing_strategy);
+  const [languages, setLanguages] = useState((team.routing_config?.languages ?? []).join(", "));
+  const [attributes, setAttributes] = useState(JSON.stringify(team.routing_config?.attributes ?? {}, null, 2));
+  const [routingConfigError, setRoutingConfigError] = useState("");
   const [addingMember, setAddingMember] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
-  const save = useMutation<{ name: string; description: string | null; lead_id: string | null; routing_strategy: RoutingStrategy }, unknown>(
+  const save = useMutation<{ name: string; description: string | null; lead_id: string | null; routing_strategy: RoutingStrategy; routing_config: { languages: string[]; attributes: Record<string, string[]> } }, unknown>(
     (body) => api.patch(`/teams/${team.id}`, body),
     { invalidates: [["teams"]] },
   );
@@ -199,6 +203,7 @@ function TeamDetail({ team, members, onDeleted }: { team: Team; members: Member[
     description.trim() !== (team.description ?? "") ||
     leadId !== (team.lead_id ?? "") ||
     routing !== team.routing_strategy;
+  const routingDirty = languages.trim() !== (team.routing_config?.languages ?? []).join(", ") || attributes.trim() !== JSON.stringify(team.routing_config?.attributes ?? {}, null, 2);
 
   return (
     <>
@@ -218,9 +223,9 @@ function TeamDetail({ team, members, onDeleted }: { team: Team; members: Member[
       >
         <Card>
           <CardBody className="space-y-3 pt-0">
-            {save.error ? (
+            {save.error || routingConfigError ? (
               <Callout tone="danger">
-                {save.error instanceof ApiError ? save.error.message : "Could not save this team."}
+                {routingConfigError || (save.error instanceof ApiError ? save.error.message : "Could not save this team.")}
               </Callout>
             ) : null}
             {save.isSuccess ? <Callout tone="success">Saved.</Callout> : null}
@@ -245,7 +250,7 @@ function TeamDetail({ team, members, onDeleted }: { team: Team; members: Member[
 
             <SettingsRow
               label="Routing strategy"
-              description="How work is distributed when a rule assigns to this team rather than a person."
+              description="How new conversations are distributed when this team is attached to an inbox."
             >
               <Select
                 size="sm"
@@ -256,19 +261,32 @@ function TeamDetail({ team, members, onDeleted }: { team: Team; members: Member[
               />
             </SettingsRow>
 
+            <SettingsRow label="Languages" description="Optional comma-separated customer languages this team accepts, for example en, fr. Leave empty to match any language.">
+              <Input inputSize="sm" value={languages} onChange={(event) => setLanguages(event.target.value)} placeholder="en, fr" />
+            </SettingsRow>
+
+            <SettingsRow label="Customer attributes" description={'Optional JSON map of attribute keys to accepted values, for example {"plan":["enterprise"]}.'}>
+              <Textarea rows={3} className="font-mono text-xs" value={attributes} onChange={(event) => setAttributes(event.target.value)} />
+            </SettingsRow>
+
             <div className="flex justify-end pt-1">
               <Button
                 variant="primary"
                 size="sm"
-                disabled={!dirty}
+                disabled={!dirty && !routingDirty}
                 loading={save.isPending}
                 onClick={() =>
-                  void save.mutate({
-                    name: name.trim(),
-                    description: description.trim() || null,
-                    lead_id: leadId || null,
-                    routing_strategy: routing,
-                  })
+                  void (() => {
+                    try {
+                      const parsed = JSON.parse(attributes || "{}");
+                      if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("Attributes must be a JSON object.");
+                      setRoutingConfigError("");
+                      void save.mutate({
+                        name: name.trim(), description: description.trim() || null, lead_id: leadId || null, routing_strategy: routing,
+                        routing_config: { languages: [...new Set(languages.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean))], attributes: parsed as Record<string, string[]> },
+                      });
+                    } catch { setRoutingConfigError("Customer attributes must be a valid JSON object."); }
+                  })()
                 }
               >
                 Save changes

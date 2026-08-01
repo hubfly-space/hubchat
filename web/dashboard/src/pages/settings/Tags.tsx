@@ -16,7 +16,7 @@ import {
   Page,
   PageBody,
   PageHeader,
-  QueryBoundary,
+  Pagination,
   SearchInput,
   Section,
   Select,
@@ -25,8 +25,9 @@ import {
   cn,
   formatCompact,
   useMutation,
-  useQuery,
+  useInfinite,
   type Column,
+  type Paginated,
   type Tag,
 } from "@hubchat/shared";
 import { Combine, Plus, Tags as TagsIcon, Trash2 } from "lucide-react";
@@ -40,8 +41,12 @@ export default function Tags() {
   const [merging, setMerging] = useState<Tag | null>(null);
   const [deleting, setDeleting] = useState<Tag | null>(null);
 
-  const tags = useQuery<{ data: Tag[] }>(["tags"], (signal) => api.get("/tags", { signal }));
-  const rows = (tags.data?.data ?? []).filter((tag) => tag.name.toLowerCase().includes(query.toLowerCase()));
+  const tags = useInfinite<Tag>(["tags", query], (cursor, signal) => {
+    const params = new URLSearchParams({ q: query, limit: "50" });
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<Tag>>(`/tags?${params.toString()}`, { signal });
+  });
+  const rows = tags.items;
 
   const columns: Column<Tag>[] = [
     {
@@ -84,9 +89,9 @@ export default function Tags() {
           it repoints every usage at the surviving tag and keeps the history intact.
         </Callout>
 
-        <QueryBoundary query={tags}>
-          {() => (
-            <Section>
+        <Section>
+          {tags.isLoading ? <p className="p-4 text-sm text-fg-muted">Loading tags…</p> : tags.error ? <Callout tone="danger">{tags.error instanceof ApiError ? tags.error.message : "Could not load tags."}</Callout> : (
+            <>
               <Card>
                 <CardBody className="p-0">
                   <DataTable
@@ -124,9 +129,10 @@ export default function Tags() {
                   />
                 </CardBody>
               </Card>
-            </Section>
+              {tags.hasMore && <Pagination hasPrevious={false} hasNext onPrevious={() => undefined} onNext={() => void tags.fetchNext()} summary={`${rows.length} tags loaded`} />}
+            </>
           )}
-        </QueryBoundary>
+        </Section>
       </PageBody>
 
       {merging ? (
@@ -310,4 +316,3 @@ function DeleteTagDialog({ tag, onClose }: { tag: Tag; onClose: () => void }) {
     </Dialog>
   );
 }
-
