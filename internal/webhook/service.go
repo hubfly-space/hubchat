@@ -114,6 +114,29 @@ func New(pool *database.Pool, secretKey []byte, queue *jobs.Client) *Service {
 	}
 }
 
+// RetentionSweep removes completed delivery history past each workspace's
+// configured window. Pending deliveries are never removed by retention: they
+// are operational work, not history, and must remain retryable.
+func (s *Service) RetentionSweep(ctx context.Context) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM webhook_deliveries d
+		USING workspaces w
+		WHERE d.workspace_id = w.id
+		  AND d.status IN ('delivered', 'failed', 'exhausted', 'cancelled')
+		  AND coalesce((w.settings #>> '{privacy,retention_days,webhook_deliveries}')::int, 0) > 0
+		  AND d.created_at < now() - make_interval(days => (w.settings #>> '{privacy,retention_days,webhook_deliveries}')::int)
+		  AND NOT EXISTS (
+				SELECT 1 FROM workspace_legal_holds lh
+				WHERE lh.workspace_id = w.id AND lh.released_at IS NULL
+				  AND lh.category IN ('all', 'webhooks')
+			)
+	`)
+	if err != nil {
+		return 0, fmt.Errorf("webhook: retention sweep: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 func (s *Service) Create(ctx context.Context, workspaceID, memberID string, input Input) (*Created, error) {
 	endpointURL, err := validateURL(input.URL)
 	if err != nil {

@@ -144,6 +144,69 @@ func New(pool *database.Pool, options ...Options) *Service {
 	return service
 }
 
+// RetentionSweep removes submitted responses past each workspace's configured
+// survey window. Answers cascade with the response; aggregate reports remain
+// deterministic over the retained response set.
+func (s *Service) RetentionSweep(ctx context.Context) (int64, error) {
+	var deleted int64
+	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			WITH deleted AS (
+				DELETE FROM survey_responses r
+				USING workspaces w
+				WHERE r.workspace_id = w.id
+				  AND r.submitted_at IS NOT NULL
+				  AND coalesce((w.settings #>> '{privacy,retention_days,survey_responses}')::int, 0) > 0
+				  AND r.submitted_at < now() - make_interval(days => (w.settings #>> '{privacy,retention_days,survey_responses}')::int)
+				  AND NOT EXISTS (
+						SELECT 1 FROM workspace_legal_holds lh
+						WHERE lh.workspace_id = w.id AND lh.released_at IS NULL
+						  AND lh.category IN ('all', 'surveys')
+					)
+				RETURNING r.workspace_id, r.survey_id
+			)
+			SELECT workspace_id, survey_id, count(*) FROM deleted GROUP BY workspace_id, survey_id
+		`)
+		if err != nil {
+			return fmt.Errorf("survey: retention delete: %w", err)
+		}
+		type retentionCount struct {
+			workspaceID string
+			surveyID    string
+			count       int64
+		}
+		counts := make([]retentionCount, 0)
+		for rows.Next() {
+			var workspaceID, surveyID string
+			var count int64
+			if err := rows.Scan(&workspaceID, &surveyID, &count); err != nil {
+				return fmt.Errorf("survey: retention counts: %w", err)
+			}
+			deleted += count
+			counts = append(counts, retentionCount{workspaceID: workspaceID, surveyID: surveyID, count: count})
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		for _, item := range counts {
+			if _, err := tx.Exec(ctx, `
+				UPDATE surveys
+				SET response_count = greatest(0, response_count - $3), updated_at = now()
+				WHERE workspace_id = $1 AND id = $2
+			`, item.workspaceID, item.surveyID, item.count); err != nil {
+				return fmt.Errorf("survey: update retention count: %w", err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return deleted, nil
+}
+
 func (s *Service) Create(ctx context.Context, workspaceID string, input Input) (*Survey, error) {
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
@@ -274,6 +337,11 @@ func (s *Service) NotifyTicketResolution(ctx context.Context, workspaceID, ticke
 		WHERE t.workspace_id=$1 AND t.id=$2
 		  AND NULLIF(c.email::text,'') IS NOT NULL
 		  AND coalesce(preferences.surveys,true)
+		  AND NOT EXISTS (
+			SELECT 1 FROM email_suppressions suppression
+			WHERE suppression.workspace_id=c.workspace_id
+			  AND suppression.address::text=c.email::text
+		  )
 	`, workspaceID, ticketID).Scan(&customerID, &email, &name, &number, &title, &agentID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
