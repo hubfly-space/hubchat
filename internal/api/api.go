@@ -251,6 +251,22 @@ func requireActor(deps Deps, next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		settings, err := deps.Workspace.GetSettings(r.Context(), workspaceID)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load workspace security policy.")
+			return
+		}
+		if settings.Security.RequireSSO && user.AuthMethod != auth.AuthMethodOAuth {
+			// Do not leave a valid password session attached to a workspace that
+			// requires organization SSO. Clearing the browser cookie makes the
+			// dashboard's existing 401 flow return to the provider button while
+			// preserving the server-side session for other workspaces.
+			httpserver.ClearSessionCookie(w, deps.CookieDomain, deps.CookieSecure)
+			httpserver.WriteError(w, r, http.StatusUnauthorized, httpserver.CodeUnauthorized,
+				"This workspace requires organization SSO. Sign in with your provider.")
+			return
+		}
+
 		ctx := authorization.WithActor(r.Context(), actor)
 		next(w, r.WithContext(ctx))
 	}

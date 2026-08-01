@@ -2,8 +2,8 @@ package api
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -26,6 +26,8 @@ func registerAuthFlowRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /v1/auth/magic-link/redeem", handleRedeemMagicLink(deps))
 	mux.HandleFunc("POST /v1/auth/verify-email", handleVerifyEmail(deps))
 	mux.HandleFunc("POST /v1/auth/totp/challenge", handleVerifyTOTPChallenge(deps))
+	mux.HandleFunc("GET /v1/auth/oauth/{provider}/start", handleOAuthStart(deps))
+	mux.HandleFunc("GET /v1/auth/oauth/{provider}/callback", handleOAuthCallback(deps))
 
 	// Authenticated.
 	mux.HandleFunc("POST /v1/auth/verify-email/resend", requireUser(deps, handleResendVerification(deps)))
@@ -37,7 +39,101 @@ func registerAuthFlowRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /v1/auth/totp/begin", requireUser(deps, handleBeginTOTP(deps)))
 	mux.HandleFunc("POST /v1/auth/totp/complete", requireUser(deps, handleCompleteTOTP(deps)))
 	mux.HandleFunc("POST /v1/auth/totp/disable", requireUser(deps, handleDisableTOTP(deps)))
+	mux.HandleFunc("GET /v1/auth/trusted-devices", requireUser(deps, handleListTrustedDevices(deps)))
+	mux.HandleFunc("DELETE /v1/auth/trusted-devices/{id}", requireUser(deps, handleRevokeTrustedDevice(deps)))
+	mux.HandleFunc("POST /v1/auth/trusted-devices/revoke-all", requireUser(deps, handleRevokeAllTrustedDevices(deps)))
 	mux.HandleFunc("PATCH /v1/auth/profile", requireUser(deps, handleUpdateProfile(deps)))
+}
+
+func handleOAuthStart(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		configured := deps.Auth.OAuthProvider()
+		if configured == nil || configured.Provider != r.PathValue("provider") || deps.PublicURL == nil {
+			http.Redirect(w, r, oauthFailureURL(deps, "unavailable"), http.StatusFound)
+			return
+		}
+		stateURL, _, err := deps.Auth.BeginOAuth(r.Context(), safeNext(r.URL.Query().Get("next")))
+		if err != nil {
+			deps.Logger.Error("starting oauth sign-in failed", "error", err)
+			http.Redirect(w, r, oauthFailureURL(deps, "unavailable"), http.StatusFound)
+			return
+		}
+		http.Redirect(w, r, stateURL, http.StatusFound)
+	}
+}
+
+func handleOAuthCallback(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		configured := deps.Auth.OAuthProvider()
+		if configured == nil || configured.Provider != r.PathValue("provider") {
+			http.Redirect(w, r, oauthFailureURL(deps, "unavailable"), http.StatusFound)
+			return
+		}
+		if r.URL.Query().Get("error") != "" {
+			http.Redirect(w, r, oauthFailureURL(deps, "cancelled"), http.StatusFound)
+			return
+		}
+		result, err := deps.Auth.CompleteOAuthWithTrustedDevice(r.Context(), r.URL.Query().Get("state"), r.URL.Query().Get("code"), r.UserAgent(), clientIP(r), httpserver.TrustedDeviceToken(r))
+		if err != nil {
+			deps.Logger.Warn("oauth sign-in failed", "provider", configured.Provider, "error", err)
+			http.Redirect(w, r, oauthFailureURL(deps, oauthErrorCode(err)), http.StatusFound)
+			return
+		}
+		if result.Challenge != nil {
+			target := safeNext(result.Redirect)
+			if target == "" {
+				target = "/overview"
+			}
+			httpserver.SetTOTPChallengeCookie(w, result.Challenge.Token, 5*60, deps.CookieDomain, deps.CookieSecure)
+			challenge := url.Values{}
+			challenge.Set("pending", "1")
+			challenge.Set("next", target)
+			http.Redirect(w, r, dashboardURL(deps, "/two-factor", challenge), http.StatusFound)
+			return
+		}
+		if result.TrustedDevice != nil {
+			httpserver.SetTrustedDeviceCookie(w, result.TrustedDevice.Token, int(time.Until(result.TrustedDevice.ExpiresAt).Seconds()), deps.CookieDomain, deps.CookieSecure)
+		}
+		httpserver.SetSessionCookie(w, result.Session.Token, int(deps.Auth.SessionLifetime().Seconds()), deps.CookieDomain, deps.CookieSecure)
+		target := safeNext(result.Redirect)
+		if target == "" {
+			target = "/overview"
+		}
+		http.Redirect(w, r, dashboardURL(deps, target, nil), http.StatusFound)
+	}
+}
+
+func oauthErrorCode(err error) string {
+	switch {
+	case errors.Is(err, auth.ErrOAuthStateInvalid):
+		return "expired"
+	case errors.Is(err, auth.ErrOAuthEmailUnverified), errors.Is(err, auth.ErrOAuthDomainDenied):
+		return "not_allowed"
+	default:
+		return "failed"
+	}
+}
+
+func oauthFailureURL(deps Deps, code string) string {
+	values := url.Values{}
+	values.Set("oauth_error", code)
+	return dashboardURL(deps, "/login", values)
+}
+
+func dashboardURL(deps Deps, path string, values url.Values) string {
+	if deps.PublicURL == nil {
+		if len(values) == 0 {
+			return path
+		}
+		return path + "?" + values.Encode()
+	}
+	target := *deps.PublicURL
+	target.Path = strings.TrimSuffix(target.Path, "/") + "/app" + path
+	target.RawQuery = ""
+	if len(values) > 0 {
+		target.RawQuery = values.Encode()
+	}
+	return target.String()
 }
 
 // ---------------------------------------------------------- password reset
@@ -113,11 +209,12 @@ func handleRequestMagicLink(deps Deps) http.HandlerFunc {
 			return
 		}
 
-		token, user, err := deps.Auth.IssueMagicLink(r.Context(), req.Email, safeNext(req.Next), clientIP(r))
+		next := safeNext(req.Next)
+		token, user, err := deps.Auth.IssueMagicLink(r.Context(), req.Email, next, clientIP(r))
 		if err == nil {
 			deps.sendMail(r, user.Email, "Your Hubchat sign-in link", "magic_link", mailer.Data{
 				Name:      user.Name,
-				Link:      deps.link("/app/magic-link", "token", token),
+				Link:      authMagicLink(deps, token, next),
 				ExpiresIn: "15 minutes",
 			})
 		} else if !errors.Is(err, auth.ErrUserNotFound) {
@@ -140,7 +237,7 @@ func handleRedeemMagicLink(deps Deps) http.HandlerFunc {
 			return
 		}
 
-		result, err := deps.Auth.RedeemMagicLink(r.Context(), req.Token, r.UserAgent(), clientIP(r))
+		result, err := deps.Auth.RedeemMagicLinkWithTrustedDevice(r.Context(), req.Token, r.UserAgent(), clientIP(r), httpserver.TrustedDeviceToken(r))
 		if err != nil {
 			writeAuthFlowError(w, r, err)
 			return
@@ -287,8 +384,9 @@ func handleDisableTOTP(deps Deps) http.HandlerFunc {
 }
 
 type totpChallengeRequest struct {
-	Challenge string `json:"challenge"`
-	Code      string `json:"code"`
+	Challenge   string `json:"challenge"`
+	Code        string `json:"code"`
+	TrustDevice bool   `json:"trust_device"`
 }
 
 func handleVerifyTOTPChallenge(deps Deps) http.HandlerFunc {
@@ -299,15 +397,108 @@ func handleVerifyTOTPChallenge(deps Deps) http.HandlerFunc {
 			return
 		}
 
-		result, err := deps.Auth.VerifyTOTPChallenge(
-			r.Context(), req.Challenge, req.Code, r.UserAgent(), clientIP(r))
+		result, err := deps.Auth.VerifyTOTPChallengeWithTrust(
+			r.Context(), firstNonEmpty(req.Challenge, httpserver.TOTPChallengeToken(r)), req.Code, r.UserAgent(), clientIP(r), req.TrustDevice)
 		if err != nil {
 			writeAuthFlowError(w, r, err)
 			return
 		}
 
 		writeSignInResult(w, r, deps, result)
+		if result.Session != nil {
+			httpserver.ClearTOTPChallengeCookie(w, deps.CookieDomain, deps.CookieSecure)
+		}
 	}
+}
+
+func handleListTrustedDevices(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user := userFromRequest(r)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		devices, err := deps.Auth.ListTrustedDevicesPage(r.Context(), user.ID, httpserver.TrustedDeviceToken(r), cursor.At, cursor.ID, limit+1)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load trusted devices.")
+			return
+		}
+		page := NewPage(devices, limit, func(device auth.TrustedDeviceInfo) Cursor {
+			return Cursor{At: device.CreatedAt, ID: device.ID}
+		})
+		out := make([]map[string]any, 0, len(page.Data))
+		for _, device := range page.Data {
+			out = append(out, map[string]any{
+				"id": device.ID, "name": device.Name, "user_agent": device.UserAgent,
+				"ip": device.IP, "created_at": device.CreatedAt.UTC().Format(time.RFC3339),
+				"last_used_at": nullableTime(device.LastUsedAt), "expires_at": device.ExpiresAt.UTC().Format(time.RFC3339),
+				"current": device.Current,
+			})
+		}
+		httpserver.WriteJSON(w, http.StatusOK, Page[map[string]any]{Data: out, NextCursor: page.NextCursor, HasMore: page.HasMore})
+	}
+}
+
+func handleRevokeTrustedDevice(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user := userFromRequest(r)
+		current := false
+		if token := httpserver.TrustedDeviceToken(r); token != "" {
+			devices, err := deps.Auth.ListTrustedDevices(r.Context(), user.ID, token)
+			if err != nil {
+				httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load trusted devices.")
+				return
+			}
+			for _, device := range devices {
+				if device.ID == r.PathValue("id") {
+					current = device.Current
+					break
+				}
+			}
+		}
+		if err := deps.Auth.RevokeTrustedDevice(r.Context(), user.ID, r.PathValue("id")); err != nil {
+			if errors.Is(err, auth.ErrTrustedDeviceNotFound) {
+				httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Trusted device not found.")
+				return
+			}
+			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not revoke that trusted device.")
+			return
+		}
+		if current {
+			// Revoking the current device must also remove its browser credential.
+			httpserver.ClearTrustedDeviceCookie(w, deps.CookieDomain, deps.CookieSecure)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func handleRevokeAllTrustedDevices(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user := userFromRequest(r)
+		if err := deps.Auth.RevokeAllTrustedDevices(r.Context(), user.ID); err != nil {
+			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not revoke trusted devices.")
+			return
+		}
+		httpserver.ClearTrustedDeviceCookie(w, deps.CookieDomain, deps.CookieSecure)
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func nullableTime(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.UTC().Format(time.RFC3339)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // --------------------------------------------------------------- sessions
@@ -455,6 +646,9 @@ func writeSignInResult(w http.ResponseWriter, r *http.Request, deps Deps, result
 		return
 	}
 
+	if result.TrustedDevice != nil {
+		httpserver.SetTrustedDeviceCookie(w, result.TrustedDevice.Token, int(time.Until(result.TrustedDevice.ExpiresAt).Seconds()), deps.CookieDomain, deps.CookieSecure)
+	}
 	httpserver.SetSessionCookie(w, result.Session.Token,
 		int(deps.Auth.SessionLifetime().Seconds()), deps.CookieDomain, deps.CookieSecure)
 	httpserver.WriteJSON(w, http.StatusOK, userJSON(result.User))
@@ -479,10 +673,31 @@ func safeNext(next string) string {
 	if next == "" {
 		return ""
 	}
-	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.Contains(next, "\\") {
 		return ""
 	}
-	return next
+	parsed, err := url.Parse(next)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || !strings.HasPrefix(parsed.Path, "/") {
+		return ""
+	}
+	return parsed.String()
+}
+
+func authMagicLink(deps Deps, token, next string) string {
+	values := url.Values{}
+	values.Set("token", token)
+	if next != "" {
+		values.Set("next", next)
+	}
+
+	if deps.PublicURL == nil {
+		return "/app/magic-link?" + values.Encode()
+	}
+
+	target := *deps.PublicURL
+	target.Path = strings.TrimSuffix(target.Path, "/") + "/app/magic-link"
+	target.RawQuery = values.Encode()
+	return target.String()
 }
 
 func writeAuthFlowError(w http.ResponseWriter, r *http.Request, err error) {
@@ -512,5 +727,3 @@ func writeAuthFlowError(w http.ResponseWriter, r *http.Request, err error) {
 		writeAuthError(w, r, err)
 	}
 }
-
-var _ = fmt.Sprintf

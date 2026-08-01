@@ -17,9 +17,12 @@ func registerAnalyticsRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/analytics/metrics", requireCapability(deps, authorization.ReportRead, handleListAnalyticsMetrics(deps)))
 	mux.HandleFunc("GET /v1/analytics/summary", requireCapability(deps, authorization.ReportRead, handleAnalyticsSummary(deps)))
 	mux.HandleFunc("GET /v1/analytics/rollups", requireCapability(deps, authorization.ReportRead, handleListAnalyticsRollups(deps)))
+	mux.HandleFunc("GET /v1/analytics/workload", requireCapability(deps, authorization.ReportRead, handleAnalyticsWorkload(deps)))
 	mux.HandleFunc("GET /v1/reports", requireCapability(deps, authorization.ReportRead, handleListReports(deps)))
 	mux.HandleFunc("POST /v1/reports", requireCapability(deps, authorization.ReportRead, Idempotency(deps)(handleCreateReport(deps))))
 	mux.HandleFunc("GET /v1/reports/{id}", requireCapability(deps, authorization.ReportRead, handleGetReport(deps)))
+	mux.HandleFunc("PATCH /v1/reports/{id}", requireCapability(deps, authorization.ReportRead, Idempotency(deps)(handleUpdateReport(deps))))
+	mux.HandleFunc("DELETE /v1/reports/{id}", requireCapability(deps, authorization.ReportRead, Idempotency(deps)(handleDeleteReport(deps))))
 	mux.HandleFunc("GET /v1/reports/{id}/schedules", requireCapability(deps, authorization.ReportRead, handleListReportSchedules(deps)))
 	mux.HandleFunc("POST /v1/reports/{id}/schedules", requireCapability(deps, authorization.ReportRead, Idempotency(deps)(handleCreateReportSchedule(deps))))
 	mux.HandleFunc("PATCH /v1/reports/{id}/schedules/{scheduleID}", requireCapability(deps, authorization.ReportRead, Idempotency(deps)(handleUpdateReportSchedule(deps))))
@@ -84,6 +87,22 @@ func handleListAnalyticsRollups(deps Deps) http.HandlerFunc {
 		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
 	}
 }
+
+func handleAnalyticsWorkload(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		from, to, err := analyticsWindow(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, err.Error())
+			return
+		}
+		items, err := deps.Analytics.Workload(r.Context(), actorFromRequest(r).WorkspaceID, from, to)
+		if err != nil {
+			writeAnalyticsInternal(w, r)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items, "from": from, "to": to, "timezone": "UTC", "computed_at": time.Now().UTC()})
+	}
+}
 func handleListReports(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		limit, cursor, err := PageParams(r)
@@ -91,7 +110,8 @@ func handleListReports(deps Deps) http.HandlerFunc {
 			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
 			return
 		}
-		items, err := deps.Analytics.ListReportsPage(r.Context(), actorFromRequest(r).WorkspaceID, cursor.Value, cursor.ID, limit+1)
+		actor := actorFromRequest(r)
+		items, err := deps.Analytics.ListReportsPageForActor(r.Context(), actor.WorkspaceID, actor.Role, actor.MemberID, cursor.Value, cursor.ID, limit+1)
 		if err != nil {
 			writeAnalyticsInternal(w, r)
 			return
@@ -124,12 +144,70 @@ func handleCreateReport(deps Deps) http.HandlerFunc {
 }
 func handleGetReport(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		item, err := deps.Analytics.GetReport(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"))
+		actor := actorFromRequest(r)
+		item, err := deps.Analytics.GetReportForActor(r.Context(), actor.WorkspaceID, actor.Role, actor.MemberID, r.PathValue("id"))
 		if err != nil {
+			if errors.Is(err, analytics.ErrReportForbidden) {
+				httpserver.WriteError(w, r, http.StatusForbidden, httpserver.CodeForbidden, "You do not have access to this report.")
+				return
+			}
+			if errors.Is(err, pgx.ErrNoRows) {
+				httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Report not found.")
+				return
+			}
 			writeAnalyticsInternal(w, r)
 			return
 		}
 		httpserver.WriteJSON(w, http.StatusOK, item)
+	}
+}
+
+func handleUpdateReport(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input analytics.ReportInput
+		if err := httpserver.DecodeJSON(r, &input); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, err.Error())
+			return
+		}
+		actor := actorFromRequest(r)
+		if _, err := deps.Analytics.GetReportForActor(r.Context(), actor.WorkspaceID, actor.Role, actor.MemberID, r.PathValue("id")); err != nil {
+			writeReportError(w, r, err)
+			return
+		}
+		item, err := deps.Analytics.UpdateReport(r.Context(), actor.WorkspaceID, r.PathValue("id"), input)
+		if err != nil {
+			writeReportError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, item)
+	}
+}
+
+func handleDeleteReport(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		if _, err := deps.Analytics.GetReportForActor(r.Context(), actor.WorkspaceID, actor.Role, actor.MemberID, r.PathValue("id")); err != nil {
+			writeReportError(w, r, err)
+			return
+		}
+		if err := deps.Analytics.DeleteReport(r.Context(), actor.WorkspaceID, r.PathValue("id")); err != nil {
+			writeReportError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func writeReportError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, analytics.ErrInvalidReportName):
+		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, err.Error())
+	case errors.Is(err, analytics.ErrReportForbidden):
+		httpserver.WriteError(w, r, http.StatusForbidden, httpserver.CodeForbidden, "You do not have access to this report.")
+	case errors.Is(err, pgx.ErrNoRows):
+		httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Report not found.")
+	default:
+		writeAnalyticsInternal(w, r)
 	}
 }
 
@@ -141,6 +219,10 @@ func handleListReportSchedules(deps Deps) http.HandlerFunc {
 			return
 		}
 		actor := actorFromRequest(r)
+		if _, err := deps.Analytics.GetReportForActor(r.Context(), actor.WorkspaceID, actor.Role, actor.MemberID, r.PathValue("id")); err != nil {
+			writeReportError(w, r, err)
+			return
+		}
 		items, err := deps.Analytics.ListSchedulesPage(r.Context(), actor.WorkspaceID, r.PathValue("id"), cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			writeAnalyticsInternal(w, r)
@@ -159,7 +241,12 @@ func handleCreateReportSchedule(deps Deps) http.HandlerFunc {
 			return
 		}
 		input.ReportID = r.PathValue("id")
-		item, err := deps.Analytics.CreateSchedule(r.Context(), actorFromRequest(r).WorkspaceID, input, time.Now().UTC())
+		actor := actorFromRequest(r)
+		if _, err := deps.Analytics.GetReportForActor(r.Context(), actor.WorkspaceID, actor.Role, actor.MemberID, input.ReportID); err != nil {
+			writeReportError(w, r, err)
+			return
+		}
+		item, err := deps.Analytics.CreateSchedule(r.Context(), actor.WorkspaceID, input, time.Now().UTC())
 		if err != nil {
 			writeAnalyticsScheduleError(w, r, err)
 			return
@@ -176,7 +263,12 @@ func handleUpdateReportSchedule(deps Deps) http.HandlerFunc {
 			return
 		}
 		input.ReportID = r.PathValue("id")
-		item, err := deps.Analytics.UpdateSchedule(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("scheduleID"), input, time.Now().UTC())
+		actor := actorFromRequest(r)
+		if _, err := deps.Analytics.GetReportForActor(r.Context(), actor.WorkspaceID, actor.Role, actor.MemberID, input.ReportID); err != nil {
+			writeReportError(w, r, err)
+			return
+		}
+		item, err := deps.Analytics.UpdateSchedule(r.Context(), actor.WorkspaceID, r.PathValue("scheduleID"), input, time.Now().UTC())
 		if err != nil {
 			writeAnalyticsScheduleError(w, r, err)
 			return
@@ -187,7 +279,12 @@ func handleUpdateReportSchedule(deps Deps) http.HandlerFunc {
 
 func handleDeleteReportSchedule(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := deps.Analytics.DeleteSchedule(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("scheduleID")); err != nil {
+		actor := actorFromRequest(r)
+		if _, err := deps.Analytics.GetReportForActor(r.Context(), actor.WorkspaceID, actor.Role, actor.MemberID, r.PathValue("id")); err != nil {
+			writeReportError(w, r, err)
+			return
+		}
+		if err := deps.Analytics.DeleteSchedule(r.Context(), actor.WorkspaceID, r.PathValue("scheduleID")); err != nil {
 			writeAnalyticsScheduleError(w, r, err)
 			return
 		}
