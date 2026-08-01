@@ -491,16 +491,48 @@ func handleWidgetArticleSearch(deps Deps) http.HandlerFunc {
 			writeKnowledgebaseInternal(w, r)
 			return
 		}
-		items, err := deps.Knowledgebase.SearchPublished(r.Context(), item.WorkspaceID, "", "", r.URL.Query().Get("q"), r.URL.Query().Get("language"), "widget", 20)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed article cursor.")
+			return
+		}
+		// Keep the widget response small even when a caller asks for the
+		// platform-wide maximum page size. The pre-fetched bootstrap list is
+		// intentionally tiny; this endpoint is the bounded continuation path.
+		pageLimit := limit
+		if pageLimit > 20 {
+			pageLimit = 20
+		}
+		var beforeRank *float32
+		if !cursor.IsZero() {
+			value, parseErr := strconv.ParseFloat(cursor.Value, 32)
+			if parseErr != nil {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed article cursor.")
+				return
+			}
+			rank := float32(value)
+			beforeRank = &rank
+		}
+		items, err := deps.Knowledgebase.SearchPublishedPage(r.Context(), item.WorkspaceID, "", "", r.URL.Query().Get("q"), r.URL.Query().Get("language"), beforeRank, cursor.At, cursor.ID, pageLimit+1)
 		if err != nil {
 			writeKnowledgebaseInternal(w, r)
 			return
 		}
-		result := make([]map[string]any, 0, len(items))
-		for _, searchResult := range items {
+		page := NewPage(items, pageLimit, func(searchResult knowledgebase.SearchResult) Cursor {
+			at := time.Time{}
+			if searchResult.Article.PublishedAt != nil {
+				at = *searchResult.Article.PublishedAt
+			}
+			return Cursor{Value: strconv.FormatFloat(float64(searchResult.Rank), 'g', -1, 32), At: at, ID: searchResult.Article.ID}
+		})
+		result := make([]map[string]any, 0, len(page.Data))
+		for _, searchResult := range page.Data {
 			result = append(result, widgetArticleJSON(&searchResult.Article, false))
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": result})
+		if cursor.IsZero() {
+			deps.Knowledgebase.RecordSearch(r.Context(), item.WorkspaceID, r.URL.Query().Get("q"), r.URL.Query().Get("language"), "widget", len(page.Data))
+		}
+		httpserver.WriteJSON(w, http.StatusOK, Page[map[string]any]{Data: result, NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
 }
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -22,22 +23,39 @@ func handleSearch(deps Deps) http.HandlerFunc {
 
 		limit := 10
 		if raw := query.Get("limit"); raw != "" {
-			if parsed, err := strconv.Atoi(raw); err == nil {
-				limit = parsed
+			parsed, err := strconv.Atoi(raw)
+			if err != nil {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed search limit.")
+				return
 			}
+			limit = parsed
+		}
+		if limit <= 0 {
+			limit = 10
+		}
+		if limit > 100 {
+			limit = 100
 		}
 
-		results, err := deps.Search.Search(r.Context(), actor.WorkspaceID, query.Get("q"), limit)
+		page, err := deps.Search.SearchPage(r.Context(), actor.WorkspaceID, query.Get("q"), query.Get("cursor"), limit)
 		if err != nil {
+			if errors.Is(err, search.ErrBadCursor) {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed search cursor.")
+				return
+			}
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Search failed.")
 			return
 		}
 
-		out := make([]map[string]any, len(results))
-		for i, res := range results {
-			out[i] = searchResultJSON(res)
+		out := make([]map[string]any, 0, len(page.Results))
+		for _, res := range page.Results {
+			out = append(out, searchResultJSON(res))
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+		var nextCursor *string
+		if page.NextCursor != "" {
+			nextCursor = &page.NextCursor
+		}
+		httpserver.WriteJSON(w, http.StatusOK, Page[map[string]any]{Data: out, NextCursor: nextCursor, HasMore: page.HasMore})
 	}
 }
 
