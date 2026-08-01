@@ -7,6 +7,10 @@ import {
   CardBody,
   CardHeader,
   Checkbox,
+  Dialog,
+  DialogContent,
+  Field,
+  Input,
   Page,
   PageBody,
   PageHeader,
@@ -14,17 +18,20 @@ import {
   Section,
   Tooltip,
   cn,
+  idempotencyKey,
+  useMutation,
   useQuery,
   useAllPages,
   type Paginated,
   type Capability,
+  type BuiltinMemberRole,
   type Member,
-  type MemberRole,
+  type RoleDefinition,
 } from "@hubchat/shared";
-import { Info, Lock } from "lucide-react";
-import { Fragment } from "react";
+import { Info, Pencil, Plus, Trash2 } from "lucide-react";
+import { Fragment, useState } from "react";
 
-const ROLES: MemberRole[] = ["owner", "admin", "manager", "agent", "developer", "analyst"];
+const ROLES: BuiltinMemberRole[] = ["owner", "admin", "manager", "agent", "developer", "analyst"];
 
 const CAPABILITY_GROUPS: { group: string; items: { key: Capability; label: string; detail: string }[] }[] = [
   {
@@ -78,40 +85,40 @@ const ROLE_SUMMARY: Record<MemberRole, string> = {
   analyst: "Read-only. Reports and records, with no ability to reply or modify.",
 };
 
-type RoleDefinition = { key: MemberRole; name: string; description: string | null; capabilities: Capability[] };
-
 /**
  * Roles and capabilities (§5.9).
- *
- * A read-only matrix in this release. It exists now, before custom roles ship,
- * because "what can an agent actually do?" is a question every administrator
- * asks on day one and the answer should not require reading source.
  */
 export default function Roles() {
   const roles = useQuery<{ data: RoleDefinition[] }>(["roles"], (signal) => api.get("/roles", { signal }));
   const members = useAllPages<Member>(["members", "lookup"], (cursor, signal) => api.get<Paginated<Member>>(`/members?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
+  const [editor, setEditor] = useState<RoleDefinition | null | false>(false);
+  const customRoles = roles.data?.data.filter((role) => !role.is_builtin) ?? [];
+  const save = useMutation<{
+    id?: string;
+    key?: string;
+    name: string;
+    description: string;
+    capabilities: Capability[];
+  }, RoleDefinition>((input) => input.id
+    ? api.patch(`/roles/${encodeURIComponent(input.id)}`, { name: input.name, description: input.description, capabilities: input.capabilities })
+    : api.post("/roles", { key: input.key, name: input.name, description: input.description, capabilities: input.capabilities }, { idempotencyKey: idempotencyKey() }),
+  { invalidates: [["roles"]], onSuccess: () => setEditor(false) });
+  const remove = useMutation<string, void>((id) => api.delete(`/roles/${encodeURIComponent(id)}`, { idempotencyKey: idempotencyKey() }), { invalidates: [["roles"], ["members"]] });
 
   return (
     <Page>
       <PageHeader
         title="Roles & permissions"
-        description="What each role is permitted to do. Capabilities are checked in the service layer on every request."
+        description="Built-in presets and workspace-specific roles. Capabilities are checked in the service layer on every request."
         actions={
-          <Tooltip content="Custom roles arrive in a later release">
-            <span>
-              <Button variant="secondary" size="sm" leading={<Lock />} disabled>
-                Create custom role
-              </Button>
-            </span>
-          </Tooltip>
+          <Button variant="primary" size="sm" leading={<Plus />} onClick={() => setEditor(null)}>Create custom role</Button>
         }
       />
 
       <PageBody width="full">
         <Callout tone="info" className="mb-5" icon={<Info />}>
-          Roles are presets over a capability set. When custom roles arrive, these six become
-          editable templates rather than fixed definitions — no migration required, because the
-          underlying model is already capability-based.
+          Roles are bundles of capabilities. Built-in roles are fixed and workspace custom roles
+          can be edited or removed when no member is assigned to them.
         </Callout>
 
         <QueryBoundary query={roles}>
@@ -203,11 +210,40 @@ export default function Roles() {
                     ))}
                   </div>
                 </Section>
+
+                <Section title="Custom workspace roles">
+                  {customRoles.length === 0 ? (
+                    <Card><CardBody><p className="text-sm text-fg-muted">No custom roles yet. Create one when the built-in presets do not match your support workflow.</p></CardBody></Card>
+                  ) : (
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                      {customRoles.map((role) => (
+                        <Card key={role.id}>
+                          <CardHeader
+                            title={role.name}
+                            description={<span className="font-mono text-2xs">{role.key}</span>}
+                            actions={<div className="flex items-center gap-1"><Button variant="ghost" size="xs" iconOnly leading={<Pencil />} aria-label={`Edit ${role.name}`} onClick={() => setEditor(role)} /><Button variant="danger-ghost" size="xs" iconOnly leading={<Trash2 />} aria-label={`Delete ${role.name}`} onClick={() => void remove.mutate(role.id).catch(() => {})} /></div>}
+                          />
+                          <CardBody><p className="text-xs text-fg-muted">{role.description || "No description."}</p><p className="mt-3 text-2xs text-fg-disabled">{role.capabilities.length} capabilities</p></CardBody>
+                        </Card>
+                      ))}
+                    </div>
+                  )}
+                </Section>
               </>
             );
           }}
         </QueryBoundary>
       </PageBody>
+      {editor !== false ? <RoleEditor role={editor} pending={save.isPending} error={save.error} onCancel={() => setEditor(false)} onSave={(input) => void save.mutate(input).catch(() => {})} /> : null}
     </Page>
   );
+}
+
+function RoleEditor({ role, pending, error, onCancel, onSave }: { role: RoleDefinition | null; pending: boolean; error: unknown; onCancel: () => void; onSave: (input: { id?: string; key?: string; name: string; description: string; capabilities: Capability[] }) => void }) {
+  const [key, setKey] = useState(role?.key ?? "");
+  const [name, setName] = useState(role?.name ?? "");
+  const [description, setDescription] = useState(role?.description ?? "");
+  const [capabilities, setCapabilities] = useState<Capability[]>(role?.capabilities ?? []);
+  const toggle = (capability: Capability, checked: boolean) => setCapabilities((current) => checked ? [...current, capability] : current.filter((item) => item !== capability));
+  return <Dialog open onOpenChange={(open) => !open && onCancel()}><DialogContent title={role ? `Edit ${role.name}` : "Create custom role"} description="Choose the capabilities this role grants. Changes take effect for assigned members on their next request." size="lg" footer={<><Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button><Button variant="primary" size="sm" loading={pending} disabled={!name.trim() || (!role && !/^[a-z][a-z0-9_]{1,31}$/.test(key))} onClick={() => onSave({ id: role?.id, key: role ? undefined : key, name: name.trim(), description: description.trim(), capabilities })}>{role ? "Save changes" : "Create role"}</Button></>}>{error ? <Callout tone="danger" className="mb-4">Could not save this role.</Callout> : null}<div className="space-y-4"><div className="grid gap-4 sm:grid-cols-2"><Field label="Key" description={role ? "The key cannot change after creation." : "Lowercase letters, numbers, and underscores."}><Input value={key} disabled={Boolean(role)} onChange={(event) => setKey(event.target.value)} placeholder="billing_specialist" /></Field><Field label="Name"><Input autoFocus={!role} value={name} onChange={(event) => setName(event.target.value)} placeholder="Billing specialist" /></Field></div><Field label="Description"><Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Handles billing conversations and reports." /></Field><div><p className="mb-2 text-sm font-medium text-fg">Capabilities</p><div className="grid gap-2 sm:grid-cols-2">{CAPABILITY_GROUPS.flatMap((group) => group.items).map((item) => <label key={item.key} className="flex items-start gap-2 rounded-md border border-line-subtle px-3 py-2"><Checkbox checked={capabilities.includes(item.key)} onCheckedChange={(checked) => toggle(item.key, checked)} /><span><span className="block text-xs text-fg">{item.label}</span><span className="block font-mono text-2xs text-fg-muted">{item.key}</span></span></label>)}</div></div></div></DialogContent></Dialog>;
 }

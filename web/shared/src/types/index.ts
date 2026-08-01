@@ -89,13 +89,16 @@ export type Workspace = {
   created_at: Timestamp;
 };
 
-export type MemberRole =
+export type BuiltinMemberRole =
   | "owner"
   | "admin"
   | "manager"
   | "agent"
   | "developer"
   | "analyst";
+
+/** Custom workspace roles use the same opaque key at runtime. */
+export type MemberRole = BuiltinMemberRole | (string & {});
 
 /** §5.9 — capabilities are the unit of authorization, roles are just bundles. */
 export type Capability =
@@ -111,6 +114,7 @@ export type Capability =
   | "widget.manage"
   | "portal.manage"
   | "feedback.moderate"
+  | "survey.manage"
   | "knowledgebase.manage"
   | "automation.manage"
   | "sla.manage"
@@ -137,6 +141,16 @@ export type Member = {
   accepting_conversations: boolean;
   last_seen_at: Timestamp | null;
   created_at: Timestamp;
+};
+
+export type RoleDefinition = {
+  id: Id;
+  workspace_id?: Id;
+  key: MemberRole;
+  name: string;
+  description: string | null;
+  is_builtin: boolean;
+  capabilities: Capability[];
 };
 
 export type Team = {

@@ -590,6 +590,7 @@ export type ApiOperationId =
   | "deleteReport"
   | "deleteReportSchedule"
   | "deleteSavedView"
+  | "deleteScimV20WorkspaceIDUsersId"
   | "deleteTagsId"
   | "deleteTeamsId"
   | "deleteTeamsIdMembersMemberId"
@@ -672,6 +673,8 @@ export type ApiOperationId =
   | "getReport"
   | "getRoles"
   | "getSavedView"
+  | "getScimV20WorkspaceIDUsers"
+  | "getScimV20WorkspaceIDUsersId"
   | "getSearch"
   | "getSetupState"
   | "getSLACalendar"
@@ -769,6 +772,7 @@ export type ApiOperationId =
   | "patchMembersMeAcceptingConversations"
   | "patchMembersMePresence"
   | "patchPortalsId"
+  | "patchScimV20WorkspaceIDUsersId"
   | "patchSlaPoliciesId"
   | "patchTeamsId"
   | "patchTicketsIdAssignee"
@@ -838,6 +842,7 @@ export type ApiOperationId =
   | "postPortalTicketsIdReplies"
   | "postPublicFeedbackWorkspaceIDItemsIdVotes"
   | "postPublicKnowledgeBasesWorkspaceIDArticlesSlugFeedback"
+  | "postScimV20WorkspaceIDUsers"
   | "postTags"
   | "postTagsIdMerge"
   | "postTeams"
@@ -870,6 +875,7 @@ export type ApiOperationId =
   | "putFieldDefinitionsReorder"
   | "putInboxesIdDefault"
   | "putNotificationsPreferences"
+  | "putScimV20WorkspaceIDUsersId"
   | "putTeamsIdMembersMemberId"
   | "putTicketsIdFieldValuesKey"
   | "putTicketsIdFollowersMe"
@@ -1082,6 +1088,9 @@ export type ApiOperationCatalog = {
   "deleteReport": { method: "DELETE"; path: "/v1/reports/{id}"; request: unknown; response: unknown; };
   "deleteReportSchedule": { method: "DELETE"; path: "/v1/reports/{id}/schedules/{scheduleID}"; request: unknown; response: unknown; };
   "deleteSavedView": { method: "DELETE"; path: "/v1/saved-views/{id}"; request: unknown; response: unknown; };
+  "deleteScimV20WorkspaceIDUsersId": { method: "DELETE"; path: "/v1/scim/v2.0/{workspaceID}/Users/{id}"; request: unknown; response: {
+  [key: string]: unknown;
+}; };
   "deleteTagsId": { method: "DELETE"; path: "/v1/tags/{id}"; request: unknown; response: {
   [key: string]: unknown;
 }; };
@@ -1298,6 +1307,12 @@ export type ApiOperationCatalog = {
   [key: string]: unknown;
 }; };
   "getSavedView": { method: "GET"; path: "/v1/saved-views/{id}"; request: unknown; response: {
+  [key: string]: unknown;
+}; };
+  "getScimV20WorkspaceIDUsers": { method: "GET"; path: "/v1/scim/v2.0/{workspaceID}/Users"; request: unknown; response: {
+  [key: string]: unknown;
+}; };
+  "getScimV20WorkspaceIDUsersId": { method: "GET"; path: "/v1/scim/v2.0/{workspaceID}/Users/{id}"; request: unknown; response: {
   [key: string]: unknown;
 }; };
   "getSearch": { method: "GET"; path: "/v1/search"; request: unknown; response: {
@@ -1615,6 +1630,11 @@ export type ApiOperationCatalog = {
   [key: string]: unknown;
 }; };
   "patchPortalsId": { method: "PATCH"; path: "/v1/portals/{id}"; request: {
+  [key: string]: unknown;
+}; response: {
+  [key: string]: unknown;
+}; };
+  "patchScimV20WorkspaceIDUsersId": { method: "PATCH"; path: "/v1/scim/v2.0/{workspaceID}/Users/{id}"; request: {
   [key: string]: unknown;
 }; response: {
   [key: string]: unknown;
@@ -1964,6 +1984,11 @@ export type ApiOperationCatalog = {
 }; response: {
   [key: string]: unknown;
 }; };
+  "postScimV20WorkspaceIDUsers": { method: "POST"; path: "/v1/scim/v2.0/{workspaceID}/Users"; request: {
+  [key: string]: unknown;
+}; response: {
+  [key: string]: unknown;
+}; };
   "postTags": { method: "POST"; path: "/v1/tags"; request: {
   [key: string]: unknown;
 }; response: {
@@ -2120,6 +2145,11 @@ export type ApiOperationCatalog = {
   [key: string]: unknown;
 }; };
   "putNotificationsPreferences": { method: "PUT"; path: "/v1/notifications/preferences"; request: {
+  [key: string]: unknown;
+}; response: {
+  [key: string]: unknown;
+}; };
+  "putScimV20WorkspaceIDUsersId": { method: "PUT"; path: "/v1/scim/v2.0/{workspaceID}/Users/{id}"; request: {
   [key: string]: unknown;
 }; response: {
   [key: string]: unknown;
