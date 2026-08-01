@@ -5,6 +5,7 @@ const templatePath = "embedded/openapi.template.json";
 const outputPath = "embedded/openapi.json";
 const document = JSON.parse(readFileSync(templatePath, "utf8"));
 const operationTemplates = document.components?.operations ?? {};
+const operationSchemas = document.components?.operationSchemas ?? {};
 
 // Keep the published contract from silently falling behind the Go mux. The
 // hand-authored template remains authoritative for rich schemas and examples;
@@ -27,7 +28,7 @@ function operationID(method, route) {
   const parts = route
     .replace(/^\/v1\//, "")
     .split("/")
-    .map((part) => part.replace(/[{}]/g, "").replace(/[^A-Za-z0-9]+/g, " "))
+    .flatMap((part) => part.replace(/[{}]/g, "").split(/[^A-Za-z0-9]+/))
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1));
   return method.toLowerCase() + parts.join("");
@@ -64,7 +65,7 @@ function baselineOperation(method, route) {
     },
   };
   if (!isPublicRoute(route)) operation.security = [{ bearerAuth: [] }];
-  if (method !== "GET" && method !== "DELETE") {
+  if (method !== "get" && method !== "delete") {
     operation.requestBody = {
       required: false,
       content: { "application/json": { schema: { type: "object", additionalProperties: true } } },
@@ -91,12 +92,11 @@ for (const pathItem of Object.values(document.paths ?? {})) {
     }
 
     const { $ref: ignored, ...overrides } = operation;
-    pathItem[method] = { ...template, ...overrides };
+    // Templates contain nested response/parameter objects. Clone before
+    // applying path-specific schema bindings so every operation gets its own
+    // response tree instead of sharing the last list/create override.
+    pathItem[method] = { ...structuredClone(template), ...structuredClone(overrides) };
   }
-}
-
-if (document.components) {
-  delete document.components.operations;
 }
 
 for (const { method, route } of registeredRoutes.values()) {
@@ -104,6 +104,48 @@ for (const { method, route } of registeredRoutes.values()) {
   if (!pathItem[method] && methods.has(method.toUpperCase())) {
     pathItem[method] = baselineOperation(method, route);
   }
+}
+
+// Operation-to-schema bindings are template metadata. Applying them here
+// keeps the published document standard OpenAPI while letting route discovery
+// continue to provide a safe baseline for new handlers.
+function schemaRef(value, context) {
+  if (typeof value === "string") return { $ref: `#/components/schemas/${value}` };
+  if (value && typeof value === "object" && value.$ref) return value;
+  throw new Error(`${context}: schema name or $ref is required`);
+}
+
+function applyOperationSchema(operation, operationID, binding) {
+  if (!binding || typeof binding !== "object") return;
+  if (binding.request) {
+    operation.requestBody = {
+      required: binding.requestRequired !== false,
+      content: { "application/json": { schema: schemaRef(binding.request, `${operationID}.request`) } },
+    };
+  }
+  for (const [status, schema] of Object.entries(binding.responses ?? {})) {
+    if (!operation.responses?.[status]) {
+      throw new Error(`${operationID}: response ${status} is not present in the operation`);
+    }
+    const response = operation.responses[status];
+    operation.responses[status] = {
+      description: response.description ?? "Successful JSON response.",
+      content: { "application/json": { schema: schemaRef(schema, `${operationID}.responses.${status}`) } },
+    };
+  }
+}
+
+for (const pathItem of Object.values(document.paths ?? {})) {
+  for (const method of methods) {
+    const operation = pathItem[method.toLowerCase()];
+    if (!operation || !operation.operationId) continue;
+    applyOperationSchema(operation, operation.operationId, operationSchemas[operation.operationId]);
+  }
+}
+
+if (document.components) {
+  delete document.components.operations;
+  delete document.components.operationSchemas;
 }
 
 writeFileSync(outputPath, `${JSON.stringify(document, null, 2)}\n`);

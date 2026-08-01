@@ -589,6 +589,30 @@ func TestCreateRejectsDuplicateFieldKey(t *testing.T) {
 	}
 }
 
+func TestFieldDefinitionsUseStableCursorPages(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	svc, _ := newTestService(t, pool)
+	ws := seedWorkspace(t, ctx, pool)
+	first, err := svc.CreateFieldDefinition(ctx, ws.WorkspaceID, "ticket", "account", "string", ticket.FieldDefinitionInput{Label: "Account"})
+	if err != nil {
+		t.Fatalf("create first field: %v", err)
+	}
+	if _, err := svc.CreateFieldDefinition(ctx, ws.WorkspaceID, "ticket", "plan", "string", ticket.FieldDefinitionInput{Label: "Plan"}); err != nil {
+		t.Fatalf("create second field: %v", err)
+	}
+
+	page, err := svc.ListFieldDefinitionsPage(ctx, ws.WorkspaceID, "ticket", 0, "", 1)
+	if err != nil || len(page) != 1 || page[0].ID != first.ID {
+		t.Fatalf("first field page = %+v, %v", page, err)
+	}
+	next, err := svc.ListFieldDefinitionsPage(ctx, ws.WorkspaceID, "ticket", page[0].Position, page[0].ID, 1)
+	if err != nil || len(next) != 1 || next[0].Key != "plan" {
+		t.Fatalf("second field page = %+v, %v", next, err)
+	}
+}
+
 func TestListFiltersByStatusAssigneeAndExcludesClosedByDefault(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.Reset(t, pool)
@@ -684,6 +708,16 @@ func TestTagsAndFollowersRoundTrip(t *testing.T) {
 	}
 	if len(followers) != 1 || followers[0] != ws.MemberID {
 		t.Fatalf("expected exactly one follower, got %v", followers)
+	}
+	followerPage, err := svc.FollowersPage(ctx, ws.WorkspaceID, tkt.ID, "", 1)
+	if err != nil {
+		t.Fatalf("followers page: %v", err)
+	}
+	if len(followerPage) != 1 || followerPage[0] != ws.MemberID {
+		t.Fatalf("expected one cursor-paged follower, got %v", followerPage)
+	}
+	if next, err := svc.FollowersPage(ctx, ws.WorkspaceID, tkt.ID, followerPage[0], 1); err != nil || len(next) != 0 {
+		t.Fatalf("expected cursor after the only follower to be empty, got %v, %v", next, err)
 	}
 
 	if err := svc.RemoveTag(ctx, ws.WorkspaceID, ws.MemberID, tkt.ID, tagID); err != nil {

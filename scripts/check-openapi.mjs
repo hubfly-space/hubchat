@@ -19,6 +19,34 @@ if (!document.info?.title || !document.info?.version) errors.push("info.title an
 if (!document.components?.securitySchemes?.bearerAuth) errors.push("bearerAuth security scheme is required");
 if (document.components?.operations) errors.push("operation templates must be expanded before publishing");
 
+const requiredSchemas = [
+  "Conversation", "Message", "Ticket", "Customer", "SavedReply",
+  "ConversationPage", "MessagePage", "TicketPage", "CustomerPage", "SavedReplyPage",
+];
+for (const schema of requiredSchemas) {
+  if (!document.components?.schemas?.[schema]) errors.push(`core schema is missing: ${schema}`);
+}
+
+const richOperations = {
+  listConversations: ["200", "ConversationPage"],
+  listConversationMessages: ["200", "MessagePage"],
+  listTickets: ["200", "TicketPage"],
+  listCustomers: ["200", "CustomerPage"],
+  listAutomationReplies: ["200", "SavedReplyPage"],
+};
+const operationsByID = new Map();
+for (const pathItem of Object.values(document.paths ?? {})) {
+  for (const [method, operation] of Object.entries(pathItem)) {
+    if (methods.has(method) && operation.operationId) operationsByID.set(operation.operationId, operation);
+  }
+}
+for (const [operationID, [status, schemaName]] of Object.entries(richOperations)) {
+  const schema = operationsByID.get(operationID)?.responses?.[status]?.content?.["application/json"]?.schema;
+  if (schema?.$ref !== `#/components/schemas/${schemaName}`) {
+    errors.push(`${operationID}: expected JSON response schema ${schemaName}`);
+  }
+}
+
 for (const [route, pathItem] of Object.entries(document.paths ?? {})) {
   if (!route.startsWith("/v1/")) errors.push(`${route}: public paths must be versioned under /v1/`);
   const pathParameters = new Set(
@@ -39,6 +67,9 @@ for (const [route, pathItem] of Object.entries(document.paths ?? {})) {
     }
     if (!operation.responses || Object.keys(operation.responses).length === 0) {
       errors.push(`${method.toUpperCase()} ${route}: responses are required`);
+    }
+    if (method === "get" && operation.requestBody) {
+      errors.push(`${method.toUpperCase()} ${route}: GET operations must not declare a request body`);
     }
 
     const operationParameters = new Set(

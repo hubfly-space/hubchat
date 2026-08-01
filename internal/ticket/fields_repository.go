@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -130,11 +131,40 @@ func (r *fieldRepository) byKey(ctx context.Context, workspaceID, entityType, ke
 }
 
 func (r *fieldRepository) list(ctx context.Context, workspaceID, entityType string) ([]FieldDefinition, error) {
+	var out []FieldDefinition
+	var beforePosition int16
+	var beforeID string
+	for {
+		page, err := r.listPage(ctx, workspaceID, entityType, beforePosition, beforeID, 201)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, page...)
+		if len(page) < 201 {
+			return out, nil
+		}
+		last := page[len(page)-1]
+		beforePosition, beforeID = last.Position, last.ID
+	}
+}
+
+func (r *fieldRepository) listPage(ctx context.Context, workspaceID, entityType string, beforePosition int16, beforeID string, limit int) ([]FieldDefinition, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := "workspace_id = $1 AND entity_type = $2 AND archived_at IS NULL"
+	args := []any{workspaceID, entityType}
+	if beforeID != "" {
+		where += " AND (position, id) > ($3, $4)"
+		args = append(args, beforePosition, beforeID)
+	}
+	args = append(args, limit)
+	limitPlaceholder := fmt.Sprintf("$%d", len(args))
 	rows, err := r.pool.Query(ctx, `SELECT `+fieldDefinitionColumns+`
 		FROM field_definitions
-		WHERE workspace_id = $1 AND entity_type = $2 AND archived_at IS NULL
-		ORDER BY position, created_at
-	`, workspaceID, entityType)
+		WHERE `+where+`
+		ORDER BY position, id
+		LIMIT `+limitPlaceholder, args...)
 	if err != nil {
 		return nil, err
 	}
