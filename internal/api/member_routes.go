@@ -36,15 +36,21 @@ func handleListMembers(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
 
-		data, err := deps.Workspace.LoadBootstrap(r.Context(), actor.WorkspaceID, actor.UserID)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed member cursor.")
+			return
+		}
+		members, err := deps.Workspace.ListMembersPage(r.Context(), actor.WorkspaceID, r.URL.Query().Get("q"), cursor.Value, cursor.ID, limit+1)
 		if err != nil {
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load members.")
 			return
 		}
 
-		members := make([]memberJSON, 0, len(data.Members))
-		for _, member := range data.Members {
-			members = append(members, memberJSON{
+		page := NewPage(members, limit, func(member workspace.MemberProfile) Cursor { return Cursor{Value: member.Name, ID: member.ID} })
+		out := make([]memberJSON, 0, len(page.Data))
+		for _, member := range page.Data {
+			out = append(out, memberJSON{
 				ID: member.ID, WorkspaceID: actor.WorkspaceID, UserID: member.UserID,
 				Name: member.Name, Email: member.Email, AvatarURL: member.AvatarURL,
 				Role: member.Role, Capabilities: []string{}, Teams: orEmpty(member.TeamIDs),
@@ -53,7 +59,7 @@ func handleListMembers(deps Deps) http.HandlerFunc {
 				CreatedAt:  member.CreatedAt.UTC().Format(time.RFC3339),
 			})
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": members})
+		httpserver.WriteJSON(w, http.StatusOK, Page[memberJSON]{Data: out, NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
 }
 

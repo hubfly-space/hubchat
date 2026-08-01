@@ -21,6 +21,7 @@ func registerKnowledgeBaseRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/articles", requireCapability(deps, authorization.KnowledgebaseManage, handleListArticles(deps)))
 	mux.HandleFunc("POST /v1/articles", requireCapability(deps, authorization.KnowledgebaseManage, Idempotency(deps)(handleCreateArticle(deps))))
 	mux.HandleFunc("GET /v1/articles/{id}", requireCapability(deps, authorization.KnowledgebaseManage, handleGetArticle(deps)))
+	mux.HandleFunc("GET /v1/articles/{id}/revisions", requireCapability(deps, authorization.KnowledgebaseManage, handleListArticleRevisions(deps)))
 	mux.HandleFunc("PATCH /v1/articles/{id}", requireCapability(deps, authorization.KnowledgebaseManage, idempotent(handleUpdateArticle(deps))))
 	mux.HandleFunc("POST /v1/articles/{id}/publish", requireCapability(deps, authorization.KnowledgebaseManage, Idempotency(deps)(handlePublishArticle(deps))))
 	mux.HandleFunc("GET /v1/changelog", requireCapability(deps, authorization.KnowledgebaseManage, handleListChangelog(deps)))
@@ -274,6 +275,24 @@ func handleGetArticle(deps Deps) http.HandlerFunc {
 			return
 		}
 		httpserver.WriteJSON(w, http.StatusOK, item)
+	}
+}
+
+func handleListArticleRevisions(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed article revision cursor.")
+			return
+		}
+		revisions, err := deps.Knowledgebase.ListArticleRevisionsPage(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"), cursor.At, cursor.ID, limit+1)
+		if err != nil {
+			writeKnowledgebaseError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(revisions, limit, func(item knowledgebase.ArticleRevision) Cursor {
+			return Cursor{At: item.CreatedAt, ID: item.ID}
+		}))
 	}
 }
 

@@ -82,7 +82,7 @@ func TestPublicArticleSearchScopesCollection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("search published articles: %v", err)
 	}
-	if len(results) != 1 || results[0].Article.ID != "art_release" {
+	if len(results) != 2 || results[0].Article.ID != "art_release" || results[1].Article.ID != "art_release_old" {
 		t.Fatalf("collection search results = %#v", results)
 	}
 

@@ -22,12 +22,19 @@ func registerPortalAdminRoutes(mux *http.ServeMux, deps Deps) {
 
 func handleListPortalDomains(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := deps.Portal.ListDomains(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"))
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed portal domain cursor.")
+			return
+		}
+		items, err := deps.Portal.ListDomainsPage(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"), cursor.Value, cursor.ID, limit+1)
 		if err != nil {
 			writePortalAdminError(w, r, err)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(items, limit, func(item portal.Domain) Cursor {
+			return Cursor{Value: item.Domain, ID: item.ID}
+		}))
 	}
 }
 
@@ -81,16 +88,22 @@ func writePortalAdminError(w http.ResponseWriter, r *http.Request, err error) {
 func handleListPortals(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
-		portals, err := deps.Portal.List(r.Context(), actor.WorkspaceID)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed portal cursor.")
+			return
+		}
+		portals, err := deps.Portal.ListPage(r.Context(), actor.WorkspaceID, cursor.Value, cursor.ID, limit+1)
 		if err != nil {
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load portals.")
 			return
 		}
-		out := make([]map[string]any, len(portals))
-		for i, p := range portals {
-			out[i] = portalJSON(p)
+		page := NewPage(portals, limit, func(item portal.Portal) Cursor { return Cursor{Value: item.Name, ID: item.ID} })
+		out := make([]map[string]any, 0, len(page.Data))
+		for _, p := range page.Data {
+			out = append(out, portalJSON(p))
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+		httpserver.WriteJSON(w, http.StatusOK, Page[map[string]any]{Data: out, NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
 }
 
