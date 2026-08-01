@@ -227,7 +227,7 @@ func (l *Log) List(ctx context.Context, workspaceID string, filter Filter) ([]Re
 
 	before := filter.Before
 	if before.IsZero() {
-		before = time.Now().Add(time.Hour)
+		before = time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
 	}
 
 	// The row tuple comparison is the tie-break: strictly less than

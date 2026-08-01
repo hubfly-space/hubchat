@@ -5,6 +5,7 @@ package conversation_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -547,6 +548,45 @@ func TestRedactMessageClearsBodyAndKeepsRevision(t *testing.T) {
 	}
 	if !strings.Contains(revisionBody, "4242") {
 		t.Fatalf("expected the original card number preserved in the revision, got %q", revisionBody)
+	}
+}
+
+func TestListMessagesPageReturnsNewestWindowAndOlderCursors(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	svc := newTestService(t, pool)
+	ws := seedWorkspace(t, ctx, pool)
+
+	conv, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "message 1")
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	for index := 2; index <= 5; index++ {
+		if _, err := svc.PostMessage(ctx, ws.WorkspaceID, conv.ID, nil, "reply", "customer", nil, "Visitor", fmt.Sprintf("message %d", index)); err != nil {
+			t.Fatalf("post message %d: %v", index, err)
+		}
+	}
+
+	latest, hasMore, err := svc.ListMessagesPage(ctx, ws.WorkspaceID, conv.ID, 0, 0, 2)
+	if err != nil || !hasMore || len(latest) != 2 {
+		t.Fatalf("latest page = %d messages, has_more=%v, err=%v", len(latest), hasMore, err)
+	}
+	if latest[0].Sequence != 4 || latest[1].Sequence != 5 {
+		t.Fatalf("latest sequences = %d,%d, want 4,5", latest[0].Sequence, latest[1].Sequence)
+	}
+
+	older, hasMore, err := svc.ListMessagesPage(ctx, ws.WorkspaceID, conv.ID, latest[0].Sequence, 0, 2)
+	if err != nil || !hasMore || len(older) != 2 {
+		t.Fatalf("older page = %d messages, has_more=%v, err=%v", len(older), hasMore, err)
+	}
+	if older[0].Sequence != 2 || older[1].Sequence != 3 {
+		t.Fatalf("older sequences = %d,%d, want 2,3", older[0].Sequence, older[1].Sequence)
+	}
+
+	oldest, hasMore, err := svc.ListMessagesPage(ctx, ws.WorkspaceID, conv.ID, older[0].Sequence, 0, 2)
+	if err != nil || hasMore || len(oldest) != 1 || oldest[0].Sequence != 1 {
+		t.Fatalf("oldest page = %+v, has_more=%v, err=%v", oldest, hasMore, err)
 	}
 }
 

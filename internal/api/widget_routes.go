@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/conversation"
@@ -171,16 +172,22 @@ func loadWidgetJSON(r *http.Request, deps Deps, workspaceID string, w widget.Wid
 func handleListWidgets(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
-		widgets, err := deps.Widget.List(r.Context(), actor.WorkspaceID)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed widget cursor.")
+			return
+		}
+		widgets, err := deps.Widget.ListPage(r.Context(), actor.WorkspaceID, cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load widgets.")
 			return
 		}
-		out := make([]map[string]any, len(widgets))
-		for i, item := range widgets {
-			out[i] = loadWidgetJSON(r, deps, actor.WorkspaceID, item)
+		page := NewPage(widgets, limit, func(item widget.Widget) Cursor { return Cursor{At: item.CreatedAt, ID: item.ID} })
+		out := make([]map[string]any, 0, len(page.Data))
+		for _, item := range page.Data {
+			out = append(out, loadWidgetJSON(r, deps, actor.WorkspaceID, item))
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+		httpserver.WriteJSON(w, http.StatusOK, Page[map[string]any]{Data: out, NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
 }
 
@@ -330,7 +337,12 @@ func handleRollbackWidget(deps Deps) http.HandlerFunc {
 func handleListWidgetDomains(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
-		domains, err := deps.Widget.Domains(r.Context(), actor.WorkspaceID, r.PathValue("id"))
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed widget domain cursor.")
+			return
+		}
+		domains, err := deps.Widget.DomainsPage(r.Context(), actor.WorkspaceID, r.PathValue("id"), cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			writeWidgetError(w, r, err)
 			return
@@ -339,7 +351,9 @@ func handleListWidgetDomains(deps Deps) http.HandlerFunc {
 		for i, d := range domains {
 			out[i] = map[string]any{"id": d.ID, "domain": d.Domain, "verified_at": d.VerifiedAt, "created_at": d.CreatedAt}
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(out, limit, func(item map[string]any) Cursor {
+			return Cursor{At: item["created_at"].(time.Time), ID: item["id"].(string)}
+		}))
 	}
 }
 
@@ -1199,13 +1213,12 @@ func handleWidgetListMessages(deps Deps) http.HandlerFunc {
 			writeWidgetError(w, r, err)
 			return
 		}
-		after := int64(0)
-		if raw := query.Get("after"); raw != "" {
-			if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
-				after = parsed
-			}
+		before, after, limit, pageErr := messagePageParams(r)
+		if pageErr != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, pageErr.Error())
+			return
 		}
-		messages, err := deps.Widget.Messages(r.Context(), workspaceID, r.PathValue("id"), visitor, after)
+		messages, hasMore, err := deps.Widget.MessagesPage(r.Context(), workspaceID, r.PathValue("id"), visitor, before, after, limit)
 		if err != nil {
 			writeWidgetError(w, r, err)
 			return
@@ -1214,7 +1227,14 @@ func handleWidgetListMessages(deps Deps) http.HandlerFunc {
 		for i, m := range messages {
 			out[i] = widgetMessageJSONWithAttachments(r, deps, workspaceID, m)
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+		response := map[string]any{"data": out, "has_more": hasMore, "next_cursor": nil}
+		if hasMore && len(messages) > 0 && after == 0 {
+			response["next_cursor"] = Cursor{Value: strconv.FormatInt(messages[0].Sequence, 10)}.Encode()
+		}
+		if hasMore && len(messages) > 0 && after > 0 {
+			response["next_after"] = messages[len(messages)-1].Sequence
+		}
+		httpserver.WriteJSON(w, http.StatusOK, response)
 	}
 }
 
