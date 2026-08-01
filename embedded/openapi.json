@@ -160,6 +160,107 @@
         ]
       }
     },
+    "/v1/workspace/legal-holds": {
+      "get": {
+        "summary": "List workspace legal holds",
+        "operationId": "listWorkspaceLegalHolds",
+        "tags": [
+          "Integrations"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "name": "include_released",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace legal hold history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalHoldPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Place a workspace legal hold",
+        "operationId": "createWorkspaceLegalHold",
+        "tags": [
+          "Integrations"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LegalHoldInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Legal hold created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalHold"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/workspace/legal-holds/{id}/release": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        }
+      ],
+      "post": {
+        "summary": "Release a workspace legal hold",
+        "operationId": "releaseWorkspaceLegalHold",
+        "tags": [
+          "Integrations"
+        ],
+        "responses": {
+          "200": {
+            "description": "Legal hold released",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalHold"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/v1/conversations": {
       "get": {
         "summary": "List resources",
@@ -816,6 +917,35 @@
             "bearerAuth": []
           }
         ]
+      }
+    },
+    "/v1/customers/{id}/360": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        }
+      ],
+      "get": {
+        "summary": "Get the bounded customer 360 context",
+        "operationId": "getCustomer360",
+        "tags": [
+          "Customers"
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent cross-module customer context",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer360"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/v1/events": {
@@ -2641,13 +2771,55 @@
         "summary": "Get a resource",
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Json"
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpsSummary"
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Error"
           }
         },
         "operationId": "getOperationalSummary",
+        "tags": [
+          "Integrations"
+        ]
+      }
+    },
+    "/v1/ops/test-email": {
+      "post": {
+        "summary": "Create a resource",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/Json"
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/Json"
+          },
+          "202": {
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestEmailResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "sendOperationalTestEmail",
         "tags": [
           "Integrations"
         ]
@@ -3253,6 +3425,31 @@
         ]
       }
     },
+    "/v1/analytics/workload": {
+      "get": {
+        "summary": "List resources",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "getAnalyticsWorkload",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
     "/v1/analytics/export.csv": {
       "get": {
         "operationId": "exportAnalyticsCsv",
@@ -3322,6 +3519,61 @@
           }
         },
         "operationId": "createReport",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
+    "/v1/reports/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        }
+      ],
+      "get": {
+        "summary": "Get a resource",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "getReport",
+        "tags": [
+          "Analytics"
+        ]
+      },
+      "patch": {
+        "summary": "Update a resource",
+        "requestBody": {
+          "$ref": "#/components/requestBodies/Json"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "updateReport",
+        "tags": [
+          "Analytics"
+        ]
+      },
+      "delete": {
+        "summary": "Delete a resource",
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "deleteReport",
         "tags": [
           "Analytics"
         ]
@@ -3937,53 +4189,6 @@
         ]
       }
     },
-    "/v1/reports/{id}": {
-      "get": {
-        "operationId": "getReportsId",
-        "summary": "get /v1/reports/{id}",
-        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful response.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "The request is invalid."
-          },
-          "401": {
-            "description": "Authentication is required."
-          },
-          "403": {
-            "description": "The actor lacks the required capability."
-          },
-          "404": {
-            "description": "The resource was not found."
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
     "/v1/openapi.json": {
       "get": {
         "operationId": "getOpenapiJson",
@@ -4386,6 +4591,90 @@
         }
       }
     },
+    "/v1/auth/oauth/{provider}/start": {
+      "get": {
+        "operationId": "getAuthOauthProviderStart",
+        "summary": "get /v1/auth/oauth/{provider}/start",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        }
+      }
+    },
+    "/v1/auth/oauth/{provider}/callback": {
+      "get": {
+        "operationId": "getAuthOauthProviderCallback",
+        "summary": "get /v1/auth/oauth/{provider}/callback",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        }
+      }
+    },
     "/v1/auth/verify-email/resend": {
       "post": {
         "operationId": "postAuthVerifyEmailResend",
@@ -4758,6 +5047,125 @@
         }
       }
     },
+    "/v1/auth/trusted-devices": {
+      "get": {
+        "operationId": "getAuthTrustedDevices",
+        "summary": "get /v1/auth/trusted-devices",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        }
+      }
+    },
+    "/v1/auth/trusted-devices/{id}": {
+      "delete": {
+        "operationId": "deleteAuthTrustedDevicesId",
+        "summary": "delete /v1/auth/trusted-devices/{id}",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        }
+      }
+    },
+    "/v1/auth/trusted-devices/revoke-all": {
+      "post": {
+        "operationId": "postAuthTrustedDevicesRevokeAll",
+        "summary": "post /v1/auth/trusted-devices/revoke-all",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/auth/profile": {
       "patch": {
         "operationId": "patchAuthProfile",
@@ -4938,6 +5346,39 @@
       "get": {
         "operationId": "getAuthMe",
         "summary": "get /v1/auth/me",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        }
+      }
+    },
+    "/v1/auth/oauth/providers": {
+      "get": {
+        "operationId": "getAuthOauthProviders",
+        "summary": "get /v1/auth/oauth/providers",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [],
         "responses": {
@@ -9749,8 +10190,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/PortalTicketPage"
                 }
               }
             }
@@ -9833,8 +10273,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true
+                  "$ref": "#/components/schemas/PortalTicketDetail"
                 }
               }
             }
@@ -15279,6 +15718,454 @@
           }
         }
       },
+      "Customer360": {
+        "type": "object",
+        "required": [
+          "feedback",
+          "feedback_truncated",
+          "surveys",
+          "surveys_truncated",
+          "articles",
+          "articles_truncated",
+          "identities",
+          "identities_truncated",
+          "merges",
+          "merges_truncated"
+        ],
+        "properties": {
+          "feedback": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Customer360Feedback"
+            }
+          },
+          "feedback_truncated": {
+            "type": "boolean"
+          },
+          "surveys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Customer360Survey"
+            }
+          },
+          "surveys_truncated": {
+            "type": "boolean"
+          },
+          "articles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Customer360Article"
+            }
+          },
+          "articles_truncated": {
+            "type": "boolean"
+          },
+          "identities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Customer360Identity"
+            }
+          },
+          "identities_truncated": {
+            "type": "boolean"
+          },
+          "merges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Customer360Merge"
+            }
+          },
+          "merges_truncated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Customer360Feedback": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "board_id",
+          "board_name",
+          "status",
+          "vote_count",
+          "comment_count",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "title": {
+            "type": "string"
+          },
+          "board_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "board_name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "vote_count": {
+            "type": "integer"
+          },
+          "comment_count": {
+            "type": "integer"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "Customer360Survey": {
+        "type": "object",
+        "required": [
+          "id",
+          "survey_id",
+          "survey_name",
+          "survey_type"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "survey_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "survey_name": {
+            "type": "string"
+          },
+          "survey_type": {
+            "type": "string"
+          },
+          "score": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "comment": {
+            "type": "string"
+          },
+          "submitted_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "Customer360Article": {
+        "type": "object",
+        "required": [
+          "id",
+          "article_id",
+          "title",
+          "slug",
+          "helpful",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "article_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "title": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "helpful": {
+            "type": "boolean"
+          },
+          "comment": {
+            "type": "string"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "Customer360Identity": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "value",
+          "is_primary",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "email",
+              "phone"
+            ]
+          },
+          "value": {
+            "type": "string"
+          },
+          "verified_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "is_primary": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "Customer360Merge": {
+        "type": "object",
+        "required": [
+          "id",
+          "winner_id",
+          "loser_id",
+          "moved_counts",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "winner_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "loser_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "moved_counts": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "reversible_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "reversed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "LegalHold": {
+        "type": "object",
+        "required": [
+          "id",
+          "workspace_id",
+          "category",
+          "reason",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "all",
+              "events",
+              "sessions",
+              "webhooks",
+              "surveys",
+              "audit"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "released_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "released_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "LegalHoldInput": {
+        "type": "object",
+        "required": [
+          "category",
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": [
+              "all",
+              "events",
+              "sessions",
+              "webhooks",
+              "surveys",
+              "audit"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        }
+      },
+      "LegalHoldPage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageOf"
+          }
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LegalHold"
+            }
+          }
+        }
+      },
+      "OpsCheck": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "detail"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pass",
+              "warn",
+              "fail"
+            ]
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      },
+      "OpsSummary": {
+        "type": "object",
+        "required": [
+          "jobs",
+          "webhooks",
+          "email",
+          "storage",
+          "realtime",
+          "checks",
+          "computed_at"
+        ],
+        "properties": {
+          "jobs": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "webhooks": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "email": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "storage": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "realtime": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpsCheck"
+            }
+          },
+          "computed_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "TestEmailResult": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "recipient",
+          "status"
+        ],
+        "properties": {
+          "job_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "recipient": {
+            "type": "string",
+            "format": "email"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued"
+            ]
+          }
+        }
+      },
       "FieldValidation": {
         "type": "object",
         "properties": {
@@ -15603,6 +16490,166 @@
             "items": {
               "$ref": "#/components/schemas/FieldDefinition"
             }
+          }
+        }
+      },
+      "PortalTicket": {
+        "type": "object",
+        "required": [
+          "id",
+          "number",
+          "prefix",
+          "title",
+          "description",
+          "status",
+          "priority",
+          "conversation_id",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "number": {
+            "type": "integer"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "string"
+          },
+          "conversation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "PortalMessage": {
+        "type": "object",
+        "required": [
+          "id",
+          "conversation_id",
+          "kind",
+          "author_type",
+          "author_id",
+          "author_name",
+          "body",
+          "delivery",
+          "sequence",
+          "edited_at",
+          "created_at",
+          "attachments"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "conversation_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "author_type": {
+            "type": "string"
+          },
+          "author_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "author_name": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "delivery": {
+            "type": "string"
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "edited_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "attachments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Attachment"
+            }
+          }
+        }
+      },
+      "PortalTicketPage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageOf"
+          }
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PortalTicket"
+            }
+          }
+        }
+      },
+      "PortalTicketDetail": {
+        "type": "object",
+        "required": [
+          "ticket",
+          "messages",
+          "has_more",
+          "next_cursor"
+        ],
+        "properties": {
+          "ticket": {
+            "$ref": "#/components/schemas/PortalTicket"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PortalMessage"
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
