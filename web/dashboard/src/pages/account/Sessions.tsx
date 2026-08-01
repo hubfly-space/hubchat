@@ -6,13 +6,14 @@ import {
   Callout,
   Card,
   CardBody,
+  EmptyState,
+  type Paginated,
   Page,
   PageBody,
   PageHeader,
-  QueryBoundary,
   Section,
+  useInfinite,
   useMutation,
-  useQuery,
 } from "@hubchat/shared";
 import { Laptop, LogOut, Smartphone } from "lucide-react";
 
@@ -28,8 +29,11 @@ type SessionInfo = {
 
 /** Active session management (§11.1). */
 export default function Sessions() {
-  const sessions = useQuery<{ data: SessionInfo[] }>(["auth-sessions"], (signal) =>
-    api.get("/auth/sessions", { signal }),
+  const sessions = useInfinite<SessionInfo>(["auth-sessions"], (cursor, signal) => {
+    const params = new URLSearchParams({ limit: "25" });
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<SessionInfo>>(`/auth/sessions?${params.toString()}`, { signal });
+  }
   );
 
   const revokeOthers = useMutation<void, unknown>(
@@ -82,10 +86,18 @@ export default function Sessions() {
         <Section title="Browser sessions">
           <Card>
             <CardBody className="p-0">
-              <QueryBoundary query={sessions}>
-                {({ data }) => (
+              {sessions.isLoading ? (
+                <p className="p-4 text-sm text-fg-muted">Loading sessions…</p>
+              ) : sessions.error ? (
+                <div className="p-4">
+                  <EmptyState title="Sessions unavailable" description="Could not load your active sessions." action={<Button variant="secondary" size="sm" onClick={sessions.refetch}>Try again</Button>} />
+                </div>
+              ) : sessions.items.length === 0 ? (
+                <div className="p-4"><EmptyState title="No active sessions" description="This account has no other active browser sessions." /></div>
+              ) : (
+                <>
                   <ul className="divide-y divide-line-subtle">
-                    {data.map((session) => {
+                    {sessions.items.map((session) => {
                       const Icon = /mobile|iphone|android/i.test(session.user_agent)
                         ? Smartphone
                         : Laptop;
@@ -122,8 +134,9 @@ export default function Sessions() {
                       );
                     })}
                   </ul>
-                )}
-              </QueryBoundary>
+                  {sessions.hasMore && <div className="flex justify-center border-t border-line-subtle p-3"><Button variant="secondary" size="sm" loading={sessions.isFetching} onClick={() => void sessions.fetchNext()}>Load more sessions</Button></div>}
+                </>
+              )}
             </CardBody>
           </Card>
         </Section>
