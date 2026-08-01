@@ -624,6 +624,129 @@
         ]
       }
     },
+    "/v1/conversations/{id}/links": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        }
+      ],
+      "get": {
+        "summary": "List conversation relationships",
+        "operationId": "listConversationLinks",
+        "tags": [
+          "Conversations"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Conversation relationships",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationLinkPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Link two conversations",
+        "operationId": "linkConversation",
+        "tags": [
+          "Conversations"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationLinkInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Conversation relationship created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationLink"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/conversations/{id}/links/{targetID}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        },
+        {
+          "name": "targetID",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Id"
+          }
+        }
+      ],
+      "delete": {
+        "summary": "Remove a conversation relationship",
+        "operationId": "unlinkConversation",
+        "tags": [
+          "Conversations"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "name": "relation",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "related",
+                "duplicate_of",
+                "follow_up"
+              ],
+              "default": "related"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Conversation relationship removed"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/v1/tickets": {
       "get": {
         "summary": "List resources",
@@ -15770,6 +15893,48 @@
           }
         }
       },
+      "ConversationLink": {
+        "type": "object",
+        "required": [
+          "id",
+          "workspace_id",
+          "source_id",
+          "target_id",
+          "relation",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "source_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "target_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "relation": {
+            "type": "string",
+            "enum": [
+              "related",
+              "duplicate_of",
+              "follow_up"
+            ]
+          },
+          "created_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
       "Message": {
         "type": "object",
         "required": [
@@ -16892,6 +17057,21 @@
           }
         }
       },
+      "ConversationLinkPage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageOf"
+          }
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConversationLink"
+            }
+          }
+        }
+      },
       "MessagePage": {
         "allOf": [
           {
@@ -17179,6 +17359,27 @@
             "items": {
               "$ref": "#/components/schemas/Id"
             }
+          }
+        }
+      },
+      "ConversationLinkInput": {
+        "type": "object",
+        "required": [
+          "target_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "target_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "relation": {
+            "type": "string",
+            "enum": [
+              "related",
+              "duplicate_of",
+              "follow_up"
+            ],
+            "default": "related"
           }
         }
       },

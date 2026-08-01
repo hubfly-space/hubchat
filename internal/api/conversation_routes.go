@@ -881,16 +881,24 @@ func handleMergeConversation(deps Deps) http.HandlerFunc {
 func handleListConversationLinks(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
-		links, err := deps.Conversation.Links(r.Context(), actor.WorkspaceID, r.PathValue("id"))
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed conversation link cursor.")
+			return
+		}
+		links, err := deps.Conversation.LinksPage(r.Context(), actor.WorkspaceID, r.PathValue("id"), cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			writeConversationError(w, r, err)
 			return
 		}
-		out := make([]map[string]any, 0, len(links))
-		for _, link := range links {
+		page := NewPage(links, limit, func(link conversation.ConversationLink) Cursor {
+			return Cursor{At: link.CreatedAt, ID: link.ID}
+		})
+		out := make([]map[string]any, 0, len(page.Data))
+		for _, link := range page.Data {
 			out = append(out, conversationLinkJSON(link))
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+		httpserver.WriteJSON(w, http.StatusOK, Page[map[string]any]{Data: out, NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
 }
 
