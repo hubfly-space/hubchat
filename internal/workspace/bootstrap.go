@@ -61,6 +61,7 @@ type MemberProfile struct {
 	Email      string
 	AvatarURL  *string
 	Role       string
+	Active     bool
 	Presence   string
 	Accepting  bool
 	TeamIDs    []string
@@ -217,6 +218,7 @@ func (r *repository) listForUser(ctx context.Context, userID string) ([]Workspac
 func (r *repository) listMembers(ctx context.Context, workspaceID string) ([]MemberProfile, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT m.id, u.id, u.name, u.email::text, u.avatar_url, m.role,
+		       m.deactivated_at IS NULL,
 		       m.presence, m.accepting_conversations, m.last_seen_at, m.created_at,
 		       coalesce(
 		           array_agg(tm.team_id) FILTER (WHERE tm.team_id IS NOT NULL),
@@ -226,7 +228,7 @@ func (r *repository) listMembers(ctx context.Context, workspaceID string) ([]Mem
 		JOIN users u ON u.id = m.user_id
 		LEFT JOIN team_members tm ON tm.member_id = m.id
 		WHERE m.workspace_id = $1
-		GROUP BY m.id, u.id, u.name, u.email, u.avatar_url, m.role,
+		GROUP BY m.id, u.id, u.name, u.email, u.avatar_url, m.role, m.deactivated_at,
 		         m.presence, m.accepting_conversations, m.last_seen_at, m.created_at
 		ORDER BY u.name
 	`, workspaceID)
@@ -239,7 +241,7 @@ func (r *repository) listMembers(ctx context.Context, workspaceID string) ([]Mem
 	for rows.Next() {
 		var m MemberProfile
 		if err := rows.Scan(
-			&m.ID, &m.UserID, &m.Name, &m.Email, &m.AvatarURL, &m.Role,
+			&m.ID, &m.UserID, &m.Name, &m.Email, &m.AvatarURL, &m.Role, &m.Active,
 			&m.Presence, &m.Accepting, &m.LastSeenAt, &m.CreatedAt, &m.TeamIDs,
 		); err != nil {
 			return nil, err
@@ -266,13 +268,14 @@ func (r *repository) listMembersPage(ctx context.Context, workspaceID, query, be
 	args = append(args, limit)
 	rows, err := r.pool.Query(ctx, `
 		SELECT m.id, u.id, u.name, u.email::text, u.avatar_url, m.role,
+		       m.deactivated_at IS NULL,
 		       m.presence, m.accepting_conversations, m.last_seen_at, m.created_at,
 		       coalesce(array_agg(tm.team_id) FILTER (WHERE tm.team_id IS NOT NULL), '{}') AS team_ids
 		FROM workspace_members m
 		JOIN users u ON u.id = m.user_id
 		LEFT JOIN team_members tm ON tm.member_id = m.id
 		WHERE `+where+`
-		GROUP BY m.id, u.id, u.name, u.email, u.avatar_url, m.role,
+		GROUP BY m.id, u.id, u.name, u.email, u.avatar_url, m.role, m.deactivated_at,
 		         m.presence, m.accepting_conversations, m.last_seen_at, m.created_at
 		ORDER BY u.name, m.id
 		LIMIT $`+strconv.Itoa(len(args)), args...)
@@ -283,7 +286,7 @@ func (r *repository) listMembersPage(ctx context.Context, workspaceID, query, be
 	out := []MemberProfile{}
 	for rows.Next() {
 		var m MemberProfile
-		if err := rows.Scan(&m.ID, &m.UserID, &m.Name, &m.Email, &m.AvatarURL, &m.Role, &m.Presence, &m.Accepting, &m.LastSeenAt, &m.CreatedAt, &m.TeamIDs); err != nil {
+		if err := rows.Scan(&m.ID, &m.UserID, &m.Name, &m.Email, &m.AvatarURL, &m.Role, &m.Active, &m.Presence, &m.Accepting, &m.LastSeenAt, &m.CreatedAt, &m.TeamIDs); err != nil {
 			return nil, err
 		}
 		out = append(out, m)

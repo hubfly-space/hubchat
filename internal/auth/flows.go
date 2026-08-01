@@ -575,6 +575,16 @@ func (s *Service) RevokeOtherSessions(ctx context.Context, userID, keepToken str
 	return s.repo.revokeAllSessions(ctx, userID, optionalHash(keepToken))
 }
 
+// RevokeAllCredentials is used by directory deprovisioning. A suspended
+// member must not retain a valid browser session or trusted-device bypass
+// after the membership boundary rejects future requests.
+func (s *Service) RevokeAllCredentials(ctx context.Context, userID string) error {
+	if err := s.repo.revokeAllSessions(ctx, userID, nil); err != nil {
+		return err
+	}
+	return s.repo.revokeAllTrustedDevices(ctx, userID)
+}
+
 // UpdateProfile changes the display name and avatar.
 func (s *Service) UpdateProfile(ctx context.Context, userID, name, avatarURL string) (*User, error) {
 	if err := s.repo.updateProfile(ctx, userID, name, avatarURL); err != nil {
