@@ -24,12 +24,14 @@ import {
   Tooltip,
   api,
   idempotencyKey,
+  useInfinite,
   useMutation,
   useQuery,
   formatPercent,
   formatRelativeShort,
   type BadgeTone,
   type Column,
+  type Paginated,
 } from "@hubchat/shared";
 import { RefreshCw, RotateCcw, Send, Trash2, Webhook } from "lucide-react";
 import { useState } from "react";
@@ -69,7 +71,11 @@ export default function WebhookDetail() {
   const [tab, setTab] = useState("deliveries");
   const [rotatedSecret, setRotatedSecret] = useState<string | null>(null);
   const endpointQuery = useQuery<WebhookEndpoint>(["webhooks", endpointId], (signal) => api.get(`/webhooks/${endpointId}`, { signal }), { enabled: Boolean(endpointId) });
-  const deliveriesQuery = useQuery<{ data: WebhookDelivery[] }>(["webhook-deliveries", endpointId], (signal) => api.get(`/webhooks/${endpointId}/deliveries`, { signal }), { enabled: Boolean(endpointId) });
+  const deliveriesQuery = useInfinite<WebhookDelivery>(endpointId ? ["webhook-deliveries", endpointId] : null, (cursor, signal) => {
+    const params = new URLSearchParams({ limit: "25" });
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<WebhookDelivery>>(`/webhooks/${endpointId}/deliveries?${params.toString()}`, { signal });
+  }, { enabled: Boolean(endpointId) });
   const test = useMutation<void, WebhookDelivery>(() => api.post(`/webhooks/${endpointId}/test`, {}, { idempotencyKey: idempotencyKey() }), { invalidates: [["webhook-deliveries", endpointId]] });
   const replay = useMutation<string, WebhookDelivery>((deliveryID) => api.post(`/webhooks/${endpointId}/deliveries/${deliveryID}/replay`, {}, { idempotencyKey: idempotencyKey() }), { invalidates: [["webhook-deliveries", endpointId]] });
   const rotate = useMutation<void, { secret: string }>(() => api.post(`/webhooks/${endpointId}/rotate-secret`, {}, { idempotencyKey: idempotencyKey() }), { onSuccess: (result) => setRotatedSecret(result.secret), invalidates: [["webhooks", endpointId]] });
@@ -91,7 +97,7 @@ export default function WebhookDetail() {
     );
   }
 
-  const deliveries = deliveriesQuery.data?.data ?? [];
+  const deliveries = deliveriesQuery.items;
   const total = endpoint.success_24h + endpoint.failure_24h;
 
   const columns: Column<WebhookDelivery>[] = [
@@ -243,34 +249,52 @@ export default function WebhookDetail() {
             <Section title="Recent deliveries">
               <Card>
                 <CardBody className="p-0">
-                  <DataTable
-                    aria-label="Webhook deliveries"
-                    rows={deliveries}
-                    columns={columns}
-                    rowKey={(delivery) => delivery.id}
-                    rowActions={(delivery) =>
-                      delivery.status === "failed" || delivery.status === "exhausted" ? (
-                        <Tooltip content="Replay this delivery">
-                          <Button
-                            variant="ghost"
-                            size="xs"
-                            iconOnly
-                            aria-label="Replay"
-                            leading={<RefreshCw />}
-                            onClick={() => void replay.mutate(delivery.id).catch(() => {})}
+                  {deliveriesQuery.isLoading ? (
+                    <p className="p-5 text-sm text-fg-muted">Loading delivery history…</p>
+                  ) : deliveriesQuery.error ? (
+                    <div className="flex items-center justify-between gap-3 p-5">
+                      <p className="text-sm text-danger">Could not load delivery history.</p>
+                      <Button variant="ghost" size="xs" onClick={deliveriesQuery.refetch}>Retry</Button>
+                    </div>
+                  ) : (
+                    <>
+                      <DataTable
+                        aria-label="Webhook deliveries"
+                        rows={deliveries}
+                        columns={columns}
+                        rowKey={(delivery) => delivery.id}
+                        rowActions={(delivery) =>
+                          delivery.status === "failed" || delivery.status === "exhausted" ? (
+                            <Tooltip content="Replay this delivery">
+                              <Button
+                                variant="ghost"
+                                size="xs"
+                                iconOnly
+                                aria-label="Replay"
+                                leading={<RefreshCw />}
+                                onClick={() => void replay.mutate(delivery.id).catch(() => {})}
+                              />
+                            </Tooltip>
+                          ) : null
+                        }
+                        empty={
+                          <EmptyState
+                            icon={Webhook}
+                            size="sm"
+                            title="No deliveries yet"
+                            description="Send a test event to confirm your endpoint is reachable."
                           />
-                        </Tooltip>
-                      ) : null
-                    }
-                    empty={
-                      <EmptyState
-                        icon={Webhook}
-                        size="sm"
-                        title="No deliveries yet"
-                        description="Send a test event to confirm your endpoint is reachable."
+                        }
                       />
-                    }
-                  />
+                      {deliveriesQuery.hasMore && (
+                        <div className="flex justify-center border-t border-line-subtle p-3">
+                          <Button variant="secondary" size="sm" loading={deliveriesQuery.isFetching} onClick={() => void deliveriesQuery.fetchNext()}>
+                            Load older deliveries
+                          </Button>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </CardBody>
               </Card>
             </Section>

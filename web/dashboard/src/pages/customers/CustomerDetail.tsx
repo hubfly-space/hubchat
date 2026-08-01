@@ -32,6 +32,7 @@ import {
   TabsList,
   TicketStatusBadge,
   Tooltip,
+  useInfinite,
   useMutation,
   useQuery,
   formatDateTime,
@@ -41,6 +42,7 @@ import {
   type Conversation,
   type Customer,
   type Ticket,
+  type Paginated,
 } from "@hubchat/shared";
 import {
   Combine,
@@ -107,31 +109,43 @@ function CustomerDetailBody({ customer }: { customer: Customer }) {
     (signal) => api.get(`/companies/${customer.company_ids[0]}`, { signal }),
   );
 
-  const conversationsQuery = useQuery<{ data: Conversation[] }>(
+  const conversationsQuery = useInfinite<Conversation>(
     ["conversations", "by-customer", customer.id],
-    (signal) =>
-      api.get(
-        `/conversations?customer_id=${customer.id}&state=new,open,pending,waiting_for_customer,waiting_for_support,snoozed,resolved,closed,spam`,
-        { signal },
-      ),
+    (cursor, signal) => {
+      const params = new URLSearchParams({ customer_id: customer.id, state: "new,open,pending,waiting_for_customer,waiting_for_support,snoozed,resolved,closed,spam", limit: "50" });
+      if (cursor) params.set("cursor", cursor);
+      return api.get<Paginated<Conversation>>(`/conversations?${params.toString()}`, { signal });
+    },
   );
-  const ticketsQuery = useQuery<{ data: Ticket[] }>(
+  const ticketsQuery = useInfinite<Ticket>(
     ["tickets", "by-customer", customer.id],
-    (signal) => api.get(`/tickets?customer_id=${customer.id}&status=new,open,pending,on_hold,resolved,closed`, { signal }),
+    (cursor, signal) => {
+      const params = new URLSearchParams({ customer_id: customer.id, status: "new,open,pending,on_hold,resolved,closed", limit: "50" });
+      if (cursor) params.set("cursor", cursor);
+      return api.get<Paginated<Ticket>>(`/tickets?${params.toString()}`, { signal });
+    },
   );
-  const timelineQuery = useQuery<{ data: CustomerEvent[] }>(
+  const timelineQuery = useInfinite<CustomerEvent>(
     ["customer-timeline", customer.id],
-    (signal) => api.get(`/customers/${customer.id}/timeline`, { signal }),
+    (cursor, signal) => {
+      const params = new URLSearchParams({ limit: "50" });
+      if (cursor) params.set("cursor", cursor);
+      return api.get<Paginated<CustomerEvent>>(`/customers/${customer.id}/timeline?${params.toString()}`, { signal });
+    },
   );
-  const sessionsQuery = useQuery<{ data: ContactSession[] }>(
+  const sessionsQuery = useInfinite<ContactSession>(
     ["customer-sessions", customer.id],
-    (signal) => api.get(`/customers/${customer.id}/sessions`, { signal }),
+    (cursor, signal) => {
+      const params = new URLSearchParams({ limit: "50" });
+      if (cursor) params.set("cursor", cursor);
+      return api.get<Paginated<ContactSession>>(`/customers/${customer.id}/sessions?${params.toString()}`, { signal });
+    },
   );
 
-  const theirConversations = conversationsQuery.data?.data ?? [];
-  const theirTickets = ticketsQuery.data?.data ?? [];
-  const events = timelineQuery.data?.data ?? [];
-  const sessions = sessionsQuery.data?.data ?? [];
+  const theirConversations = conversationsQuery.items;
+  const theirTickets = ticketsQuery.items;
+  const events = timelineQuery.items;
+  const sessions = sessionsQuery.items;
 
   const deleteCustomer = useMutation<void, unknown>(
     () => api.delete(`/customers/${customer.id}`),
@@ -274,29 +288,45 @@ function CustomerDetailBody({ customer }: { customer: Customer }) {
                 <Section title="Event timeline" description="Structured events sent by your application (§6.10).">
                   <Card>
                     <CardBody className="p-0">
-                      {events.length === 0 ? (
+                      {timelineQuery.isLoading ? (
+                        <p className="p-5 text-sm text-fg-muted">Loading customer events…</p>
+                      ) : timelineQuery.error ? (
+                        <div className="flex items-center justify-between gap-3 p-5">
+                          <p className="text-sm text-danger">Could not load customer events.</p>
+                          <Button variant="ghost" size="xs" onClick={timelineQuery.refetch}>Retry</Button>
+                        </div>
+                      ) : events.length === 0 ? (
                         <EmptyState size="sm" title="No events yet" />
                       ) : (
-                        <ol className="divide-y divide-line-subtle">
-                          {events.map((event) => (
-                            <li key={event.id} className="flex items-start gap-3 px-4 py-3">
-                              <span
-                                className={
-                                  event.type.includes("fail")
-                                    ? "mt-1.5 size-2 shrink-0 rounded-full bg-danger"
-                                    : "mt-1.5 size-2 shrink-0 rounded-full bg-fg-disabled"
-                                }
-                              />
-                              <div className="min-w-0 flex-1">
-                                <p className="font-mono text-xs text-fg">{event.type}</p>
-                                <p className="mt-1 font-mono text-2xs text-fg-muted">{JSON.stringify(event.payload)}</p>
-                              </div>
-                              <span className="shrink-0 text-2xs tabular text-fg-muted">
-                                {formatRelativeShort(event.occurred_at, new Date())} ago
-                              </span>
-                            </li>
-                          ))}
-                        </ol>
+                        <>
+                          <ol className="divide-y divide-line-subtle">
+                            {events.map((event) => (
+                              <li key={event.id} className="flex items-start gap-3 px-4 py-3">
+                                <span
+                                  className={
+                                    event.type.includes("fail")
+                                      ? "mt-1.5 size-2 shrink-0 rounded-full bg-danger"
+                                      : "mt-1.5 size-2 shrink-0 rounded-full bg-fg-disabled"
+                                  }
+                                />
+                                <div className="min-w-0 flex-1">
+                                  <p className="font-mono text-xs text-fg">{event.type}</p>
+                                  <p className="mt-1 font-mono text-2xs text-fg-muted">{JSON.stringify(event.payload)}</p>
+                                </div>
+                                <span className="shrink-0 text-2xs tabular text-fg-muted">
+                                  {formatRelativeShort(event.occurred_at, new Date())} ago
+                                </span>
+                              </li>
+                            ))}
+                          </ol>
+                          {timelineQuery.hasMore && (
+                            <div className="flex justify-center border-t border-line-subtle p-3">
+                              <Button variant="secondary" size="sm" loading={timelineQuery.isFetching} onClick={() => void timelineQuery.fetchNext()}>
+                                Load older events
+                              </Button>
+                            </div>
+                          )}
+                        </>
                       )}
                     </CardBody>
                   </Card>
@@ -306,29 +336,36 @@ function CustomerDetailBody({ customer }: { customer: Customer }) {
               <TabsContent value="conversations">
                 <Card>
                   <CardBody className="p-0">
-                    {theirConversations.length === 0 ? (
+                    {conversationsQuery.isLoading ? (
+                      <p className="p-5 text-sm text-fg-muted">Loading conversations…</p>
+                    ) : conversationsQuery.error ? (
+                      <div className="flex items-center justify-between gap-3 p-5"><p className="text-sm text-danger">Could not load conversations.</p><Button variant="ghost" size="xs" onClick={conversationsQuery.refetch}>Retry</Button></div>
+                    ) : theirConversations.length === 0 ? (
                       <EmptyState size="sm" title="No conversations yet" />
                     ) : (
-                      <ul className="divide-y divide-line-subtle">
-                        {theirConversations.map((conversation) => (
-                          <li key={conversation.id}>
-                            <Link
-                              to={`/inbox/all/${conversation.id}`}
-                              className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-hover"
-                            >
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-sm text-fg">
-                                  {conversation.subject ?? conversation.last_message_preview}
+                      <>
+                        <ul className="divide-y divide-line-subtle">
+                          {theirConversations.map((conversation) => (
+                            <li key={conversation.id}>
+                              <Link
+                                to={`/inbox/all/${conversation.id}`}
+                                className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-hover"
+                              >
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-sm text-fg">
+                                    {conversation.subject ?? conversation.last_message_preview}
+                                  </span>
+                                  <span className="block truncate text-xs text-fg-muted">
+                                    {conversation.message_count} messages · {formatRelativeShort(conversation.last_message_at, new Date())} ago
+                                  </span>
                                 </span>
-                                <span className="block truncate text-xs text-fg-muted">
-                                  {conversation.message_count} messages · {formatRelativeShort(conversation.last_message_at, new Date())} ago
-                                </span>
-                              </span>
-                              <ConversationStateBadge state={conversation.state} />
-                            </Link>
-                          </li>
-                        ))}
-                      </ul>
+                                <ConversationStateBadge state={conversation.state} />
+                              </Link>
+                            </li>
+                          ))}
+                        </ul>
+                        {conversationsQuery.hasMore && <div className="flex justify-center border-t border-line-subtle p-3"><Button variant="secondary" size="sm" loading={conversationsQuery.isFetching} onClick={() => void conversationsQuery.fetchNext()}>Load older conversations</Button></div>}
+                      </>
                     )}
                   </CardBody>
                 </Card>
@@ -337,25 +374,32 @@ function CustomerDetailBody({ customer }: { customer: Customer }) {
               <TabsContent value="tickets">
                 <Card>
                   <CardBody className="p-0">
-                    {theirTickets.length === 0 ? (
+                    {ticketsQuery.isLoading ? (
+                      <p className="p-5 text-sm text-fg-muted">Loading tickets…</p>
+                    ) : ticketsQuery.error ? (
+                      <div className="flex items-center justify-between gap-3 p-5"><p className="text-sm text-danger">Could not load tickets.</p><Button variant="ghost" size="xs" onClick={ticketsQuery.refetch}>Retry</Button></div>
+                    ) : theirTickets.length === 0 ? (
                       <EmptyState size="sm" title="No tickets yet" />
                     ) : (
-                      <ul className="divide-y divide-line-subtle">
-                        {theirTickets.map((ticket) => (
-                          <li key={ticket.id}>
-                            <Link
-                              to={`/tickets/${ticket.id}`}
-                              className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-hover"
-                            >
-                              <span className="shrink-0 font-mono text-xs text-fg-muted">
-                                {ticket.prefix}-{ticket.number}
-                              </span>
-                              <span className="min-w-0 flex-1 truncate text-sm text-fg">{ticket.title}</span>
-                              <TicketStatusBadge status={ticket.status} />
-                            </Link>
-                          </li>
-                        ))}
-                      </ul>
+                      <>
+                        <ul className="divide-y divide-line-subtle">
+                          {theirTickets.map((ticket) => (
+                            <li key={ticket.id}>
+                              <Link
+                                to={`/tickets/${ticket.id}`}
+                                className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-hover"
+                              >
+                                <span className="shrink-0 font-mono text-xs text-fg-muted">
+                                  {ticket.prefix}-{ticket.number}
+                                </span>
+                                <span className="min-w-0 flex-1 truncate text-sm text-fg">{ticket.title}</span>
+                                <TicketStatusBadge status={ticket.status} />
+                              </Link>
+                            </li>
+                          ))}
+                        </ul>
+                        {ticketsQuery.hasMore && <div className="flex justify-center border-t border-line-subtle p-3"><Button variant="secondary" size="sm" loading={ticketsQuery.isFetching} onClick={() => void ticketsQuery.fetchNext()}>Load older tickets</Button></div>}
+                      </>
                     )}
                   </CardBody>
                 </Card>
@@ -368,22 +412,29 @@ function CustomerDetailBody({ customer }: { customer: Customer }) {
               <TabsContent value="sessions">
                 <Card>
                   <CardBody className="p-0">
-                    {sessions.length === 0 ? (
+                    {sessionsQuery.isLoading ? (
+                      <p className="p-5 text-sm text-fg-muted">Loading sessions…</p>
+                    ) : sessionsQuery.error ? (
+                      <div className="flex items-center justify-between gap-3 p-5"><p className="text-sm text-danger">Could not load sessions.</p><Button variant="ghost" size="xs" onClick={sessionsQuery.refetch}>Retry</Button></div>
+                    ) : sessions.length === 0 ? (
                       <EmptyState size="sm" title="No sessions recorded" description="Sessions are recorded once the widget SDK is connected." />
                     ) : (
-                      <ul className="divide-y divide-line-subtle">
-                        {sessions.map((session) => (
-                          <li key={session.id} className="flex items-center gap-3 px-4 py-3">
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-sm text-fg">{session.current_url ?? "No page recorded"}</span>
-                              <span className="block text-xs text-fg-muted">
-                                {[session.browser, session.os, session.device].filter(Boolean).join(" · ") || "Unknown device"}
+                      <>
+                        <ul className="divide-y divide-line-subtle">
+                          {sessions.map((session) => (
+                            <li key={session.id} className="flex items-center gap-3 px-4 py-3">
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm text-fg">{session.current_url ?? "No page recorded"}</span>
+                                <span className="block text-xs text-fg-muted">
+                                  {[session.browser, session.os, session.device].filter(Boolean).join(" · ") || "Unknown device"}
+                                </span>
                               </span>
-                            </span>
-                            <Badge tone={session.ended_at ? "neutral" : "success"}>{session.ended_at ? "Ended" : "Active"}</Badge>
-                          </li>
-                        ))}
-                      </ul>
+                              <Badge tone={session.ended_at ? "neutral" : "success"}>{session.ended_at ? "Ended" : "Active"}</Badge>
+                            </li>
+                          ))}
+                        </ul>
+                        {sessionsQuery.hasMore && <div className="flex justify-center border-t border-line-subtle p-3"><Button variant="secondary" size="sm" loading={sessionsQuery.isFetching} onClick={() => void sessionsQuery.fetchNext()}>Load older sessions</Button></div>}
+                      </>
                     )}
                   </CardBody>
                 </Card>

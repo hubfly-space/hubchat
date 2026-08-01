@@ -24,11 +24,13 @@ import {
   idempotencyKey,
   formatDate,
   formatRelativeShort,
+  Pagination,
   useMutation,
-  useQuery,
+  useInfinite,
   type ApiKey,
   type Column,
 } from "@hubchat/shared";
+import type { Paginated } from "@hubchat/shared";
 import { KeyRound, Plus, RefreshCw, ShieldAlert, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useWorkspace } from "../../app/workspace-context";
@@ -55,7 +57,7 @@ export default function ApiKeys() {
   const [scopes, setScopes] = useState<string[]>(["conversation.read"]);
   const [createdToken, setCreatedToken] = useState<string | null>(null);
   const [tokenAction, setTokenAction] = useState<"created" | "rotated">("created");
-  const query = useQuery<{ data: ApiKey[] }>(["api-keys"], (signal) => api.get("/api-keys", { signal }));
+  const query = useInfinite<ApiKey>(["api-keys"], (cursor, signal) => api.get<Paginated<ApiKey>>("/api-keys?limit=25" + (cursor ? "&cursor=" + encodeURIComponent(cursor) : ""), { signal }));
   const create = useMutation<{ name: string; scopes: string[]; expires_at: string }, { token: string }>(
     (input) => api.post<{ token: string }>("/api-keys", input, { idempotencyKey: idempotencyKey() }),
     { invalidates: [["api-keys"]], onSuccess: (result) => setCreatedToken(result.token) },
@@ -68,7 +70,7 @@ export default function ApiKeys() {
     (key) => api.post<{ token: string }>(`/api-keys/${encodeURIComponent(key.id)}/rotate`, { name: key.name, scopes: key.scopes, expires_at: "" }, { idempotencyKey: idempotencyKey() }),
     { invalidates: [["api-keys"]], onSuccess: (result) => { setRotating(null); setTokenAction("rotated"); setCreatedToken(result.token); setCreateOpen(true); } },
   );
-  const keys = query.data?.data ?? [];
+  const keys = query.items;
 
   const columns: Column<ApiKey>[] = [
     {
@@ -235,7 +237,8 @@ export default function ApiKeys() {
                 }
               />
               {query.isLoading && <p className="p-4 text-sm text-fg-muted">Loading API keys…</p>}
-              {query.isError && <p className="p-4 text-sm text-danger">{query.error instanceof ApiError ? query.error.message : "Could not load API keys."}</p>}
+              {Boolean(query.error) && <p className="p-4 text-sm text-danger">{query.error instanceof ApiError ? query.error.message : "Could not load API keys."}</p>}
+              <Pagination hasPrevious={false} hasNext={query.hasMore} onPrevious={() => undefined} onNext={() => void query.fetchNext()} summary={keys.length + " key" + (keys.length === 1 ? "" : "s") + " loaded"} />
             </CardBody>
           </Card>
         </Section>

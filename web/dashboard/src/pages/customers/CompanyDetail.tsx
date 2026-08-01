@@ -19,17 +19,20 @@ import {
   Page,
   PageBody,
   PageHeader,
+  Pagination,
   QueryBoundary,
   Section,
   Select,
   TagChip,
   TicketStatusBadge,
   useMutation,
+  useInfinite,
   useQuery,
   formatRelativeShort,
   type Company,
   type Customer,
   type Ticket,
+  type Paginated,
 } from "@hubchat/shared";
 import { Building2, ExternalLink, Pencil, Plus } from "lucide-react";
 import { useState } from "react";
@@ -63,14 +66,16 @@ function CompanyDetailBody({ company }: { company: Company }) {
 
   const owner = company.owner_id ? members.find((m) => m.id === company.owner_id) : undefined;
 
-  const contacts = useQuery<{ data: Customer[] }>(
-    ["companies", company.id, "customers"],
-    (signal) => api.get(`/companies/${company.id}/customers`, { signal }),
-  );
-  const openTickets = useQuery<{ data: Ticket[] }>(
-    ["tickets", "by-company", company.id],
-    (signal) => api.get(`/tickets?company_id=${company.id}`, { signal }),
-  );
+  const contacts = useInfinite<Customer>(["companies", company.id, "customers"], (cursor, signal) => {
+    const params = new URLSearchParams({ limit: "25" });
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<Customer>>(`/companies/${company.id}/customers?${params.toString()}`, { signal });
+  });
+  const openTickets = useInfinite<Ticket>(["tickets", "by-company", company.id], (cursor, signal) => {
+    const params = new URLSearchParams({ company_id: company.id, limit: "25" });
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<Ticket>>(`/tickets?${params.toString()}`, { signal });
+  });
 
   const attributeEntries = Object.entries(company.attributes);
 
@@ -124,11 +129,11 @@ function CompanyDetailBody({ company }: { company: Company }) {
             >
               <Card>
                 <CardBody className="p-0">
-                  {(contacts.data?.data ?? []).length === 0 ? (
+                  {contacts.isLoading ? <p className="px-4 py-6 text-sm text-fg-muted">Loading contacts…</p> : contacts.error ? <EmptyState size="sm" title="Contacts unavailable" description={contacts.error instanceof ApiError ? contacts.error.message : "Try again in a moment."} action={<Button variant="secondary" size="sm" onClick={contacts.refetch}>Try again</Button>} /> : contacts.items.length === 0 ? (
                     <EmptyState size="sm" title="No contacts linked yet" />
                   ) : (
                     <ul className="divide-y divide-line-subtle">
-                      {(contacts.data?.data ?? []).map((customer) => (
+                      {contacts.items.map((customer) => (
                         <li key={customer.id}>
                           <Link
                             to={`/customers/${customer.id}`}
@@ -148,6 +153,7 @@ function CompanyDetailBody({ company }: { company: Company }) {
                       ))}
                     </ul>
                   )}
+                  {!contacts.isLoading && !contacts.error && contacts.items.length > 0 && <Pagination hasPrevious={false} hasNext={contacts.hasMore} onPrevious={() => undefined} onNext={() => void contacts.fetchNext()} summary={`${contacts.items.length} contact${contacts.items.length === 1 ? "" : "s"} loaded`} />}
                 </CardBody>
               </Card>
             </Section>
@@ -155,11 +161,11 @@ function CompanyDetailBody({ company }: { company: Company }) {
             <Section title="Recent tickets">
               <Card>
                 <CardBody className="p-0">
-                  {(openTickets.data?.data ?? []).length === 0 ? (
+                  {openTickets.isLoading ? <p className="px-4 py-6 text-sm text-fg-muted">Loading tickets…</p> : openTickets.error ? <EmptyState size="sm" title="Tickets unavailable" description={openTickets.error instanceof ApiError ? openTickets.error.message : "Try again in a moment."} action={<Button variant="secondary" size="sm" onClick={openTickets.refetch}>Try again</Button>} /> : openTickets.items.length === 0 ? (
                     <EmptyState size="sm" title="No tickets from this account" />
                   ) : (
                     <ul className="divide-y divide-line-subtle">
-                      {(openTickets.data?.data ?? []).map((ticket) => (
+                      {openTickets.items.map((ticket) => (
                         <li key={ticket.id}>
                           <Link
                             to={`/tickets/${ticket.id}`}
@@ -175,6 +181,7 @@ function CompanyDetailBody({ company }: { company: Company }) {
                       ))}
                     </ul>
                   )}
+                  {!openTickets.isLoading && !openTickets.error && openTickets.items.length > 0 && <Pagination hasPrevious={false} hasNext={openTickets.hasMore} onPrevious={() => undefined} onNext={() => void openTickets.fetchNext()} summary={`${openTickets.items.length} ticket${openTickets.items.length === 1 ? "" : "s"} loaded`} />}
                 </CardBody>
               </Card>
             </Section>
