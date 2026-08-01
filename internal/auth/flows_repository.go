@@ -416,14 +416,25 @@ func (r *repository) countUnusedRecoveryCodes(ctx context.Context, userID string
 
 // --------------------------------------------------------------- sessions
 
-func (r *repository) listSessions(ctx context.Context, userID string, currentHash []byte) ([]SessionInfo, error) {
+func (r *repository) listSessionsPage(ctx context.Context, userID string, currentHash []byte, before time.Time, beforeID string, limit int) ([]SessionInfo, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := "user_id = $1 AND revoked_at IS NULL AND expires_at > now()"
+	args := []any{userID, currentHash}
+	if !before.IsZero() {
+		where += " AND (last_seen_at, id) < ($3, $4)"
+		args = append(args, before, beforeID)
+	}
+	args = append(args, limit)
+	limitPlaceholder := fmt.Sprintf("$%d", len(args))
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, coalesce(user_agent, ''), coalesce(host(ip), ''),
 		       last_seen_at, created_at, expires_at, token_hash = $2
 		FROM user_sessions
-		WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()
-		ORDER BY last_seen_at DESC
-	`, userID, currentHash)
+		WHERE `+where+`
+		ORDER BY last_seen_at DESC, id DESC
+		LIMIT `+limitPlaceholder, args...)
 	if err != nil {
 		return nil, fmt.Errorf("auth: list sessions: %w", err)
 	}

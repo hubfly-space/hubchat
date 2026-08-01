@@ -3,6 +3,7 @@ package automation
 import (
 	"testing"
 
+	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/events"
 )
 
@@ -64,5 +65,35 @@ func TestValidateContentScopes(t *testing.T) {
 	}
 	if err := validateContent("reply", "unknown", "", "", nil); err != ErrInvalidScope {
 		t.Fatalf("expected scope validation, got %v", err)
+	}
+}
+
+func TestMacroCapabilitiesAreCheckedPerActionAndSubject(t *testing.T) {
+	conversationActor := &authorization.Actor{
+		Role: "agent",
+		Capabilities: map[authorization.Capability]bool{
+			authorization.AutomationManage:  true,
+			authorization.ConversationReply: true,
+		},
+	}
+	if err := validateMacroCapabilities(conversationActor, "conversation", []Action{{Type: "send_message"}}); err != nil {
+		t.Fatalf("reply-capable actor rejected: %v", err)
+	}
+	if err := validateMacroCapabilities(conversationActor, "conversation", []Action{{Type: "set_priority"}}); err == nil {
+		t.Fatal("expected conversation.assign to be required for set_priority")
+	}
+	if _, ok := macroActionCapability("send_message", "ticket"); ok {
+		t.Fatal("send_message must not be executable against a ticket")
+	}
+}
+
+func TestMacroCapabilitiesDeduplicateChecks(t *testing.T) {
+	actor := &authorization.Actor{Role: "agent", Capabilities: map[authorization.Capability]bool{
+		authorization.AutomationManage: true,
+		authorization.TicketManage:     true,
+	}}
+	actions := []Action{{Type: "set_priority"}, {Type: "set_state"}, {Type: "add_tag"}}
+	if err := validateMacroCapabilities(actor, "ticket", actions); err != nil {
+		t.Fatalf("ticket action bundle rejected: %v", err)
 	}
 }
