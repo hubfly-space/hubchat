@@ -14,13 +14,15 @@ import {
   Page,
   PageBody,
   PageHeader,
+  Pagination,
   Section,
   Switch,
   api,
   cn,
   idempotencyKey,
   useMutation,
-  useQuery,
+  useInfinite,
+  type Paginated,
 } from "@hubchat/shared";
 import { CalendarClock, Plus, Save, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -44,8 +46,12 @@ const defaultWeekly = (): Window[][] =>
   Array.from({ length: 7 }, (_, index) => (index < 5 ? [{ start: "09:00", end: "17:00" }] : []));
 
 export default function CalendarList() {
-  const query = useQuery<{ data: Calendar[] }>(["sla-calendars"], (signal) => api.get("/sla/calendars", { signal }));
-  const calendars = query.data?.data ?? [];
+  const query = useInfinite<Calendar>(["sla-calendars"], (cursor, signal) => {
+    const params = new URLSearchParams({ limit: "25" });
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<Calendar>>(`/sla/calendars?${params.toString()}`, { signal });
+  });
+  const calendars = query.items;
   const [selectedID, setSelectedID] = useState<string | null>(null);
   const active = calendars.find((calendar) => calendar.id === selectedID) ?? calendars[0];
   const [draft, setDraft] = useState<Calendar | null>(null);
@@ -158,6 +164,7 @@ export default function CalendarList() {
             </div>
           </div>
         )}
+        {!query.isLoading && !query.error && query.items.length > 0 && <Pagination hasPrevious={false} hasNext={query.hasMore} onPrevious={() => undefined} onNext={() => void query.fetchNext()} summary={`${query.items.length} calendar${query.items.length === 1 ? "" : "s"} loaded`} />}
       </PageBody>
     </Page>
   );
