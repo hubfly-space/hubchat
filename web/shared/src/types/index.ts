@@ -244,6 +244,16 @@ export type Conversation = {
   created_at: Timestamp;
 };
 
+export type ConversationLink = {
+  id: Id;
+  workspace_id: Id;
+  source_id: Id;
+  target_id: Id;
+  relation: "related" | "duplicate_of" | "follow_up";
+  created_by?: Id | null;
+  created_at: Timestamp;
+};
+
 export type ConversationSla = {
   policy_id: Id;
   state: SlaState;
