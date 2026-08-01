@@ -62,7 +62,7 @@ export default function EventStream() {
   });
 
   const customerIds = [...new Set(list.items.map((e) => e.customer_id).filter((id): id is string => !!id))];
-  const customers = useQuery<{ data: Customer[] }>(
+  const customers = useQuery<Paginated<Customer>>(
     customerIds.length > 0 ? ["customers", "by-ids", customerIds.join(",")] : null,
     (signal) => api.get(`/customers?ids=${customerIds.join(",")}`, { signal }),
   );

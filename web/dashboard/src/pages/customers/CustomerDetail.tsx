@@ -619,7 +619,7 @@ function MergeDialog({ customer, onClose }: { customer: Customer; onClose: () =>
   const [query, setQuery] = useState("");
   const [target, setTarget] = useState<Customer | null>(null);
 
-  const results = useQuery<{ data: Customer[] }>(
+  const results = useQuery<Paginated<Customer>>(
     query.trim().length > 1 ? ["customers", "search", query] : null,
     (signal) => api.get(`/customers?q=${encodeURIComponent(query)}&limit=10`, { signal }),
   );

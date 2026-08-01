@@ -68,7 +68,7 @@ export default function InboxPage() {
     () => [...new Set(list.items.map((item) => item.customer_id).filter((id): id is string => !!id))],
     [list.items],
   );
-  const customers = useQuery<{ data: Customer[] }>(
+  const customers = useQuery<Paginated<Customer>>(
     customerIds.length > 0 ? ["customers", "by-ids", customerIds.join(",")] : null,
     (signal) => api.get(`/customers?ids=${customerIds.join(",")}`, { signal }),
   );
