@@ -46,6 +46,27 @@ func TestCreateTagRejectsColorOutOfRange(t *testing.T) {
 	}
 }
 
+func TestListTagsPageUsesNameCursorAndSearchScope(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	svc := newTestService(t, pool)
+	workspaceID, _, ownerMemberID := seedOwnerWorkspace(t, ctx, pool, svc, "tags-page@example.com")
+	for _, name := range []string{"Billing", "Browser", "Other"} {
+		if _, err := svc.CreateTag(ctx, workspaceID, ownerMemberID, name, 1); err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+	}
+	first, err := svc.ListTagsPage(ctx, workspaceID, "B", "", "", 1)
+	if err != nil || len(first) != 1 || first[0].Name != "Billing" {
+		t.Fatalf("first tag page = %#v, err=%v", first, err)
+	}
+	second, err := svc.ListTagsPage(ctx, workspaceID, "B", first[0].Name, first[0].ID, 1)
+	if err != nil || len(second) != 1 || second[0].Name != "Browser" {
+		t.Fatalf("second tag page = %#v, err=%v", second, err)
+	}
+}
+
 func TestDeleteTagCascadesToConversationTags(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.Reset(t, pool)

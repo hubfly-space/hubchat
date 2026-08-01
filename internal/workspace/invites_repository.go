@@ -91,6 +91,38 @@ func (r *repository) listInvites(ctx context.Context, workspaceID string) ([]Inv
 	return out, rows.Err()
 }
 
+func (r *repository) listInvitesPage(ctx context.Context, workspaceID string, before time.Time, beforeID string, limit int) ([]Invite, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := "workspace_id = $1"
+	args := []any{workspaceID}
+	if !before.IsZero() {
+		where += " AND (created_at,id) < ($2,$3)"
+		args = append(args, before, beforeID)
+	}
+	args = append(args, limit)
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, email::text, role, invited_by, expires_at, accepted_at, created_at
+		FROM workspace_invites
+		WHERE `+where+`
+		ORDER BY created_at DESC, id DESC
+		LIMIT $`+fmt.Sprint(len(args)), args...)
+	if err != nil {
+		return nil, fmt.Errorf("workspace: list invites page: %w", err)
+	}
+	defer rows.Close()
+	out := []Invite{}
+	for rows.Next() {
+		var invite Invite
+		if err := rows.Scan(&invite.ID, &invite.Email, &invite.Role, &invite.InvitedBy, &invite.ExpiresAt, &invite.AcceptedAt, &invite.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, invite)
+	}
+	return out, rows.Err()
+}
+
 func (r *repository) deleteInvite(ctx context.Context, tx pgx.Tx, workspaceID, inviteID string) error {
 	_, err := tx.Exec(ctx, `
 		DELETE FROM workspace_invites WHERE workspace_id = $1 AND id = $2

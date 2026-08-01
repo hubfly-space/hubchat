@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -84,6 +85,12 @@ func (s *Service) CreateTag(ctx context.Context, workspaceID, actorMemberID, nam
 // that screen shows.
 func (s *Service) ListTags(ctx context.Context, workspaceID string) ([]Tag, error) {
 	return s.repo.listTagsWithUsage(ctx, workspaceID)
+}
+
+// ListTagsPage is the settings-screen list. Names are human-editable, so the
+// id tiebreaker is part of the cursor to keep equal names from being skipped.
+func (s *Service) ListTagsPage(ctx context.Context, workspaceID, query, beforeName, beforeID string, limit int) ([]Tag, error) {
+	return s.repo.listTagsWithUsagePage(ctx, workspaceID, query, beforeName, beforeID, limit)
 }
 
 // DeleteTag removes a tag outright. Every reference to it across every
@@ -181,6 +188,50 @@ func (r *repository) listTagsWithUsage(ctx context.Context, workspaceID string) 
 	}
 	defer rows.Close()
 
+	out := []Tag{}
+	for rows.Next() {
+		var t Tag
+		var usage int64
+		if err := rows.Scan(&t.ID, &t.Name, &t.Color, &usage); err != nil {
+			return nil, err
+		}
+		t.UsageCount = int(usage)
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (r *repository) listTagsWithUsagePage(ctx context.Context, workspaceID, query, beforeName, beforeID string, limit int) ([]Tag, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := "t.workspace_id = $1 AND ($2 = '' OR t.name::text ILIKE '%' || $2 || '%')"
+	args := []any{workspaceID, strings.TrimSpace(query)}
+	if beforeName != "" {
+		where += " AND (t.name::text, t.id) > ($3, $4)"
+		args = append(args, beforeName, beforeID)
+	}
+	args = append(args, limit)
+	rows, err := r.pool.Query(ctx, `
+		SELECT t.id, t.name::text, t.color,
+		       coalesce((
+		           SELECT sum(c) FROM (
+		               SELECT count(*) c FROM conversation_tags WHERE tag_id = t.id
+		               UNION ALL SELECT count(*) FROM ticket_tags WHERE tag_id = t.id
+		               UNION ALL SELECT count(*) FROM customer_tags WHERE tag_id = t.id
+		               UNION ALL SELECT count(*) FROM company_tags WHERE tag_id = t.id
+		               UNION ALL SELECT count(*) FROM feedback_tags WHERE tag_id = t.id
+		               UNION ALL SELECT count(*) FROM article_tags WHERE tag_id = t.id
+		           ) usage
+		       ), 0) AS usage_count
+		FROM tags t
+		WHERE `+where+`
+		ORDER BY t.name, t.id
+		LIMIT $`+strconv.Itoa(len(args)), args...)
+	if err != nil {
+		return nil, fmt.Errorf("workspace: list tags page: %w", err)
+	}
+	defer rows.Close()
 	out := []Tag{}
 	for rows.Next() {
 		var t Tag

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/hubchat/hubchat/internal/audit"
 	"github.com/hubchat/hubchat/internal/authorization"
@@ -396,6 +397,28 @@ func TestInviteRevocationIsScopedToItsWorkspace(t *testing.T) {
 	}
 }
 
+func TestListInvitesPageUsesCreatedCursor(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	svc := newTestService(t, pool)
+	workspaceID, _, ownerMemberID := seedOwnerWorkspace(t, ctx, pool, svc, "invites-page@example.com")
+	if _, _, err := svc.IssueInvite(ctx, workspaceID, ownerMemberID, "first-invite@example.com", "agent"); err != nil {
+		t.Fatalf("issue first invite: %v", err)
+	}
+	if _, _, err := svc.IssueInvite(ctx, workspaceID, ownerMemberID, "second-invite@example.com", "agent"); err != nil {
+		t.Fatalf("issue second invite: %v", err)
+	}
+	first, err := svc.ListInvitesPage(ctx, workspaceID, time.Time{}, "", 1)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first invite page = %#v, err=%v", first, err)
+	}
+	second, err := svc.ListInvitesPage(ctx, workspaceID, first[0].CreatedAt, first[0].ID, 1)
+	if err != nil || len(second) != 1 || second[0].Email != "first-invite@example.com" {
+		t.Fatalf("second invite page = %#v, err=%v", second, err)
+	}
+}
+
 // ------------------------------------------------------------------- teams
 
 func TestTeamLifecycle(t *testing.T) {
@@ -442,6 +465,27 @@ func TestTeamLifecycle(t *testing.T) {
 	}
 	if len(teams) != 0 {
 		t.Fatalf("team still present after delete: %+v", teams)
+	}
+}
+
+func TestListTeamsPageUsesStableNameCursor(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	svc := newTestService(t, pool)
+	workspaceID, _, ownerMemberID := seedOwnerWorkspace(t, ctx, pool, svc, "teams-page@example.com")
+	for _, name := range []string{"Billing", "Customer support", "Engineering"} {
+		if _, err := svc.CreateTeam(ctx, workspaceID, ownerMemberID, name, nil, nil, "manual", nil); err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+	}
+	first, err := svc.ListTeamsPage(ctx, workspaceID, "", "", 1)
+	if err != nil || len(first) != 1 || first[0].Name != "Billing" {
+		t.Fatalf("first team page = %#v, err=%v", first, err)
+	}
+	second, err := svc.ListTeamsPage(ctx, workspaceID, first[0].Name, first[0].ID, 1)
+	if err != nil || len(second) != 1 || second[0].Name != "Customer support" {
+		t.Fatalf("second team page = %#v, err=%v", second, err)
 	}
 }
 
