@@ -25,9 +25,11 @@ import {
   api,
   cn,
   idempotencyKey,
+  useAllPages,
   useMutation,
   useQuery,
   useToast,
+  type Paginated,
 } from "@hubchat/shared";
 import {
   ArrowDown,
@@ -114,7 +116,7 @@ export default function RuleBuilder() {
 
   type Rule = { id: string; name: string; description: string; trigger: string; conditions: { match?: "all" | "any"; conditions?: FilterCondition[] }; actions: AutomationAction[]; enabled: boolean; version: number };
   const ruleQuery = useQuery<Rule>(ruleId ? ["automation-rule", ruleId] : null, (signal) => api.get(`/automation/rules/${encodeURIComponent(ruleId ?? "")}`, { signal }), { enabled: Boolean(ruleId) });
-  const webhookQuery = useQuery<{ data: { id: string; url: string; enabled: boolean }[] }>(["webhooks"], (signal) => api.get("/webhooks", { signal }));
+  const webhookQuery = useAllPages<{ id: string; url: string; enabled: boolean }>(["webhooks", "lookup"], (cursor, signal) => api.get<Paginated<{ id: string; url: string; enabled: boolean }>>(`/webhooks?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
   const source = ruleQuery.data;
   const [name, setName] = useState(source?.name ?? "Untitled rule");
   const [trigger, setTrigger] = useState(source?.trigger ?? "conversation.created");
@@ -346,7 +348,7 @@ export default function RuleBuilder() {
                         teams={teams}
                         inboxes={inboxes}
                         tags={tags}
-                        webhooks={webhookQuery.data?.data ?? []}
+                        webhooks={webhookQuery.items}
                         onChange={(params) => setActions((current) => current.map((item) => item.id === action.id ? { ...item, params } : item))}
                       />
                     </div>

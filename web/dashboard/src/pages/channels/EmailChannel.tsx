@@ -68,9 +68,9 @@ export default function EmailChannel() {
   const [imapUsername, setImapUsername] = useState("");
   const [imapPassword, setImapPassword] = useState("");
   const emailStatus = useQuery<EmailStatus>(["email-status"], (signal) => api.get("/email/status", { signal }));
-  const mailboxes = useQuery<{ data: Mailbox[] }>(["email-mailboxes"], (signal) => api.get("/email/mailboxes", { signal }));
+  const mailboxes = useInfinite<Mailbox>(["email-mailboxes"], (cursor, signal) => api.get<Paginated<Mailbox>>(`/email/mailboxes?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
   const [activeID, setActiveID] = useState("");
-  const active = mailboxes.data?.data.find((item) => item.id === activeID) ?? mailboxes.data?.data[0];
+  const active = mailboxes.items.find((item) => item.id === activeID) ?? mailboxes.items[0];
   const [inboundMode, setInboundMode] = useState<Mailbox["inbound_mode"]>("off");
   const update = useMutation<Record<string, unknown>, Mailbox>((input) => api.patch(`/email/mailboxes/${encodeURIComponent(active?.id ?? "")}`, input, { idempotencyKey: idempotencyKey() }), { invalidates: [["email-mailboxes"]] });
   const create = useMutation<{ address: string; inbox_id: string; inbound_mode: "webhook"; enabled: boolean }, CreatedMailbox>((input) => api.post("/email/mailboxes", input, { idempotencyKey: idempotencyKey() }), { invalidates: [["email-mailboxes"]], onSuccess: (value) => { setCreateOpen(false); setNewAddress(""); setNewInboxID(""); setNewSecret(value.inbound_secret); } });
@@ -119,9 +119,9 @@ export default function EmailChannel() {
 
       <PageBody>
         {mailboxes.isLoading && <Callout tone="info" className="mb-5">Loading live mailbox configuration…</Callout>}
-        {mailboxes.isError && <Callout tone="danger" className="mb-5">{mailboxes.error instanceof ApiError ? mailboxes.error.message : "Mailbox configuration is unavailable."}</Callout>}
+        {Boolean(mailboxes.error) && <Callout tone="danger" className="mb-5">{mailboxes.error instanceof ApiError ? mailboxes.error.message : "Mailbox configuration is unavailable."}</Callout>}
         {newSecret && <Callout tone="success" className="mb-5" title="Save this inbound webhook secret now">It is shown only once: <code className="ml-1 font-mono text-xs">{newSecret}</code><Button className="ml-2" variant="ghost" size="xs" onClick={() => setNewSecret("")}>Dismiss</Button></Callout>}
-        {active && <div className="mb-5 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2"><span className="text-xs text-fg-muted">Mailbox</span>{mailboxes.data?.data.map((item) => <Button key={item.id} variant={item.id === active.id ? "secondary" : "ghost"} size="xs" onClick={() => setActiveID(item.id)}>{item.address}</Button>)}<Badge tone={active.inbound_secret_configured ? "success" : "warning"}>{active.inbound_secret_configured ? "Webhook secret configured" : "Webhook secret missing"}</Badge></div>}
+        {active && <div className="mb-5 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2"><span className="text-xs text-fg-muted">Mailbox</span>{mailboxes.items.map((item) => <Button key={item.id} variant={item.id === active.id ? "secondary" : "ghost"} size="xs" onClick={() => setActiveID(item.id)}>{item.address}</Button>)}{mailboxes.hasMore && <Button variant="ghost" size="xs" loading={mailboxes.isFetching} onClick={() => void mailboxes.fetchNext()}>Load more</Button>}<Badge tone={active.inbound_secret_configured ? "success" : "warning"}>{active.inbound_secret_configured ? "Webhook secret configured" : "Webhook secret missing"}</Badge></div>}
         <Tabs value={tab} onValueChange={setTab}>
           <TabsContent value="outbound">
             {emailStatus.isLoading ? <Callout tone="info" className="mb-5">Checking outbound email readiness…</Callout> : emailStatus.error ? <Callout tone="danger" className="mb-5">Could not load outbound email readiness.</Callout> : !emailStatus.data?.configured ? <Callout tone="warning" className="mb-5" icon={<AlertTriangle />}>No SMTP server is configured. Outbound mail is being queued, not sent — customers are not receiving ticket notifications, magic links, or password resets.</Callout> : <Callout tone="success" className="mb-5" icon={<CheckCircle2 />}>Outbound mail is configured for <span className="font-mono">{emailStatus.data.from_address}</span> via <span className="font-mono">{emailStatus.data.host}:{emailStatus.data.port}</span>.</Callout>}

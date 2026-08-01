@@ -13,13 +13,15 @@ import {
   Page,
   PageBody,
   PageHeader,
+  Pagination,
   Section,
   Tooltip,
   api,
   idempotencyKey,
   formatRelativeShort,
   useMutation,
-  useQuery,
+  useInfinite,
+  type Paginated,
 } from "@hubchat/shared";
 import { CheckCircle2, ExternalLink, Globe, Plus, Settings2 } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -40,9 +42,9 @@ export default function PortalList() {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [subdomain, setSubdomain] = useState("");
-  const query = useQuery<{ data: PortalRow[] }>(["portals"], (signal) => api.get("/portals", { signal }));
+  const query = useInfinite<PortalRow>(["portals"], (cursor, signal) => api.get<Paginated<PortalRow>>(`/portals?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
   const create = useMutation<void, PortalRow>(() => api.post<PortalRow>("/portals", { name, subdomain }, { idempotencyKey: idempotencyKey() }), { invalidates: [["portals"]], onSuccess: () => { setName(""); setSubdomain(""); setCreating(false); } });
-  const portals = query.data?.data ?? [];
+  const portals = query.items;
 
   return (
     <Page>
@@ -53,7 +55,7 @@ export default function PortalList() {
       />
       <PageBody>
         <Section>
-          {query.isLoading ? <div className="py-12 text-center text-sm text-fg-muted">Loading portals…</div> : query.isError ? (
+          {query.isLoading ? <div className="py-12 text-center text-sm text-fg-muted">Loading portals…</div> : query.error ? (
             <div className="py-12 text-center text-sm text-danger">{query.error instanceof ApiError ? query.error.message : "Could not load portals."}<div><Button className="mt-4" variant="secondary" size="sm" onClick={query.refetch}>Try again</Button></div></div>
           ) : portals.length === 0 ? (
             <EmptyState icon={Globe} title="No portals yet" description="Create a portal through the workspace API, then customise its branding and customer permissions." />
@@ -72,6 +74,7 @@ export default function PortalList() {
                   <Button variant="secondary" size="sm" leading={<Settings2 />} asChild><Link to={`/channels/portals/${portal.id}`}>Customise</Link></Button>
                 </div></CardBody></Card>;
               })}
+              {query.hasMore && <Pagination hasPrevious={false} hasNext onPrevious={() => undefined} onNext={() => void query.fetchNext()} summary={`${portals.length} portals loaded`} />}
             </div>
           )}
         </Section>
