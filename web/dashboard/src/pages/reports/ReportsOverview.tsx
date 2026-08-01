@@ -4,6 +4,7 @@ import {
   Callout,
   Card,
   CardBody,
+  ConfirmDialog,
   Dialog,
   DialogContent,
   DonutChart,
@@ -16,16 +17,20 @@ import {
   PageHeader,
   Section,
   SegmentedControl,
+  Switch,
   api,
   downloadFile,
   formatCompact,
   formatDuration,
   formatPercent,
+  formatDateTime,
   idempotencyKey,
+  useInfinite,
   useMutation,
   useQuery,
 } from "@hubchat/shared";
-import { CalendarClock, Download, Inbox, Info } from "lucide-react";
+import { CalendarClock, Download, Inbox, Info, Trash2 } from "lucide-react";
+import type { Paginated } from "@hubchat/shared";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useWorkspace } from "../../app/workspace-context";
@@ -43,6 +48,8 @@ type Rollup = {
   dimensions: Record<string, unknown>;
 };
 type Summary = { first_response_seconds: number; sla_compliance_percent: number; sla_instances: number; backlog_conversations: number; backlog_tickets: number };
+type SavedReport = { id: string; name: string; description?: string; date_range: string; timezone?: string; created_at: string };
+type ReportSchedule = { id: string; report_id: string; cadence: string; recipients: string[]; format: string; enabled: boolean; next_run_at?: string; last_sent_at?: string; created_at: string; options: Record<string, unknown> };
 
 /** Reporting overview backed by the durable event rollups. */
 export default function ReportsOverview() {
@@ -51,6 +58,8 @@ export default function ReportsOverview() {
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [recipient, setRecipient] = useState("");
   const [cadence, setCadence] = useState("weekly");
+  const [selectedReportID, setSelectedReportID] = useState("");
+  const [deletingSchedule, setDeletingSchedule] = useState<ReportSchedule | null>(null);
   const days = range === "7d" ? 7 : range === "90d" ? 90 : 30;
   const query = (metric: string) => {
     const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
@@ -58,6 +67,12 @@ export default function ReportsOverview() {
   };
   const conversations = useQuery<{ data: Rollup[] }>(["reports", "conversations", range], (signal) => api.get(query("conversations.created"), { signal }));
   const tickets = useQuery<{ data: Rollup[] }>(["reports", "tickets", range], (signal) => api.get(query("tickets.created"), { signal }));
+  const reports = useInfinite<SavedReport>(["saved-reports"], (cursor, signal) => {
+    const params = new URLSearchParams({ limit: "25" });
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<SavedReport>>(`/reports?${params.toString()}`, { signal });
+  });
+  const schedules = useQuery<Paginated<ReportSchedule>>(["report-schedules", selectedReportID], (signal) => selectedReportID ? api.get("/reports/" + encodeURIComponent(selectedReportID) + "/schedules?limit=25", { signal }) : Promise.resolve({ data: [], next_cursor: null, has_more: false }));
   const summary = useQuery<Summary>(["reports", "summary", range], (signal) => api.get(`/analytics/summary?from=${encodeURIComponent(new Date(Date.now() - days * 86400000).toISOString())}`, { signal }));
 
   const conversationPoints = toPoints(conversations.data?.data ?? []);
@@ -65,20 +80,32 @@ export default function ReportsOverview() {
   const channelSplit = splitChannels(conversations.data?.data ?? []);
   const loading = conversations.isLoading || tickets.isLoading || summary.isLoading;
   const failed = conversations.isError || tickets.isError || summary.isError;
-  const schedule = useMutation<void, unknown>(async () => {
+  const schedule = useMutation<void, ReportSchedule>(async () => {
     const report = await api.post<{ id: string }>("/reports", {
       name: `Support overview (${range})`,
       definition: { metrics: ["conversations.created", "tickets.created"] },
       date_range: range === "7d" ? "last_7_days" : range === "90d" ? "last_90_days" : "last_30_days",
       timezone: "UTC",
     }, { idempotencyKey: idempotencyKey() });
-    return api.post(`/reports/${encodeURIComponent(report.id)}/schedules`, {
+    return api.post<ReportSchedule>(`/reports/${encodeURIComponent(report.id)}/schedules`, {
       cadence,
       recipients: [recipient.trim()],
       format: "csv",
       options: { hour: 9, minute: 0, timezone: "UTC" },
     }, { idempotencyKey: idempotencyKey() });
-  }, { onSuccess: () => { setScheduleOpen(false); setRecipient(""); } });
+  }, { invalidates: [["saved-reports"]], onSuccess: (created) => { setSelectedReportID(created.report_id); setScheduleOpen(false); setRecipient(""); } });
+  const toggleSchedule = useMutation<{ schedule: ReportSchedule; enabled: boolean }, ReportSchedule>(({ schedule: item, enabled }) => api.patch("/reports/" + encodeURIComponent(item.report_id) + "/schedules/" + encodeURIComponent(item.id), {
+    report_id: item.report_id,
+    cadence: item.cadence,
+    recipients: item.recipients,
+    format: item.format,
+    options: item.options,
+    enabled,
+  }, { idempotencyKey: idempotencyKey() }), { invalidates: [["report-schedules", selectedReportID]] });
+  const deleteSchedule = useMutation<ReportSchedule, void>((item) => api.delete("/reports/" + encodeURIComponent(item.report_id) + "/schedules/" + encodeURIComponent(item.id), { idempotencyKey: idempotencyKey() }), {
+    invalidates: [["report-schedules", selectedReportID]],
+    onSuccess: () => setDeletingSchedule(null),
+  });
   const exportCSV = () => {
     const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
     void downloadFile(`/analytics/export.csv?metrics=${encodeURIComponent("conversations.created,tickets.created")}&from=${encodeURIComponent(from)}`, `hubchat-reports-${range}.csv`, workspace.id).catch(() => undefined);
@@ -130,6 +157,10 @@ export default function ReportsOverview() {
                 {[{ to: "/reports/support", title: "Support operations", detail: "Response and resolution times, backlog, SLA compliance, agent workload." }, { to: "/reports/experience", title: "Customer experience", detail: "Satisfaction, effort, recommendation, repeat contacts, article helpfulness." }, { to: "/reports/surfaces", title: "Widget & portal", detail: "Impressions, opens, conversation starts, form submissions, deflection." }].map((report) => <Card key={report.to} interactive className="p-0"><Link to={report.to} className="block p-4"><p className="text-sm font-medium text-fg">{report.title}</p><p className="mt-1 text-xs leading-normal text-fg-muted">{report.detail}</p></Link></Card>)}
               </div>
             </Section>
+
+            <Section title="Saved reports">
+              {reports.isLoading ? <p className="text-sm text-fg-muted">Loading saved reports…</p> : reports.error ? <EmptyState icon={CalendarClock} title="Saved reports unavailable" description="Could not load saved report schedules." action={<Button variant="secondary" size="sm" onClick={reports.refetch}>Try again</Button>} /> : reports.items.length === 0 ? <Card><CardBody><EmptyState icon={CalendarClock} title="No saved reports" description="Schedule a report to create a reusable saved report and delivery schedule." /></CardBody></Card> : <><div className="grid gap-3 lg:grid-cols-2">{reports.items.map((report) => (<Card key={report.id} className={selectedReportID === report.id ? "ring-1 ring-accent" : ""}><CardBody><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><button type="button" className="text-left text-sm font-medium text-fg hover:underline" onClick={() => setSelectedReportID(report.id)}>{report.name}</button><p className="mt-1 text-xs text-fg-muted">{report.date_range.replaceAll("_", " ")} · {report.timezone || "UTC"}</p></div><Button variant="secondary" size="xs" onClick={() => setSelectedReportID(report.id)}>{selectedReportID === report.id ? "Selected" : "Manage"}</Button></div>{selectedReportID === report.id && <div className="mt-4 border-t border-line-subtle pt-3">{schedules.isLoading ? <p className="text-xs text-fg-muted">Loading schedules…</p> : schedules.error ? <p className="text-xs text-danger">Could not load schedules.</p> : (schedules.data?.data ?? []).length === 0 ? <p className="text-xs text-fg-muted">No delivery schedules for this report.</p> : <ul className="divide-y divide-line-subtle">{(schedules.data?.data ?? []).map((item) => (<li key={item.id} className="flex flex-wrap items-center gap-3 py-2.5"><div className="min-w-0 flex-1"><p className="text-xs font-medium capitalize text-fg">{item.cadence} CSV · {item.recipients.join(", ")}</p><p className="mt-0.5 text-2xs text-fg-muted">{item.enabled ? "Next run " + (item.next_run_at ? formatDateTime(item.next_run_at, { timeZone: report.timezone || "UTC" }) : "pending") : "Disabled"}{item.last_sent_at ? " · last sent " + formatDateTime(item.last_sent_at, { timeZone: report.timezone || "UTC" }) : ""}</p></div><Switch checked={item.enabled} onCheckedChange={(enabled) => void toggleSchedule.mutate({ schedule: item, enabled }).catch(() => {})} aria-label={(item.enabled ? "Disable " : "Enable ") + item.cadence + " schedule"} /><Button variant="ghost" size="xs" iconOnly leading={<Trash2 />} aria-label={"Delete " + item.cadence + " schedule"} onClick={() => setDeletingSchedule(item)} /></li>))}</ul>}</div>}</CardBody></Card>))}</div>{reports.hasMore && <div className="flex justify-center pt-4"><Button variant="secondary" size="sm" loading={reports.isFetching} onClick={() => void reports.fetchNext()}>Load more saved reports</Button></div>}</>}
+            </Section>
           </>
         )}
       </PageBody>
@@ -146,6 +177,16 @@ export default function ReportsOverview() {
           </div>
         </DialogContent>
       </Dialog>
+      <ConfirmDialog
+        open={Boolean(deletingSchedule)}
+        onOpenChange={(open) => { if (!open) setDeletingSchedule(null); }}
+        title="Delete scheduled report"
+        description="This removes the selected delivery schedule. The saved report and its historical analytics remain available."
+        confirmLabel="Delete schedule"
+        destructive
+        loading={deleteSchedule.isPending}
+        onConfirm={() => { if (deletingSchedule) void deleteSchedule.mutate(deletingSchedule).catch(() => {}); }}
+      />
     </Page>
   );
 }

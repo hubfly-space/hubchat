@@ -23,7 +23,7 @@ import {
   type Member,
   type Paginated,
 } from "@hubchat/shared";
-import { ScrollText, ShieldCheck, User } from "lucide-react";
+import { Download, ScrollText, ShieldCheck, User } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
@@ -160,6 +160,7 @@ export default function AuditLog() {
       <PageHeader
         title="Audit log"
         description="Append-only record of who changed what. Cannot be edited or deleted from the interface."
+        actions={<Button variant="secondary" size="sm" leading={<Download />} onClick={() => { const params = new URLSearchParams(); if (actorId) params.set("actor_id", actorId); if (action) params.set("action", action); window.location.href = `/api/v1/audit-logs/export.csv?${params.toString()}`; }}>Export CSV</Button>}
       />
 
       <Toolbar leading={<FilterBar fields={filterFields} conditions={conditions} onChange={setConditions} />} />

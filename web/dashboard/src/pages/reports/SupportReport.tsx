@@ -4,19 +4,17 @@ import { useState } from "react";
 import { RANGES } from "./ReportsOverview";
 
 type Rollup = { bucket: string; value: number };
-type Instance = { id: string; state: string; kind: string; target_minutes: number; elapsed_minutes: number };
-type Summary = { first_response_seconds: number; resolution_seconds: number; sla_compliance_percent: number; sla_instances: number; backlog_conversations: number; backlog_tickets: number; tickets_reopened: number };
+type Summary = { first_response_seconds: number; resolution_seconds: number; sla_compliance_percent: number; sla_instances: number; backlog_conversations: number; backlog_tickets: number; tickets_reopened: number; active_sla_instances: number; open_sla_breached: number };
 
 /** Support operations report backed by live event and SLA APIs. */
 export default function SupportReport() {
   const [range, setRange] = useState("30d");
   const conversations = useQuery<{ data: Rollup[] }>(["support-report", "conversations", range], (signal) => api.get(`/analytics/rollups?metric=conversations.created&grain=day&from=${encodeURIComponent(fromFor(range))}`, { signal }));
   const tickets = useQuery<{ data: Rollup[] }>(["support-report", "tickets", range], (signal) => api.get(`/analytics/rollups?metric=tickets.created&grain=day&from=${encodeURIComponent(fromFor(range))}`, { signal }));
-  const instances = useQuery<{ data: Instance[] }>(["support-report", "sla"], (signal) => api.get("/sla/instances?limit=200", { signal }));
   const summary = useQuery<Summary>(["support-report", "summary", range], (signal) => api.get(`/analytics/summary?from=${encodeURIComponent(fromFor(range))}`, { signal }));
   const conversationPoints = (conversations.data?.data ?? []).map((item) => ({ t: item.bucket, v: item.value }));
-  const breaches = (instances.data?.data ?? []).filter((item) => item.state === "breached").length;
-  const active = (instances.data?.data ?? []).filter((item) => item.state === "active").length;
+  const breaches = summary.data?.open_sla_breached ?? 0;
+  const active = summary.data?.active_sla_instances ?? 0;
   const exportReport = () => downloadCSV(`hubchat-support-${range}.csv`, ["metric", "bucket", "value"], [
     ...(conversations.data?.data ?? []).map((item) => ["conversations.created", item.bucket, item.value] as (string | number | null)[]),
     ...(tickets.data?.data ?? []).map((item) => ["tickets.created", item.bucket, item.value] as (string | number | null)[]),

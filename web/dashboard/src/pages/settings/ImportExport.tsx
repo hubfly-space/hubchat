@@ -50,6 +50,7 @@ type ImportRequest = {
 };
 
 type PreviewSummary = { name: string; rows: number; existing?: number; new?: number };
+type ExportPreview = { tables: PreviewSummary[]; row_count: number };
 type ExportManifest = {
   export_id: string;
   file_id: string;
@@ -86,8 +87,9 @@ function errorMessage(error: unknown, fallback: string): string {
 /** Import, export, and portability (§6.20). */
 export default function ImportExport() {
   const [tab, setTab] = useState("export");
-  const [importKind, setImportKind] = useState<"workspace" | "customers_csv" | "companies_csv" | "tickets_csv" | "knowledgebase_markdown">("workspace");
+  const [importKind, setImportKind] = useState<"workspace" | "customers_csv" | "companies_csv" | "tickets_csv" | "feedback_csv" | "knowledgebase_markdown">("workspace");
   const [downloadError, setDownloadError] = useState("");
+  const [exportPreview, setExportPreview] = useState<ExportPreview | null>(null);
   const [previewRows, setPreviewRows] = useState<PreviewSummary[] | null>(null);
   const [previewID, setPreviewID] = useState<string | null>(null);
   const [backupVerified, setBackupVerified] = useState(false);
@@ -121,6 +123,9 @@ export default function ImportExport() {
   const startExport = useMutation<void, ExportRequest>(
     () => api.post("/portability/exports", { kind: "workspace" }, { workspaceId, idempotencyKey: idempotencyKey() }),
     { invalidates: [["portability-exports", workspaceId]] },
+  );
+  const previewExport = useMutation<void, ExportPreview>(
+    () => api.post("/portability/exports/preview", { kind: "workspace" }, { workspaceId }),
   );
   const createImport = useMutation<{ file_id: string; kind: string }, ImportRequest>(
     (input) => api.post("/portability/imports", { ...input, auto_start: false }, { workspaceId, idempotencyKey: idempotencyKey() }),
@@ -193,9 +198,11 @@ export default function ImportExport() {
                 <CardBody className="flex items-center gap-4">
                   <FileArchive className="size-5 shrink-0 text-fg-muted" />
                   <div className="min-w-0 flex-1"><p className="text-sm text-fg">Full workspace archive</p><p className="mt-0.5 text-xs text-fg-muted">Customers, conversations, tickets, settings, integrations, audit records, and attachment metadata in a versioned JSON archive.</p></div>
-                  <Button variant="secondary" size="sm" leading={<Download />} loading={startExport.isPending} onClick={() => void startExport.mutate(undefined).catch(() => {})}>Export</Button>
+                  <div className="flex shrink-0 gap-2"><Button variant="secondary" size="sm" loading={previewExport.isPending} onClick={() => void previewExport.mutate(undefined).then((result) => setExportPreview(result)).catch(() => {})}>Preview</Button><Button variant="secondary" size="sm" leading={<Download />} loading={startExport.isPending} disabled={!exportPreview} onClick={() => void startExport.mutate(undefined).catch(() => {})}>Export</Button></div>
                 </CardBody>
               </Card>
+              {exportPreview && <Card className="mt-3"><CardBody><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-medium text-fg">Export preview</p><p className="mt-1 text-xs text-fg-muted">{exportPreview.row_count.toLocaleString()} rows across {exportPreview.tables.length} tables. Review this snapshot before starting the background export.</p></div><Button variant="ghost" size="sm" onClick={() => setExportPreview(null)}>Dismiss</Button></div><div className="mt-3 max-h-48 overflow-auto rounded-md border border-line"><table className="w-full text-left text-xs"><thead className="border-b border-line bg-inset text-fg-muted"><tr><th className="px-3 py-2 font-medium">Table</th><th className="px-3 py-2 text-right font-medium">Rows</th></tr></thead><tbody className="divide-y divide-line-subtle">{exportPreview.tables.filter((table) => table.rows > 0).map((table) => <tr key={table.name}><td className="px-3 py-2 font-mono text-fg-secondary">{table.name}</td><td className="px-3 py-2 text-right tabular text-fg-secondary">{table.rows.toLocaleString()}</td></tr>)}</tbody></table></div></CardBody></Card>}
+              {Boolean(previewExport.error) && <p className="mt-2 text-sm text-danger">{errorMessage(previewExport.error, "The export preview could not be loaded.")}</p>}
               {Boolean(startExport.error) && <p className="mt-2 text-sm text-danger">{errorMessage(startExport.error, "The export could not be started.")}</p>}
             </Section>
 
@@ -216,10 +223,10 @@ export default function ImportExport() {
           </TabsContent>
 
           <TabsContent value="import">
-            <Callout tone="warning" className="mb-4">Upload a workspace archive or CSV roster to preview conflicts before importing. Preview reads the file without writing tenant records.</Callout>
+            <Callout tone="warning" className="mb-4">Upload a workspace archive or CSV export to preview conflicts before importing. Preview reads the file without writing tenant records.</Callout>
             <input ref={fileInput} type="file" accept={importKind === "workspace" ? ".gz,.json,application/gzip,application/json" : importKind === "knowledgebase_markdown" ? ".md,.markdown,text/markdown,text/plain" : ".csv,text/csv"} className="sr-only" onChange={(event) => { const selected = event.target.files?.[0]; event.target.value = ""; if (selected) void uploadAndImport(selected).catch(() => {}); }} />
             <Section title="Import file">
-              <Card><CardBody className="flex flex-wrap items-center gap-4"><Upload className="size-5 shrink-0 text-fg-muted" /><div className="min-w-0 flex-1"><p className="text-sm text-fg">Choose an import type and file</p><p className="mt-0.5 text-xs text-fg-muted">Workspace archives, customer CSVs, company CSVs, ticket CSVs, and Markdown articles are processed as resumable jobs.</p></div><select aria-label="Import type" value={importKind} onChange={(event) => setImportKind(event.target.value as typeof importKind)} className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg"><option value="workspace">Workspace archive</option><option value="customers_csv">Customers CSV</option><option value="companies_csv">Companies CSV</option><option value="tickets_csv">Tickets CSV</option><option value="knowledgebase_markdown">Knowledge-base Markdown</option></select><Button variant="secondary" size="sm" leading={<Upload />} loading={createImport.isPending} onClick={() => fileInput.current?.click()}>Choose file</Button></CardBody></Card>
+              <Card><CardBody className="flex flex-wrap items-center gap-4"><Upload className="size-5 shrink-0 text-fg-muted" /><div className="min-w-0 flex-1"><p className="text-sm text-fg">Choose an import type and file</p><p className="mt-0.5 text-xs text-fg-muted">Workspace archives, customer, company, ticket, and feedback CSVs plus Markdown articles are processed as resumable jobs.</p></div><select aria-label="Import type" value={importKind} onChange={(event) => setImportKind(event.target.value as typeof importKind)} className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg"><option value="workspace">Workspace archive</option><option value="customers_csv">Customers CSV</option><option value="companies_csv">Companies CSV</option><option value="tickets_csv">Tickets CSV</option><option value="feedback_csv">Feedback CSV</option><option value="knowledgebase_markdown">Knowledge-base Markdown</option></select><Button variant="secondary" size="sm" leading={<Upload />} loading={createImport.isPending} onClick={() => fileInput.current?.click()}>Choose file</Button></CardBody></Card>
               {Boolean(uploadError) && <p className="mt-2 text-sm text-danger">{errorMessage(uploadError, "The import could not be started.")}</p>}
             </Section>
             <Section title="Import history">
