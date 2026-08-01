@@ -42,9 +42,9 @@ func TestAnalyticsRollupsEndpointUsesCursorPage(t *testing.T) {
 		return page, response
 	}
 
-	base := "/api/v1/analytics/rollups?metric=conversations.created&grain=day&from=2026-08-01T00:00:00Z&to=2026-08-03T00:00:00Z"
+	base := "/api/v1/analytics/rollups?metric=conversations.created&grain=day&from=2026-08-01T00:00:00Z&to=2026-08-03T00:00:00Z&timezone=Africa%2FKigali"
 	first, firstResponse := request(base + "&limit=1")
-	if firstResponse.Code != http.StatusOK || !first.HasMore || first.NextCursor == nil || len(first.Data) != 1 {
+	if firstResponse.Code != http.StatusOK || firstResponse.Header().Get("X-Hubchat-Analytics-Timezone") != "Africa/Kigali" || !first.HasMore || first.NextCursor == nil || len(first.Data) != 1 {
 		t.Fatalf("first analytics rollup page = %d %+v", firstResponse.Code, first)
 	}
 	second, secondResponse := request(base + "&limit=1&cursor=" + *first.NextCursor)

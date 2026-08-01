@@ -50,7 +50,7 @@ func handleListNoResultSearches(deps Deps) http.HandlerFunc {
 				return
 			}
 		}
-		from, to, err := analyticsWindow(r)
+		from, to, timezone, err := analyticsWindow(r)
 		if err != nil {
 			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, err.Error())
 			return
@@ -60,6 +60,7 @@ func handleListNoResultSearches(deps Deps) http.HandlerFunc {
 			writeAnalyticsInternal(w, r)
 			return
 		}
+		writeAnalyticsTimezone(w, timezone)
 		httpserver.WriteJSON(w, http.StatusOK, NewPage(items, limit, func(item analytics.SearchTerm) Cursor {
 			return Cursor{Value: strconv.Itoa(item.Count), At: item.LastOccurredAt, ID: item.Query}
 		}))
@@ -67,7 +68,7 @@ func handleListNoResultSearches(deps Deps) http.HandlerFunc {
 }
 func handleAnalyticsSummary(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		from, to, err := analyticsWindow(r)
+		from, to, timezone, err := analyticsWindow(r)
 		if err != nil {
 			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, err.Error())
 			return
@@ -77,31 +78,42 @@ func handleAnalyticsSummary(deps Deps) http.HandlerFunc {
 			writeAnalyticsInternal(w, r)
 			return
 		}
+		item.Timezone = timezone
+		writeAnalyticsTimezone(w, timezone)
 		httpserver.WriteJSON(w, http.StatusOK, item)
 	}
 }
 
-func analyticsWindow(r *http.Request) (time.Time, time.Time, error) {
-	to := time.Now().UTC()
-	from := to.AddDate(0, 0, -30)
+func analyticsWindow(r *http.Request) (time.Time, time.Time, string, error) {
+	timezone := strings.TrimSpace(r.URL.Query().Get("timezone"))
+	if timezone == "" {
+		timezone = "UTC"
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return time.Time{}, time.Time{}, "", errors.New("timezone must be a valid IANA timezone")
+	}
+	now := time.Now().UTC()
+	to := now
+	from := now.In(location).AddDate(0, 0, -30).UTC()
 	if value := r.URL.Query().Get("from"); value != "" {
 		parsed, err := time.Parse(time.RFC3339, value)
 		if err != nil {
-			return time.Time{}, time.Time{}, errors.New("from must be RFC3339")
+			return time.Time{}, time.Time{}, "", errors.New("from must be RFC3339")
 		}
 		from = parsed
 	}
 	if value := r.URL.Query().Get("to"); value != "" {
 		parsed, err := time.Parse(time.RFC3339, value)
 		if err != nil {
-			return time.Time{}, time.Time{}, errors.New("to must be RFC3339")
+			return time.Time{}, time.Time{}, "", errors.New("to must be RFC3339")
 		}
 		to = parsed
 	}
 	if !from.Before(to) {
-		return time.Time{}, time.Time{}, errors.New("from must be before to")
+		return time.Time{}, time.Time{}, "", errors.New("from must be before to")
 	}
-	return from, to, nil
+	return from, to, timezone, nil
 }
 func handleListAnalyticsRollups(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +122,7 @@ func handleListAnalyticsRollups(deps Deps) http.HandlerFunc {
 			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
 			return
 		}
-		from, to, err := analyticsWindow(r)
+		from, to, timezone, err := analyticsWindow(r)
 		if err != nil {
 			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, err.Error())
 			return
@@ -120,6 +132,7 @@ func handleListAnalyticsRollups(deps Deps) http.HandlerFunc {
 			writeAnalyticsInternal(w, r)
 			return
 		}
+		writeAnalyticsTimezone(w, timezone)
 		httpserver.WriteJSON(w, http.StatusOK, NewPage(items, limit, func(item analytics.Rollup) Cursor {
 			return Cursor{At: item.Bucket, Value: item.CursorKey}
 		}))
@@ -128,7 +141,7 @@ func handleListAnalyticsRollups(deps Deps) http.HandlerFunc {
 
 func handleAnalyticsWorkload(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		from, to, err := analyticsWindow(r)
+		from, to, timezone, err := analyticsWindow(r)
 		if err != nil {
 			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, err.Error())
 			return
@@ -138,7 +151,8 @@ func handleAnalyticsWorkload(deps Deps) http.HandlerFunc {
 			writeAnalyticsInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items, "from": from, "to": to, "timezone": "UTC", "computed_at": time.Now().UTC()})
+		writeAnalyticsTimezone(w, timezone)
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items, "from": from, "to": to, "timezone": timezone, "computed_at": time.Now().UTC()})
 	}
 }
 func handleListReports(deps Deps) http.HandlerFunc {
@@ -332,7 +346,7 @@ func handleDeleteReportSchedule(deps Deps) http.HandlerFunc {
 
 func handleAnalyticsExport(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		from, to, err := analyticsWindow(r)
+		from, to, _, err := analyticsWindow(r)
 		if err != nil {
 			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, err.Error())
 			return
@@ -367,4 +381,8 @@ func writeAnalyticsScheduleError(w http.ResponseWriter, r *http.Request, err err
 }
 func writeAnalyticsInternal(w http.ResponseWriter, r *http.Request) {
 	httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load analytics.")
+}
+
+func writeAnalyticsTimezone(w http.ResponseWriter, timezone string) {
+	w.Header().Set("X-Hubchat-Analytics-Timezone", timezone)
 }
