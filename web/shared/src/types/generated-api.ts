@@ -589,6 +589,7 @@ export type ApiOperationId =
   | "deletePortalDomain"
   | "deleteReport"
   | "deleteReportSchedule"
+  | "deleteRolesId"
   | "deleteSavedView"
   | "deleteScimV20WorkspaceIDUsersId"
   | "deleteTagsId"
@@ -772,6 +773,7 @@ export type ApiOperationId =
   | "patchMembersMeAcceptingConversations"
   | "patchMembersMePresence"
   | "patchPortalsId"
+  | "patchRolesId"
   | "patchScimV20WorkspaceIDUsersId"
   | "patchSlaPoliciesId"
   | "patchTeamsId"
@@ -842,6 +844,7 @@ export type ApiOperationId =
   | "postPortalTicketsIdReplies"
   | "postPublicFeedbackWorkspaceIDItemsIdVotes"
   | "postPublicKnowledgeBasesWorkspaceIDArticlesSlugFeedback"
+  | "postRoles"
   | "postScimV20WorkspaceIDUsers"
   | "postTags"
   | "postTagsIdMerge"
@@ -1087,6 +1090,9 @@ export type ApiOperationCatalog = {
   "deletePortalDomain": { method: "DELETE"; path: "/v1/portals/{id}/domains/{domainID}"; request: unknown; response: unknown; };
   "deleteReport": { method: "DELETE"; path: "/v1/reports/{id}"; request: unknown; response: unknown; };
   "deleteReportSchedule": { method: "DELETE"; path: "/v1/reports/{id}/schedules/{scheduleID}"; request: unknown; response: unknown; };
+  "deleteRolesId": { method: "DELETE"; path: "/v1/roles/{id}"; request: unknown; response: {
+  [key: string]: unknown;
+}; };
   "deleteSavedView": { method: "DELETE"; path: "/v1/saved-views/{id}"; request: unknown; response: unknown; };
   "deleteScimV20WorkspaceIDUsersId": { method: "DELETE"; path: "/v1/scim/v2.0/{workspaceID}/Users/{id}"; request: unknown; response: {
   [key: string]: unknown;
@@ -1634,6 +1640,11 @@ export type ApiOperationCatalog = {
 }; response: {
   [key: string]: unknown;
 }; };
+  "patchRolesId": { method: "PATCH"; path: "/v1/roles/{id}"; request: {
+  [key: string]: unknown;
+}; response: {
+  [key: string]: unknown;
+}; };
   "patchScimV20WorkspaceIDUsersId": { method: "PATCH"; path: "/v1/scim/v2.0/{workspaceID}/Users/{id}"; request: {
   [key: string]: unknown;
 }; response: {
@@ -1980,6 +1991,11 @@ export type ApiOperationCatalog = {
   [key: string]: unknown;
 }; };
   "postPublicKnowledgeBasesWorkspaceIDArticlesSlugFeedback": { method: "POST"; path: "/v1/public/knowledge-bases/{workspaceID}/articles/{slug}/feedback"; request: {
+  [key: string]: unknown;
+}; response: {
+  [key: string]: unknown;
+}; };
+  "postRoles": { method: "POST"; path: "/v1/roles"; request: {
   [key: string]: unknown;
 }; response: {
   [key: string]: unknown;
