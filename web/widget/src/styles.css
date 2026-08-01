@@ -88,36 +88,38 @@
   pointer-events: none;
 }
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-  border: 0 solid var(--hc-border);
-  margin: 0;
-  padding: 0;
-}
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    border: 0 solid var(--hc-border);
+    margin: 0;
+    padding: 0;
+  }
 
-button,
-input,
-textarea {
-  font: inherit;
-  color: inherit;
-  background: none;
-  pointer-events: auto;
-}
+  button,
+  input,
+  textarea {
+    font: inherit;
+    color: inherit;
+    background: none;
+    pointer-events: auto;
+  }
 
-button {
-  cursor: pointer;
-}
+  button {
+    cursor: pointer;
+  }
 
-::placeholder {
-  color: var(--hc-text-disabled);
-}
+  ::placeholder {
+    color: var(--hc-text-disabled);
+  }
 
-:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--hc-surface), 0 0 0 4px var(--hc-accent);
-  border-radius: var(--rad-sm);
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--hc-surface), 0 0 0 4px var(--hc-accent);
+    border-radius: var(--rad-sm);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

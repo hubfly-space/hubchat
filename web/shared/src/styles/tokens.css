@@ -12,7 +12,8 @@
    information, never as decoration, and never out-shout the accent.
    ============================================================================= */
 
-:root {
+:root,
+:host {
   /* ---------------------------------------------------------------- ink
      Cool near-black through near-white. Slight blue cast (~220deg) so it sits
      harmoniously beside cobalt instead of fighting it. */

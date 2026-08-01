@@ -50,15 +50,29 @@ export function mount({
 
   const shadow = container.attachShadow({ mode: "open" });
 
-  // Adopted stylesheets avoid a <style> node and are cheaper to apply.
-  if ("adoptedStyleSheets" in Document.prototype) {
-    const sheet = new CSSStyleSheet();
-    sheet.replaceSync(styles);
-    shadow.adoptedStyleSheets = [sheet];
-  } else {
-    const style = document.createElement("style");
-    style.textContent = styles;
-    shadow.appendChild(style);
+  // Keep the style tag as the portable path. Constructable stylesheets are
+  // still unavailable in some embedded browsers and, when their feature
+  // detection is only partially implemented, can fail before React mounts.
+  // A failed stylesheet must never turn into an unstyled widget.
+  const style = document.createElement("style");
+  style.setAttribute("data-hubchat-widget-styles", "true");
+  style.textContent = styles;
+  shadow.appendChild(style);
+
+  // Prefer a constructable sheet only where both APIs are genuinely usable.
+  // This is an optimization, not a requirement for rendering.
+  try {
+    if (
+      "adoptedStyleSheets" in ShadowRoot.prototype &&
+      "replaceSync" in CSSStyleSheet.prototype
+    ) {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(styles);
+      shadow.adoptedStyleSheets = [sheet];
+      style.remove();
+    }
+  } catch {
+    // Retain the already-installed style tag.
   }
 
   const mountPoint = document.createElement("div");

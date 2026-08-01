@@ -164,6 +164,9 @@ func handleListTickets(deps Deps) http.HandlerFunc {
 }
 
 func handleExportTickets(deps Deps) http.HandlerFunc {
+	const pageSize = 200
+	const maxRows = 10000
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
 		query := r.URL.Query()
@@ -171,16 +174,33 @@ func handleExportTickets(deps Deps) http.HandlerFunc {
 		filter := ticket.ListFilter{
 			InboxID: query.Get("inbox_id"), AssigneeID: query.Get("assignee_id"),
 			TeamID: query.Get("team_id"), CustomerID: query.Get("customer_id"),
-			Priority: query.Get("priority"), Limit: 10000,
+			Priority: query.Get("priority"), Limit: pageSize,
 		}
 		if status := query.Get("status"); status != "" {
 			filter.Status = strings.Split(status, ",")
 		}
 
-		tickets, err := deps.Ticket.List(r.Context(), actor.WorkspaceID, filter)
-		if err != nil {
-			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not export tickets.")
-			return
+		// Ticket.List is deliberately bounded to one page. Walk its cursor
+		// ordering here so a CSV export does not silently stop at the service
+		// page limit while remaining capped for a request-sized download.
+		tickets := make([]ticket.Ticket, 0, pageSize)
+		for len(tickets) < maxRows {
+			page, err := deps.Ticket.List(r.Context(), actor.WorkspaceID, filter)
+			if err != nil {
+				httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not export tickets.")
+				return
+			}
+			remaining := maxRows - len(tickets)
+			if len(page) > remaining {
+				page = page[:remaining]
+			}
+			tickets = append(tickets, page...)
+			if len(page) < pageSize || len(tickets) >= maxRows {
+				break
+			}
+			last := page[len(page)-1]
+			filter.Before = last.UpdatedAt
+			filter.BeforeID = last.ID
 		}
 
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
