@@ -13,8 +13,10 @@ import {
   Section,
   Switch,
   api,
+  useAllPages,
   useMutation,
   useQuery,
+  type Paginated,
 } from "@hubchat/shared";
 import { Timer } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -27,7 +29,7 @@ type Policy = { id: string; name: string; description: string; enabled: boolean;
 export default function PolicyEditor() {
   const { policyId } = useParams();
   const query = useQuery<Policy>(policyId ? ["sla-policy", policyId] : null, (signal) => api.get(`/sla/policies/${encodeURIComponent(policyId ?? "")}`, { signal }), { enabled: Boolean(policyId) });
-  const calendars = useQuery<{ data: { id: string; name: string }[] }>(["sla-calendars"], (signal) => api.get("/sla/calendars", { signal }));
+  const calendars = useAllPages<{ id: string; name: string }>(["sla-calendars", "lookup"], (cursor, signal) => api.get<Paginated<{ id: string; name: string }>>(`/sla/calendars?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
   const [draft, setDraft] = useState<Policy | null>(null);
   useEffect(() => { if (query.data) setDraft(query.data); }, [query.data]);
   const toggle = useMutation<{ enabled: boolean }, Policy>((input) => api.patch(`/sla/policies/${encodeURIComponent(policyId ?? "")}`, input), { invalidates: [["sla-policies"], ["sla-policy", policyId ?? ""]], onSuccess: (value) => setDraft(value) });
@@ -62,7 +64,7 @@ export default function PolicyEditor() {
         <Card><CardBody className="p-0"><div className="overflow-x-auto"><table className="w-full min-w-[680px] text-sm"><thead><tr className="border-b border-line"><th className="px-4 py-2 text-left text-2xs font-semibold uppercase tracking-caps text-fg-muted">Priority</th><th className="px-4 py-2 text-right text-2xs font-semibold uppercase tracking-caps text-fg-muted">First response (min)</th><th className="px-4 py-2 text-right text-2xs font-semibold uppercase tracking-caps text-fg-muted">Next response (min)</th><th className="px-4 py-2 text-right text-2xs font-semibold uppercase tracking-caps text-fg-muted">Resolution (min)</th></tr></thead><tbody>{policy.targets.map((target) => <tr key={target.id} className="border-b border-line-subtle last:border-b-0"><td className="px-4 py-2 capitalize text-fg">{target.priority}</td>{(["first_response_minutes", "next_response_minutes", "resolution_minutes"] as const).map((field) => <td key={field} className="px-4 py-2"><Input inputSize="sm" type="number" min={0} value={target[field] ?? ""} onChange={(event) => updateTarget(target.id, field, event.target.value)} aria-label={`${target.priority} ${field.replaceAll("_", " ")}`} /></td>)}</tr>)}</tbody></table></div></CardBody></Card>
       </Section>
       <Section title="Clock">
-        <Card><CardBody className="space-y-4 text-sm"><label className="block"><span className="mb-1 block text-xs text-fg-muted">Calendar</span><select className="h-9 w-full rounded-md border border-line bg-surface px-3 text-sm text-fg" value={policy.calendar_id ?? ""} onChange={(event) => setDraft({ ...policy, calendar_id: event.target.value || null })}><option value="">24/7 UTC default</option>{(calendars.data?.data ?? []).map((calendar) => <option key={calendar.id} value={calendar.id}>{calendar.name}</option>)}</select></label><label className="block"><span className="mb-1 block text-xs text-fg-muted">Pause states (comma separated)</span><Input value={policy.pause_states.join(", ")} onChange={(event) => setDraft({ ...policy, pause_states: event.target.value.split(",").map((value) => value.trim()).filter(Boolean) })} /></label><label className="block"><span className="mb-1 block text-xs text-fg-muted">Warning threshold (%)</span><Input type="number" min={1} max={100} value={policy.warning_threshold_percent} onChange={(event) => setDraft({ ...policy, warning_threshold_percent: Math.min(100, Math.max(1, Number(event.target.value) || 1)) })} /></label></CardBody></Card>
+        <Card><CardBody className="space-y-4 text-sm"><label className="block"><span className="mb-1 block text-xs text-fg-muted">Calendar</span><select className="h-9 w-full rounded-md border border-line bg-surface px-3 text-sm text-fg" value={policy.calendar_id ?? ""} onChange={(event) => setDraft({ ...policy, calendar_id: event.target.value || null })}><option value="">24/7 UTC default</option>{calendars.items.map((calendar) => <option key={calendar.id} value={calendar.id}>{calendar.name}</option>)}</select></label><label className="block"><span className="mb-1 block text-xs text-fg-muted">Pause states (comma separated)</span><Input value={policy.pause_states.join(", ")} onChange={(event) => setDraft({ ...policy, pause_states: event.target.value.split(",").map((value) => value.trim()).filter(Boolean) })} /></label><label className="block"><span className="mb-1 block text-xs text-fg-muted">Warning threshold (%)</span><Input type="number" min={1} max={100} value={policy.warning_threshold_percent} onChange={(event) => setDraft({ ...policy, warning_threshold_percent: Math.min(100, Math.max(1, Number(event.target.value) || 1)) })} /></label></CardBody></Card>
       </Section>
       <Section title="Scope" description="The server applies this policy only within the current workspace."><Card><CardBody><pre className="overflow-auto text-xs text-fg-secondary">{JSON.stringify(policy.applies_to ?? {}, null, 2)}</pre></CardBody></Card></Section>
     </PageBody>

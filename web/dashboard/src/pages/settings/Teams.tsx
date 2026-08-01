@@ -25,7 +25,7 @@ import {
   invalidate,
   useMutation,
   useInfinite,
-  useQuery,
+  useAllPages,
   type Member,
   type RoutingStrategy,
   type Team,
@@ -50,7 +50,7 @@ export default function Teams() {
   const [creating, setCreating] = useState(false);
 
   const teams = useInfinite<Team>(["teams"], (cursor, signal) => api.get<Paginated<Team>>(`/teams?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
-  const members = useQuery<{ data: Member[] }>(["members"], (signal) => api.get("/members", { signal }));
+  const members = useAllPages<Member>(["members", "lookup"], (cursor, signal) => api.get<Paginated<Member>>(`/members?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
 
   const list = teams.items;
   const active = list.find((team) => team.id === activeId) ?? list[0] ?? null;
@@ -95,7 +95,7 @@ export default function Teams() {
 
                 <div className="min-w-0">
                   {active ? (
-                    <TeamDetail team={active} members={members.data?.data ?? []} onDeleted={() => setActiveId(null)} />
+                    <TeamDetail team={active} members={members.items} onDeleted={() => setActiveId(null)} />
                   ) : null}
                 </div>
               </div>

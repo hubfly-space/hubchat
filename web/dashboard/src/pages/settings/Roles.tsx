@@ -15,6 +15,8 @@ import {
   Tooltip,
   cn,
   useQuery,
+  useAllPages,
+  type Paginated,
   type Capability,
   type Member,
   type MemberRole,
@@ -87,7 +89,7 @@ type RoleDefinition = { key: MemberRole; name: string; description: string | nul
  */
 export default function Roles() {
   const roles = useQuery<{ data: RoleDefinition[] }>(["roles"], (signal) => api.get("/roles", { signal }));
-  const members = useQuery<{ data: Member[] }>(["members"], (signal) => api.get("/members", { signal }));
+  const members = useAllPages<Member>(["members", "lookup"], (cursor, signal) => api.get<Paginated<Member>>(`/members?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
 
   return (
     <Page>
@@ -190,7 +192,7 @@ export default function Roles() {
                           title={<span className="capitalize">{role}</span>}
                           actions={
                             <Badge tone="neutral">
-                              {members.data?.data.filter((member) => member.role === role).length ?? 0}
+                              {members.items.filter((member) => member.role === role).length}
                             </Badge>
                           }
                         />
@@ -209,4 +211,3 @@ export default function Roles() {
     </Page>
   );
 }
-

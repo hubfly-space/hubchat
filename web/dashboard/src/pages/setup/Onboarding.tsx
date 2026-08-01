@@ -12,9 +12,11 @@ import {
   QueryError,
   RadioGroup,
   idempotencyKey,
+  useAllPages,
   useMutation,
   useQuery,
   cn,
+  type Paginated,
 } from "@hubchat/shared";
 import { ArrowRight, Check, Copy, Mail, MessageSquare, Radio, Ticket } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
@@ -59,9 +61,9 @@ export default function Onboarding() {
     { staleTime: 0 },
   );
   const workspaceID = bootstrap.data?.workspace.id;
-  const widgets = useQuery<{ data: LiveWidget[] }>(
-    workspaceID ? ["onboarding-widgets", workspaceID] : null,
-    (signal) => api.get<{ data: LiveWidget[] }>("/widgets", { signal, workspaceId: workspaceID }),
+  const widgets = useAllPages<LiveWidget>(
+    workspaceID ? ["onboarding-widgets", workspaceID, "lookup"] : null,
+    (cursor, signal) => api.get<Paginated<LiveWidget>>(`/widgets?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal, workspaceId: workspaceID }),
     { enabled: Boolean(workspaceID), staleTime: 0 },
   );
 
@@ -85,7 +87,7 @@ export default function Onboarding() {
   }
 
   const defaultInbox = bootstrap.data.inboxes.find((inbox) => inbox.is_default) ?? bootstrap.data.inboxes[0];
-  const widget = widgets.data?.data[0] ?? null;
+  const widget = widgets.items[0] ?? null;
 
   return (
     <div className="min-h-dvh bg-canvas">
