@@ -59,21 +59,11 @@ export function mount({
   style.textContent = styles;
   shadow.appendChild(style);
 
-  // Prefer a constructable sheet only where both APIs are genuinely usable.
-  // This is an optimization, not a requirement for rendering.
-  try {
-    if (
-      "adoptedStyleSheets" in ShadowRoot.prototype &&
-      "replaceSync" in CSSStyleSheet.prototype
-    ) {
-      const sheet = new CSSStyleSheet();
-      sheet.replaceSync(styles);
-      shadow.adoptedStyleSheets = [sheet];
-      style.remove();
-    }
-  } catch {
-    // Retain the already-installed style tag.
-  }
+  // Keep the style tag as the source of truth. Some embedded browsers expose
+  // constructable stylesheets but do not reliably apply them to a shadow root
+  // (especially after navigation or when the widget is injected late). A
+  // second stylesheet is not worth turning a styled support panel into an
+  // unstyled one, so the portable tag stays installed in every browser.
 
   const mountPoint = document.createElement("div");
   mountPoint.setAttribute("data-density", "comfortable");

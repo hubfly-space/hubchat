@@ -148,6 +148,13 @@ This is an API-level journey, not a browser DOM test. It catches production
 router, cookie, CSRF, tenant, widget-origin, and cross-module contract errors
 without adding a browser runtime to the Go release artifact.
 
+For the opt-in browser gate, run `make production-browser-check` with the same
+`HUBCHAT_BINARY_DATABASE_URL` used by the production-binary check. It uses the
+installed Chrome executable through DevTools, verifies the real widget loader
+inside a hostile host page, checks keyboard-visible controls, navigates an
+authenticated portal session, and opens the live dashboard Inbox. Chrome is
+only a test dependency; it is not required by the Hubchat binary.
+
 ## Browser journeys
 
 The cross-module API journey currently runs against a real PostgreSQL database:
@@ -160,9 +167,10 @@ HUBCHAT_TEST_DATABASE_URL="postgres://hubchat:hubchat@127.0.0.1:5432/hubchat_tes
 It covers workspace bootstrap, customer identity, portal magic-link login,
 ticket creation, agent and customer replies, attachment upload/download, and
 idempotent reply retry. A browser-level acceptance suite should still run
-against a built binary with a temporary PostgreSQL database. The production
-HTTP journey above covers the operator/widget portion; a browser-level suite
-is still useful for DOM, keyboard, accessibility, and real portal navigation.
+against a built binary with a temporary PostgreSQL database. The opt-in
+production browser check above covers the widget DOM, keyboard-visible
+controls, authenticated portal navigation, and dashboard tenant/accessibility
+anchors; the API journey remains the broader cross-module gate.
 The full journey set is documented in
 `.material/idea.md`: setup, widget conversation, verified identity, agent
 reply, ticket/portal reply, attachments, feedback, knowledge-base search,

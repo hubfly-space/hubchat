@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
 import { createServer } from "node:http";
+import { runBrowserJourney } from "./check-browser-journey.mjs";
 
 const baseURL = process.env.HUBCHAT_JOURNEY_BASE_URL;
 
@@ -450,6 +451,22 @@ if (portalSession?.session?.portal_id !== portalID || portalSession?.viewer?.id 
 const portalMe = await request(`/api/v1/portal/me?portal=${encodeURIComponent(portalID)}`);
 if (portalMe?.viewer?.id !== customerID) throw new Error("portal session did not resolve the customer profile");
 log("portal magic-link delivery and authenticated session");
+
+if (process.env.HUBCHAT_JOURNEY_BROWSER === "1") {
+  const portalCookie = cookies.get("hubchat_portal_session");
+  const browserResult = await runBrowserJourney({
+    baseURL,
+    publicKey,
+    portalID,
+    portalCookie,
+    viewerName: "Journey Customer",
+    dashboardCookie: cookies.get("hubchat_session"),
+    workspaceName: "Production Journey Workspace",
+  });
+  if (!browserResult.portalChecked) throw new Error("browser journey did not receive the authenticated portal session");
+  if (!browserResult.dashboardChecked) throw new Error("browser journey did not receive the authenticated dashboard session");
+  log("browser widget CSS isolation, accessible dialog, portal navigation, and dashboard navigation");
+}
 
 const feedbackBoard = await request("/api/v1/feedback/boards", {
   method: "POST",

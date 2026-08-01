@@ -40,7 +40,10 @@
       return;
     }
     state.pending.push([method, payload]);
-    if (method !== "boot" && state.config) load();
+    // boot() stores the key before the public configuration arrives. Do not
+    // start app.js against that half-configured object; the config callback
+    // below drains pending commands once `remote` is available.
+    if (method !== "boot" && state.config && state.config.remote) load();
   }
 
   var loading = false;
@@ -109,6 +112,15 @@
 
         // Honour the trigger without loading anything heavier than this file.
         var behavior = config.behavior || {};
+        // A host can call show(), identify(), or startConversation() in the
+        // same tick as boot(). Those calls are queued while config is being
+        // fetched; once config arrives, a pending app command is itself a
+        // request to lazy-load the interface even when the configured trigger
+        // is manual. Without this drain, the first interaction is silently
+        // stranded until the host calls the method a second time.
+        var hasPendingCommand = state.pending.some(function (item) {
+          return item[0] !== "boot" && item[0] !== "on";
+        });
         switch (behavior.trigger) {
           case "immediate":
             load();
@@ -125,6 +137,7 @@
           default:
             load();
         }
+        if (hasPendingCommand) load();
       })
       .catch(function () {
         // Keep boot retryable after a transient network failure. Calls made

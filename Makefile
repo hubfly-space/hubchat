@@ -109,6 +109,10 @@ production-load-check: ## Run bounded production HTTP load smoke (set HUBCHAT_LO
 production-binary-check: build ## Build and validate a production binary (set HUBCHAT_BINARY_DATABASE_URL)
 	node scripts/check-production-binary.mjs
 
+.PHONY: production-browser-check
+production-browser-check: build ## Production binary check plus Chrome widget/portal/dashboard browser journey
+	HUBCHAT_RUN_BROWSER_CHECK=1 node scripts/check-production-binary.mjs
+
 .PHONY: checksums
 checksums: ## Produce SHA256 checksums for release artifacts
 	cd $(DIST) && sha256sum * > SHA256SUMS
