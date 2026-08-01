@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -303,4 +304,56 @@ func (r *repository) listMessages(ctx context.Context, workspaceID, conversation
 		out = append(out, *m)
 	}
 	return out, rows.Err()
+}
+
+// listMessagesPage keeps the initial timeline bounded while preserving the
+// sequence cursor used by realtime resume. Initial and before-cursor reads
+// return the newest window in chronological order; after-cursor reads return
+// newly appended messages in chronological order.
+func (r *repository) listMessagesPage(ctx context.Context, workspaceID, conversationID string, beforeSequence, afterSequence int64, limit int) ([]Message, bool, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	args := []any{workspaceID, conversationID}
+	where := "workspace_id = $1 AND conversation_id = $2"
+	descending := afterSequence == 0
+	if beforeSequence > 0 {
+		where += " AND sequence < $3"
+		args = append(args, beforeSequence)
+	} else if afterSequence > 0 {
+		where += " AND sequence > $3"
+		args = append(args, afterSequence)
+	}
+	args = append(args, limit+1)
+	limitPlaceholder := fmt.Sprintf("$%d", len(args))
+	order := "ASC"
+	if descending {
+		order = "DESC"
+	}
+	rows, err := r.pool.Query(ctx, `SELECT `+messageColumns+` FROM messages WHERE `+where+` ORDER BY sequence `+order+` LIMIT `+limitPlaceholder, args...)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	out := make([]Message, 0, limit+1)
+	for rows.Next() {
+		message, scanErr := scanMessage(rows)
+		if scanErr != nil {
+			return nil, false, scanErr
+		}
+		out = append(out, *message)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	if descending {
+		for left, right := 0, len(out)-1; left < right; left, right = left+1, right-1 {
+			out[left], out[right] = out[right], out[left]
+		}
+	}
+	return out, hasMore, nil
 }

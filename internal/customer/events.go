@@ -148,7 +148,7 @@ func (r *repository) insertCustomerEvent(
 // cursor-paginated on (occurred_at, id) per §16.
 func (r *repository) timelineByCustomer(ctx context.Context, workspaceID, customerID string, before time.Time, beforeID string, limit int) ([]CustomerEvent, error) {
 	if before.IsZero() {
-		before = time.Now().Add(time.Hour)
+		before = time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT `+customerEventColumns+`
@@ -177,7 +177,7 @@ func (r *repository) timelineByCustomer(ctx context.Context, workspaceID, custom
 // workspace, optionally narrowed by type, newest first.
 func (r *repository) listEvents(ctx context.Context, workspaceID, eventType string, before time.Time, beforeID string, limit int) ([]CustomerEvent, error) {
 	if before.IsZero() {
-		before = time.Now().Add(time.Hour)
+		before = time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT `+customerEventColumns+`

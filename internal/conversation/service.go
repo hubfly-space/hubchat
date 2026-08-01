@@ -342,6 +342,16 @@ func (s *Service) Messages(ctx context.Context, workspaceID, conversationID stri
 	return s.repo.listMessages(ctx, workspaceID, conversationID, afterSequence)
 }
 
+// ListMessagesPage returns a bounded message window. A zero cursor starts at
+// the newest messages; beforeSequence walks toward older history, while
+// afterSequence is reserved for forward realtime replay.
+func (s *Service) ListMessagesPage(ctx context.Context, workspaceID, conversationID string, beforeSequence, afterSequence int64, limit int) ([]Message, bool, error) {
+	if beforeSequence > 0 && afterSequence > 0 {
+		return nil, false, errors.New("conversation: before and after cursors are mutually exclusive")
+	}
+	return s.repo.listMessagesPage(ctx, workspaceID, conversationID, beforeSequence, afterSequence, limit)
+}
+
 func preview(body string) string {
 	const max = 160
 	body = strings.Join(strings.Fields(body), " ")

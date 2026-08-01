@@ -58,7 +58,7 @@ func (r *repository) list(ctx context.Context, workspaceID string, filter ListFi
 
 	before := filter.Before
 	if before.IsZero() {
-		before = time.Now().Add(time.Hour)
+		before = time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
 	}
 	// last_seen_at is nullable (a customer who has never been seen since
 	// creation); coalescing to first_seen_at keeps the sort total and the
