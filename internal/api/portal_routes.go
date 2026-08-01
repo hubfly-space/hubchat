@@ -94,7 +94,7 @@ func handlePortalMagicLink(deps Deps) http.HandlerFunc {
 		if err == nil {
 			link, issueErr := deps.Portal.IssueMagicLink(r.Context(), p.ID, req.Email)
 			if issueErr == nil {
-				deps.sendMail(r, link.Customer.Email, "Your Hubchat portal sign-in link", "magic_link", mailer.Data{
+				deps.sendMailForWorkspace(r, p.WorkspaceID, link.Customer.Email, "Your Hubchat portal sign-in link", "magic_link", mailer.Data{
 					Name: link.Customer.Name, Link: portalMagicLink(deps, p.ID, link.Token, safePortalNext(req.Next)), ExpiresIn: "15 minutes",
 				})
 			} else if !errors.Is(issueErr, portal.ErrCustomerNotFound) && !errors.Is(issueErr, portal.ErrForbidden) {

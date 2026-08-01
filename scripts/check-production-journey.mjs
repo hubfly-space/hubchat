@@ -1,3 +1,6 @@
+import { createHmac } from "node:crypto";
+import { createServer } from "node:http";
+
 const baseURL = process.env.HUBCHAT_JOURNEY_BASE_URL;
 
 if (!baseURL) {
@@ -12,6 +15,25 @@ const customerEmail = `customer-${suffix}@example.com`;
 const password = "journey-password-2026!";
 const cookies = new Map();
 let requestNumber = 0;
+
+let webhookProbeRequest = null;
+const webhookProbe = createServer((req, res) => {
+  const chunks = [];
+  req.on("data", (chunk) => chunks.push(chunk));
+  req.on("end", () => {
+    webhookProbeRequest = { headers: req.headers, body: Buffer.concat(chunks) };
+    res.writeHead(204);
+    res.end();
+  });
+});
+await new Promise((resolve, reject) => {
+  webhookProbe.once("error", reject);
+  webhookProbe.listen(0, "127.0.0.1", resolve);
+});
+webhookProbe.unref();
+const webhookProbeAddress = webhookProbe.address();
+if (!webhookProbeAddress || typeof webhookProbeAddress === "string") throw new Error("could not start webhook probe");
+const webhookProbeURL = `http://127.0.0.1:${webhookProbeAddress.port}/delivery`;
 
 function rememberCookies(response) {
   const setCookies = typeof response.headers.getSetCookie === "function"
@@ -93,6 +115,72 @@ async function downloadText(path, expected = 200) {
   return text;
 }
 
+async function openVisitorSocket({ publicKey, token, pageURL, conversationID }) {
+  const socketURL = new URL("/ws/visitor", baseURL);
+  socketURL.protocol = socketURL.protocol === "https:" ? "wss:" : "ws:";
+  socketURL.searchParams.set("key", publicKey);
+  socketURL.searchParams.set("token", token);
+  socketURL.searchParams.set("url", pageURL);
+
+  const socket = new WebSocket(socketURL);
+  const frames = [];
+  const waiters = [];
+  let opened = false;
+  let closed = false;
+
+  const rejectAll = (error) => {
+    while (waiters.length > 0) waiters.shift().reject(error);
+  };
+
+  socket.addEventListener("open", () => { opened = true; });
+  socket.addEventListener("message", (event) => {
+    let frame;
+    try {
+      frame = JSON.parse(String(event.data));
+    } catch {
+      return;
+    }
+    for (let index = 0; index < waiters.length; index += 1) {
+      if (!waiters[index].predicate(frame)) continue;
+      const waiter = waiters.splice(index, 1)[0];
+      clearTimeout(waiter.timeout);
+      waiter.resolve(frame);
+      return;
+    }
+    frames.push(frame);
+  });
+  socket.addEventListener("error", () => rejectAll(new Error("visitor websocket failed")));
+  socket.addEventListener("close", () => {
+    closed = true;
+    rejectAll(new Error("visitor websocket closed before the expected frame arrived"));
+  });
+
+  const waitFor = (predicate, label, timeoutMs = 10000) => {
+    for (let index = 0; index < frames.length; index += 1) {
+      if (!predicate(frames[index])) continue;
+      return Promise.resolve(frames.splice(index, 1)[0]);
+    }
+    if (closed) return Promise.reject(new Error(`visitor websocket closed while waiting for ${label}`));
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        const index = waiters.findIndex((item) => item.resolve === resolve);
+        if (index >= 0) waiters.splice(index, 1);
+        reject(new Error(`timed out waiting for visitor websocket ${label}`));
+      }, timeoutMs);
+      waiters.push({ predicate, resolve, reject, timeout });
+    });
+  };
+
+  await waitFor((frame) => frame.type === "hub.ready", "hub.ready");
+  if (!opened) throw new Error("visitor websocket emitted hub.ready before opening");
+  socket.send(JSON.stringify({ action: "subscribe", topics: [`conversation:${conversationID}`] }));
+  return {
+    socket,
+    waitFor,
+    close: () => socket.close(),
+  };
+}
+
 function requireValue(value, label) {
   if (typeof value !== "string" || value.length === 0) throw new Error(`${label} was missing`);
   return value;
@@ -159,9 +247,9 @@ const slaPolicy = await request("/api/v1/sla/policies", {
     name: "Production journey response policy",
     description: "SLA policy created by the release journey.",
     calendar_id: calendarID,
-    targets: [{ priority: "normal", first_response_minutes: 60, next_response_minutes: 120, resolution_minutes: 480 }],
+    targets: [{ priority: "normal", first_response_minutes: 0, next_response_minutes: 0, resolution_minutes: 0 }],
     pause_states: ["waiting_for_customer"],
-    warning_threshold_percent: 80,
+    warning_threshold_percent: 50,
     escalation_actions: [],
     applies_to: {},
     enabled: true,
@@ -176,7 +264,7 @@ log("SLA calendar and policy configuration");
 const webhook = await request("/api/v1/webhooks", {
   method: "POST",
   body: {
-    url: `${origin}/healthz`,
+    url: webhookProbeURL,
     description: "Production journey webhook",
     events: ["ticket.created", "conversation.created"],
     enabled: true,
@@ -192,15 +280,28 @@ const webhookTest = await request(`/api/v1/webhooks/${webhookID}/test`, {
   expected: 202,
 });
 const webhookDeliveryID = requireValue(webhookTest?.id, "webhook test delivery id");
-const webhookDeliveries = await request(`/api/v1/webhooks/${webhookID}/deliveries`);
-if (!Array.isArray(webhookDeliveries?.data) || !webhookDeliveries.data.some((item) => item.id === webhookDeliveryID)) {
-  throw new Error("webhook delivery history did not include the test delivery");
+let webhookDelivery;
+for (let attempt = 0; attempt < 40; attempt += 1) {
+  const webhookDeliveries = await request(`/api/v1/webhooks/${webhookID}/deliveries`);
+  webhookDelivery = webhookDeliveries?.data?.find((item) => item.id === webhookDeliveryID);
+  if (webhookDelivery?.status === "delivered") break;
+  await new Promise((resolve) => setTimeout(resolve, 100));
+}
+if (webhookDelivery?.status !== "delivered" || !webhookProbeRequest) {
+  throw new Error("webhook worker did not deliver the test request");
+}
+const webhookTimestamp = String(webhookProbeRequest.headers["x-hubchat-timestamp"] ?? "");
+const webhookSignature = String(webhookProbeRequest.headers["x-hubchat-signature"] ?? "");
+const expectedWebhookSignature = `v1=${createHmac("sha256", webhook.secret).update(`${webhookTimestamp}.${webhookProbeRequest.body.toString()}`).digest("hex")}`;
+if (!webhookTimestamp || webhookSignature !== expectedWebhookSignature) {
+  throw new Error("webhook delivery signature did not match the raw request body");
 }
 const replay = await request(`/api/v1/webhooks/${webhookID}/deliveries/${webhookDeliveryID}/replay`, {
   method: "POST",
   expected: 202,
 });
 if (!replay?.id || replay.id === webhookDeliveryID) throw new Error("webhook replay did not create a new delivery");
+webhookProbe.close();
 log("webhook signing, test delivery, and replay");
 
 const knowledgeBase = await request("/api/v1/knowledge-bases", {
@@ -388,6 +489,32 @@ const conversationID = requireValue(started?.conversation_id, "widget conversati
 const tokenAfterStart = started?.token || visitorToken;
 const conversationBody = { ...visitorBody, token: tokenAfterStart };
 
+const visitorSocket = await openVisitorSocket({
+  publicKey,
+  token: tokenAfterStart,
+  pageURL: widgetURL,
+  conversationID,
+});
+await visitorSocket.waitFor(
+  (frame) => frame.type === "hub.topics" && frame.data?.topics?.includes(`conversation:${conversationID}`),
+  "conversation subscription",
+);
+const realtimeAgentReply = await request(`/api/v1/conversations/${conversationID}/messages`, {
+  method: "POST",
+  body: { kind: "reply", author_name: "Journey Agent", body: "The realtime transport is working." },
+  expected: 201,
+});
+const realtimeFrame = await visitorSocket.waitFor(
+  (frame) => frame.type === "message.created" && frame.data?.id === realtimeAgentReply?.id,
+  "agent message.created",
+);
+if (realtimeFrame.data?.author_type !== "agent" || realtimeFrame.data?.body !== "The realtime transport is working.") {
+  visitorSocket.close();
+  throw new Error("visitor websocket delivered an unexpected agent reply");
+}
+visitorSocket.close();
+log("visitor realtime delivery and topic authorization");
+
 const posted = await request(`/api/v1/widget/conversations/${conversationID}/messages`, {
   method: "POST",
   body: { ...conversationBody, body: "The follow-up message should be visible to the agent." },
@@ -403,6 +530,18 @@ const ticket = await request(`/api/v1/conversations/${conversationID}/ticket`, {
 });
 if (!ticket?.id || ticket.conversation_id !== conversationID) throw new Error("ticket conversion did not preserve the conversation link");
 log("conversation to ticket conversion");
+
+let breachedSLA;
+for (let attempt = 0; attempt < 40; attempt += 1) {
+  const breached = await request("/api/v1/sla/instances?state=breached&limit=100");
+  breachedSLA = breached?.data?.find((item) => item?.ticket_id === ticket.id);
+  if (breachedSLA?.breached_at && breachedSLA?.warned_at) break;
+  await new Promise((resolve) => setTimeout(resolve, 100));
+}
+if (!breachedSLA?.breached_at || !breachedSLA?.warned_at) {
+  throw new Error("SLA scheduler did not persist warning and breach state for the ticket");
+}
+log("SLA warning and breach evaluation");
 
 const portalTickets = await request(`/api/v1/portal/tickets?portal=${encodeURIComponent(portalID)}`);
 if (!Array.isArray(portalTickets?.data) || !portalTickets.data.some((item) => item.id === ticket.id)) {
@@ -482,7 +621,39 @@ const execution = await request(`/api/v1/automation/rules/${automationRuleID}/dr
 if (execution?.outcome !== "matched" || execution?.dry_run !== true) {
   throw new Error("automation dry-run did not match without applying changes");
 }
-log("automation rule dry-run");
+const liveAutomationRule = await request("/api/v1/automation/rules", {
+  method: "POST",
+  body: {
+    name: "Production journey live priority rule",
+    description: "Updates a normal ticket once when its priority changes.",
+    trigger: "ticket.updated",
+    conditions: { conditions: [{ field: "priority", operator: "is", value: "normal" }] },
+    actions: [{ type: "set_priority", params: { priority: "high" } }],
+    position: 1,
+    enabled: true,
+    max_runs_per_hour: 10,
+  },
+  expected: 201,
+});
+const liveAutomationRuleID = requireValue(liveAutomationRule?.id, "live automation rule id");
+await request(`/api/v1/tickets/${ticket.id}/priority`, {
+  method: "PATCH",
+  body: { priority: "normal" },
+  expected: 200,
+});
+let liveExecution;
+let liveTicket;
+for (let attempt = 0; attempt < 40; attempt += 1) {
+  const executions = await request(`/api/v1/automation/executions?rule_id=${encodeURIComponent(liveAutomationRuleID)}&limit=20`);
+  liveExecution = executions?.data?.find((item) => item?.dry_run === false && item?.outcome === "matched");
+  liveTicket = await request(`/api/v1/tickets/${encodeURIComponent(ticket.id)}`);
+  if (liveExecution?.outcome === "matched" && liveTicket?.priority === "high") break;
+  await new Promise((resolve) => setTimeout(resolve, 100));
+}
+if (liveExecution?.outcome !== "matched" || liveTicket?.priority !== "high") {
+  throw new Error("automation event consumer did not apply the live priority rule");
+}
+log("automation dry-run and live event execution");
 
 const exportPreview = await request("/api/v1/portability/exports/preview", {
   method: "POST",
@@ -493,4 +664,4 @@ if (!Array.isArray(exportPreview?.tables) || typeof exportPreview?.row_count !==
 }
 log("workspace export preview");
 
-console.log("Production HTTP journey OK (setup, portal, SLA, webhook, knowledge base, survey, widget, feedback, conversation, ticket, automation, export preview)");
+console.log("Production HTTP/realtime journey OK (setup, portal, SLA, webhook, knowledge base, survey, widget, feedback, conversation, realtime, ticket, portal reply, attachments, automation, export preview)");

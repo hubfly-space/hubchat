@@ -127,13 +127,16 @@ design; it never guesses which database is safe to destroy.
 The production-binary check also runs an HTTP acceptance journey against the
 compiled binary. It creates an isolated, uniquely named owner/workspace,
 installs a widget, verifies public widget configuration and visitor identity,
-creates and publicly bootstraps a portal, starts and replies to a visitor
-conversation, configures an SLA calendar and policy, creates and replays a
-webhook delivery, publishes and searches a knowledge-base article, records
+creates and publicly bootstraps a portal, queues and redeems a portal
+magic-link session, starts and replies to a visitor conversation, verifies the
+visitor WebSocket subscription and agent reply delivery, configures an
+SLA calendar and policy, delivers a signed webhook to a local probe and
+replays it, publishes and searches a knowledge-base article, records
 article helpfulness, creates and answers an anonymous CSAT survey, submits and
-votes on widget feedback, converts the conversation to a ticket, dry-runs an
-automation rule, uploads and downloads a ticket attachment, and checks
-workspace export preview.
+votes on widget feedback, converts the conversation to a ticket, dry-runs and
+executes an automation rule from a committed ticket event, uploads and
+downloads a ticket attachment, and checks workspace export preview. The
+journey runs with HTTP, realtime, worker, and scheduler roles enabled.
 Run it directly against an already running binary with:
 
 ```bash

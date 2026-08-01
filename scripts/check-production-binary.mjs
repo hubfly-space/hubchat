@@ -81,13 +81,14 @@ function runNodeScript(script, env) {
 const port = await reservePort();
 const baseURL = `http://127.0.0.1:${port}`;
 const output = [];
-const child = spawn(binary, ["serve", "--roles=http,realtime"], {
+const child = spawn(binary, ["serve", "--roles=http,realtime,worker,scheduler"], {
   env: {
     ...process.env,
     HUBCHAT_DATABASE_URL: databaseURL,
     HUBCHAT_PUBLIC_URL: baseURL,
     HUBCHAT_LISTEN: `127.0.0.1:${port}`,
     HUBCHAT_SECRET_KEY: secretKey,
+    HUBCHAT_SLA_EVALUATION_INTERVAL: "1s",
     HUBCHAT_DEV: "0",
     HUBCHAT_MIGRATE: "verify",
   },

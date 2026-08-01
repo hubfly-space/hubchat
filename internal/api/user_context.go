@@ -105,6 +105,14 @@ func (d Deps) issuerName() string {
 // also means a slow relay cannot hold an HTTP request open — the durable
 // queue's retry and dead-letter handling take over from here.
 func (d Deps) sendMail(r *http.Request, to, subject, template string, data mailer.Data) {
+	d.sendMailForWorkspace(r, "", to, subject, template, data)
+}
+
+// sendMailForWorkspace attaches tenant context to customer-facing messages
+// whose source resource belongs to a workspace. Account-level authentication
+// mail remains unscoped through sendMail above; portal and support messages
+// must be visible to that workspace's job and delivery diagnostics.
+func (d Deps) sendMailForWorkspace(r *http.Request, workspaceID, to, subject, template string, data mailer.Data) {
 	body, err := mailer.Render(template, data)
 	if err != nil {
 		d.Logger.Error("rendering email failed", "template", template, "error", err)
@@ -117,8 +125,9 @@ func (d Deps) sendMail(r *http.Request, to, subject, template string, data maile
 	}
 
 	_, err = d.Jobs.Enqueue(r.Context(), jobs.Spec{
-		Type:  JobEmailSend,
-		Queue: "email",
+		WorkspaceID: workspaceID,
+		Type:        JobEmailSend,
+		Queue:       "email",
 		Payload: EmailPayload{
 			To:      to,
 			Subject: subject,
