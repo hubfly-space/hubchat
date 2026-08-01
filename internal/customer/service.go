@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -81,10 +82,25 @@ func (s *Service) GetMany(ctx context.Context, workspaceID string, ids []string)
 // Search matches on name and email — the customer picker's directory search
 // and the inbox's "find this person" lookup.
 func (s *Service) Search(ctx context.Context, workspaceID, query string, limit int) ([]Customer, error) {
+	items, err := s.SearchPage(ctx, workspaceID, query, false, false, time.Time{}, time.Time{}, "", limit)
+	if err != nil {
+		return nil, err
+	}
+	customers := make([]Customer, 0, len(items))
+	for _, item := range items {
+		customers = append(customers, item.Customer)
+	}
+	return customers, nil
+}
+
+// SearchPage returns customer matches with deterministic cursor keys. The
+// presence bit keeps NULL last_seen_at values after customers that have been
+// seen, matching the legacy search ordering without an unstable NULL cursor.
+func (s *Service) SearchPage(ctx context.Context, workspaceID, query string, beforeLastSeenPresent bool, hasCursor bool, beforeLastSeen, beforeFirstSeen time.Time, beforeID string, limit int) ([]SearchResult, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	return s.repo.search(ctx, workspaceID, strings.TrimSpace(query), limit)
+	return s.repo.searchPage(ctx, workspaceID, strings.TrimSpace(query), beforeLastSeenPresent, beforeLastSeen, beforeFirstSeen, beforeID, hasCursor, limit)
 }
 
 // Update changes the editable fields of a customer's profile, under

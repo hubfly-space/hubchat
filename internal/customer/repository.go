@@ -36,6 +36,15 @@ type Customer struct {
 	Version         int
 }
 
+// SearchResult carries the normalized sort keys needed to continue a global
+// customer search without exposing implementation details in Customer.
+type SearchResult struct {
+	Customer
+	LastSeenPresent bool
+	LastSeenSort    time.Time
+	FirstSeenSort   time.Time
+}
+
 type repository struct {
 	pool *database.Pool
 }
@@ -154,27 +163,55 @@ func (r *repository) exists(ctx context.Context, workspaceID, id string) (bool, 
 
 // search matches the customers_search trigram index verbatim (migration
 // 0002): name and email, case-insensitive, substring-tolerant.
-func (r *repository) search(ctx context.Context, workspaceID, query string, limit int) ([]Customer, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT `+customerColumns+`
+func (r *repository) searchPage(ctx context.Context, workspaceID, query string, beforeLastSeenPresent bool, beforeLastSeen, beforeFirstSeen time.Time, beforeID string, hasCursor bool, limit int) ([]SearchResult, error) {
+	args := []any{workspaceID, query}
+	statement := `SELECT ` + customerColumns + `,
+			(last_seen_at IS NOT NULL)
 		FROM customers
 		WHERE workspace_id = $1
-		  AND ($2 = '' OR (coalesce(name, '') || ' ' || coalesce(email::text, '')) ILIKE '%' || $2 || '%')
-		ORDER BY last_seen_at DESC NULLS LAST, first_seen_at DESC
-		LIMIT $3
-	`, workspaceID, query, limit)
+		  AND ($2 = '' OR (coalesce(name, '') || ' ' || coalesce(email::text, '')) ILIKE '%' || $2 || '%')`
+	if hasCursor {
+		// Keep NULL last_seen_at values at the end without scanning a
+		// PostgreSQL infinity sentinel into time.Time. The boolean branch is
+		// also the cursor's first sort key.
+		statement += ` AND (
+			(last_seen_at IS NOT NULL) < $3
+			OR ((last_seen_at IS NOT NULL) = $3 AND (
+				($3 AND last_seen_at < $4)
+				OR ($3 AND last_seen_at = $4 AND first_seen_at < $5)
+				OR ($3 AND last_seen_at = $4 AND first_seen_at = $5 AND id < $6)
+				OR (NOT $3 AND first_seen_at < $5)
+				OR (NOT $3 AND first_seen_at = $5 AND id < $6)
+			))
+		)`
+		args = append(args, beforeLastSeenPresent, beforeLastSeen, beforeFirstSeen, beforeID)
+	}
+	statement += fmt.Sprintf(` ORDER BY (last_seen_at IS NOT NULL) DESC,last_seen_at DESC NULLS LAST,first_seen_at DESC,id DESC LIMIT $%d`, len(args)+1)
+	args = append(args, limit)
+	rows, err := r.pool.Query(ctx, statement, args...)
 	if err != nil {
 		return nil, fmt.Errorf("customer: search: %w", err)
 	}
 	defer rows.Close()
 
-	out := []Customer{}
+	out := []SearchResult{}
 	for rows.Next() {
-		c, err := scanCustomer(rows)
-		if err != nil {
+		var item SearchResult
+		if err := rows.Scan(
+			&item.ID, &item.WorkspaceID, &item.Name, &item.Email, &item.Phone, &item.AvatarURL, &item.ExternalID, &item.Verification,
+			&item.Language, &item.Timezone, &item.Attributes, &item.OwnerID, &item.FirstSeenAt, &item.LastSeenAt, &item.LastContactedAt, &item.Version,
+			&item.LastSeenPresent,
+		); err != nil {
 			return nil, err
 		}
-		out = append(out, *c)
+		if item.Attributes == nil {
+			item.Attributes = map[string]any{}
+		}
+		if item.LastSeenAt != nil {
+			item.LastSeenSort = *item.LastSeenAt
+		}
+		item.FirstSeenSort = item.FirstSeenAt
+		out = append(out, item)
 	}
 	return out, rows.Err()
 }

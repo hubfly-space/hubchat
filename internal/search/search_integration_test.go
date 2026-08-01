@@ -127,3 +127,54 @@ func TestSearchReturnsEmptyWithoutError(t *testing.T) {
 		t.Fatalf("expected no results, got %+v", results)
 	}
 }
+
+func TestSearchPageWalksMessagesAndCustomersWithoutRepeats(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+
+	convSvc := conversation.New(pool, events.New(pool), audit.New(pool))
+	custSvc := customer.New(pool, events.New(pool), audit.New(pool), config.Limits{MaxEventBytes: 32 << 10, MaxAttributesPerCustomer: 100})
+	searchSvc := search.New(convSvc, custSvc)
+	workspaceID, inboxID := seedWorkspace(t, ctx, pool)
+
+	for _, body := range []string{"Refund status one", "Refund status two", "Refund status three"} {
+		if _, _, err := convSvc.Start(ctx, workspaceID, inboxID, "widget", nil, nil, nil, "Visitor", body); err != nil {
+			t.Fatalf("start conversation: %v", err)
+		}
+	}
+	for i, name := range []string{"Refund Customer One", "Refund Customer Two"} {
+		id := ids.New(ids.PrefixCustomer)
+		if _, err := pool.Exec(ctx, `INSERT INTO customers (id,workspace_id,name,email) VALUES ($1,$2,$3,$4)`, id, workspaceID, name, "refund-"+string(rune('a'+i))+"@example.com"); err != nil {
+			t.Fatalf("seed customer: %v", err)
+		}
+	}
+
+	seen := map[string]bool{}
+	cursor := ""
+	for pageNumber := 0; pageNumber < 10; pageNumber++ {
+		page, err := searchSvc.SearchPage(ctx, workspaceID, "refund", cursor, 2)
+		if err != nil {
+			t.Fatalf("search page %d: %v", pageNumber, err)
+		}
+		if len(page.Results) == 0 && page.HasMore {
+			t.Fatalf("search page %d claims more rows while empty", pageNumber)
+		}
+		for _, result := range page.Results {
+			if seen[result.Kind+":"+result.EntityID] {
+				t.Fatalf("search page %d repeated result %+v", pageNumber, result)
+			}
+			seen[result.Kind+":"+result.EntityID] = true
+		}
+		if !page.HasMore {
+			break
+		}
+		if page.NextCursor == "" {
+			t.Fatalf("search page %d has_more without cursor", pageNumber)
+		}
+		cursor = page.NextCursor
+	}
+	if len(seen) != 5 {
+		t.Fatalf("search returned %d unique results, want 5: %+v", len(seen), seen)
+	}
+}
