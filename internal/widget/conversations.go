@@ -74,6 +74,27 @@ func (s *Service) Messages(ctx context.Context, workspaceID, conversationID stri
 	return visible, nil
 }
 
+// MessagesPage applies the same ownership and visibility rules as Messages
+// while keeping widget history bounded. Internal notes are filtered after the
+// conversation service applies the sequence cursor, so notes never leak to a
+// visitor even when they share a page with visible replies.
+func (s *Service) MessagesPage(ctx context.Context, workspaceID, conversationID string, visitor *Visitor, beforeSequence, afterSequence int64, limit int) ([]conversation.Message, bool, error) {
+	if err := s.checkOwnership(ctx, workspaceID, conversationID, visitor); err != nil {
+		return nil, false, err
+	}
+	all, hasMore, err := s.conversation.ListMessagesPage(ctx, workspaceID, conversationID, beforeSequence, afterSequence, limit)
+	if err != nil {
+		return nil, false, err
+	}
+	visible := make([]conversation.Message, 0, len(all))
+	for _, message := range all {
+		if message.Kind != "note" {
+			visible = append(visible, message)
+		}
+	}
+	return visible, hasMore, nil
+}
+
 func (s *Service) checkOwnership(ctx context.Context, workspaceID, conversationID string, visitor *Visitor) error {
 	conv, err := s.conversation.Get(ctx, workspaceID, conversationID)
 	if err != nil {

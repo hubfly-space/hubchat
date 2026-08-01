@@ -107,6 +107,32 @@ func TestUpdateReplacesNavigationWithinWorkspace(t *testing.T) {
 	}
 }
 
+func TestListPageUsesStableNameCursorAndWorkspaceScope(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspaces (id,name,slug) VALUES
+			('wrk_portal_page','Portal Page','portal-page'),
+			('wrk_portal_other','Portal Other','portal-other');
+		INSERT INTO portals (id,workspace_id,name,subdomain) VALUES
+			('prl_page_a','wrk_portal_page','Alpha','alpha-page'),
+			('prl_page_b','wrk_portal_page','Beta','beta-page'),
+			('prl_page_other','wrk_portal_other','Other','other-page')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	service := portal.New(pool, portal.Options{})
+	first, err := service.ListPage(ctx, "wrk_portal_page", "", "", 1)
+	if err != nil || len(first) != 1 || first[0].ID != "prl_page_a" {
+		t.Fatalf("first portal page = %#v, err=%v", first, err)
+	}
+	second, err := service.ListPage(ctx, "wrk_portal_page", first[0].Name, first[0].ID, 1)
+	if err != nil || len(second) != 1 || second[0].ID != "prl_page_b" {
+		t.Fatalf("second portal page = %#v, err=%v", second, err)
+	}
+}
+
 func TestCustomDomainLifecycleIsWorkspaceScoped(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.Reset(t, pool)
@@ -141,5 +167,38 @@ func TestCustomDomainLifecycleIsWorkspaceScoped(t *testing.T) {
 	}
 	if resolved.ID != "prl_domain_a" {
 		t.Fatalf("resolved portal = %q, want prl_domain_a", resolved.ID)
+	}
+}
+
+func TestListDomainsPageUsesDomainCursorAndWorkspaceScope(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id, name, slug) VALUES ('wrk_domain_page', 'Domain Page', 'domain-page'), ('wrk_domain_other', 'Domain Other', 'domain-other')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO portals (id, workspace_id, name, subdomain) VALUES ('prl_domain_page', 'wrk_domain_page', 'Portal', 'domain-page'), ('prl_domain_other', 'wrk_domain_other', 'Other', 'domain-other')`); err != nil {
+		t.Fatal(err)
+	}
+	service := portal.New(pool, portal.Options{})
+	for _, domain := range []string{"z.example.com", "a.example.com"} {
+		if _, err := service.AddDomain(ctx, "wrk_domain_page", "prl_domain_page", domain); err != nil {
+			t.Fatalf("add domain %s: %v", domain, err)
+		}
+	}
+	if _, err := service.AddDomain(ctx, "wrk_domain_other", "prl_domain_other", "other.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	first, err := service.ListDomainsPage(ctx, "wrk_domain_page", "prl_domain_page", "", "", 2)
+	if err != nil || len(first) != 2 || first[0].Domain != "a.example.com" || first[1].Domain != "z.example.com" {
+		t.Fatalf("first domain page = %#v, err=%v", first, err)
+	}
+	second, err := service.ListDomainsPage(ctx, "wrk_domain_page", "prl_domain_page", first[0].Domain, first[0].ID, 2)
+	if err != nil || len(second) != 1 || second[0].Domain != "z.example.com" {
+		t.Fatalf("second domain page = %#v, err=%v", second, err)
+	}
+	other, err := service.ListDomainsPage(ctx, "wrk_domain_other", "prl_domain_page", "", "", 2)
+	if err != nil || len(other) != 0 {
+		t.Fatalf("cross-workspace domain page = %#v, err=%v", other, err)
 	}
 }

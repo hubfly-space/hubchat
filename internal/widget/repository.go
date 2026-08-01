@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -45,6 +47,33 @@ func (r *repository) list(ctx context.Context, workspaceID string) ([]Widget, er
 	}
 	defer rows.Close()
 
+	out := []Widget{}
+	for rows.Next() {
+		w, err := scanWidget(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *w)
+	}
+	return out, rows.Err()
+}
+
+func (r *repository) listPage(ctx context.Context, workspaceID string, before time.Time, beforeID string, limit int) ([]Widget, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := "workspace_id = $1"
+	args := []any{workspaceID}
+	if !before.IsZero() {
+		where += " AND (created_at,id) > ($2,$3)"
+		args = append(args, before, beforeID)
+	}
+	args = append(args, limit)
+	rows, err := r.pool.Query(ctx, `SELECT `+widgetColumns+` FROM widgets WHERE `+where+` ORDER BY created_at ASC, id ASC LIMIT $`+strconv.Itoa(len(args)), args...)
+	if err != nil {
+		return nil, fmt.Errorf("widget: list page: %w", err)
+	}
+	defer rows.Close()
 	out := []Widget{}
 	for rows.Next() {
 		w, err := scanWidget(rows)
@@ -251,6 +280,35 @@ func (r *repository) domains(ctx context.Context, widgetID string) ([]Domain, er
 	}
 	defer rows.Close()
 
+	out := []Domain{}
+	for rows.Next() {
+		var d Domain
+		if err := rows.Scan(&d.ID, &d.WidgetID, &d.Domain, &d.VerifiedAt, &d.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func (r *repository) domainsPage(ctx context.Context, widgetID string, before time.Time, beforeID string, limit int) ([]Domain, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := "widget_id = $1"
+	args := []any{widgetID}
+	if !before.IsZero() {
+		where += " AND (created_at,id) > ($2,$3)"
+		args = append(args, before, beforeID)
+	}
+	args = append(args, limit)
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, widget_id, domain, verified_at, created_at
+		FROM widget_domains WHERE `+where+` ORDER BY created_at ASC, id ASC LIMIT $`+strconv.Itoa(len(args)), args...)
+	if err != nil {
+		return nil, fmt.Errorf("widget: domains page: %w", err)
+	}
+	defer rows.Close()
 	out := []Domain{}
 	for rows.Next() {
 		var d Domain

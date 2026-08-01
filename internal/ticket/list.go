@@ -101,7 +101,7 @@ func (r *repository) list(ctx context.Context, workspaceID string, filter ListFi
 
 	before := filter.Before
 	if before.IsZero() {
-		before = time.Now().Add(time.Hour)
+		before = time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
 	}
 	where = append(where, "(updated_at, id) < ("+arg(before)+", "+arg(filter.BeforeID)+")")
 
