@@ -34,6 +34,7 @@ import type { Paginated } from "@hubchat/shared";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useWorkspace } from "../../app/workspace-context";
+import { useAnalyticsRollups, type AnalyticsRollup } from "../../lib/analytics";
 
 export const RANGES = [
   { value: "7d", label: "7 days" },
@@ -41,12 +42,6 @@ export const RANGES = [
   { value: "90d", label: "90 days" },
 ] as const;
 
-type Rollup = {
-  bucket: string;
-  value: number;
-  count: number;
-  dimensions: Record<string, unknown>;
-};
 type Summary = { first_response_seconds: number; sla_compliance_percent: number; sla_instances: number; backlog_conversations: number; backlog_tickets: number };
 type SavedReport = { id: string; name: string; description?: string; date_range: string; timezone?: string; created_at: string };
 type ReportSchedule = { id: string; report_id: string; cadence: string; recipients: string[]; format: string; enabled: boolean; next_run_at?: string; last_sent_at?: string; created_at: string; options: Record<string, unknown> };
@@ -62,12 +57,9 @@ export default function ReportsOverview() {
   const [deletingReport, setDeletingReport] = useState<SavedReport | null>(null);
   const [deletingSchedule, setDeletingSchedule] = useState<ReportSchedule | null>(null);
   const days = range === "7d" ? 7 : range === "90d" ? 90 : 30;
-  const query = (metric: string) => {
-    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-    return `/analytics/rollups?metric=${encodeURIComponent(metric)}&grain=day&from=${encodeURIComponent(from)}`;
-  };
-  const conversations = useQuery<{ data: Rollup[] }>(["reports", "conversations", range], (signal) => api.get(query("conversations.created"), { signal }));
-  const tickets = useQuery<{ data: Rollup[] }>(["reports", "tickets", range], (signal) => api.get(query("tickets.created"), { signal }));
+  const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const conversations = useAnalyticsRollups(["reports", "conversations", range], "conversations.created", from);
+  const tickets = useAnalyticsRollups(["reports", "tickets", range], "tickets.created", from);
   const reports = useInfinite<SavedReport>(["saved-reports"], (cursor, signal) => {
     const params = new URLSearchParams({ limit: "25" });
     if (cursor) params.set("cursor", cursor);
@@ -84,10 +76,10 @@ export default function ReportsOverview() {
   );
   const summary = useQuery<Summary>(["reports", "summary", range], (signal) => api.get(`/analytics/summary?from=${encodeURIComponent(new Date(Date.now() - days * 86400000).toISOString())}`, { signal }));
 
-  const conversationPoints = toPoints(conversations.data?.data ?? []);
-  const ticketPoints = toPoints(tickets.data?.data ?? []);
-  const channelSplit = splitChannels(conversations.data?.data ?? []);
-  const loading = conversations.isLoading || tickets.isLoading || summary.isLoading;
+  const conversationPoints = toPoints(conversations.items);
+  const ticketPoints = toPoints(tickets.items);
+  const channelSplit = splitChannels(conversations.items);
+  const loading = conversations.isFetching || tickets.isFetching || summary.isLoading;
   const failed = conversations.isError || tickets.isError || summary.isError;
   const schedule = useMutation<void, ReportSchedule>(async () => {
     const report = await api.post<{ id: string }>("/reports", {
@@ -269,7 +261,7 @@ export default function ReportsOverview() {
   );
 }
 
-function toPoints(items: Rollup[]) {
+function toPoints(items: AnalyticsRollup[]) {
   return items.map((item) => ({ t: item.bucket, v: item.value }));
 }
 
@@ -277,7 +269,7 @@ function sum(points: { v: number }[]) {
   return points.reduce((total, point) => total + point.v, 0);
 }
 
-function splitChannels(items: Rollup[]) {
+function splitChannels(items: AnalyticsRollup[]) {
   const totals = new Map<string, number>();
   for (const item of items) {
     const channel = typeof item.dimensions.channel === "string" ? item.dimensions.channel : "other";

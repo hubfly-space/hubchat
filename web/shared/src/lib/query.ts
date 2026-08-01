@@ -455,6 +455,10 @@ export function useAllPages<T>(
   const [additionalError, setAdditionalError] = useState<unknown>(null);
   const pageFetchNext = page.fetchNext;
 
+  useEffect(() => {
+    if (page.isFetching && !page.error) setAdditionalError(null);
+  }, [page.error, page.isFetching]);
+
   const fetchNext = useCallback(async () => {
     try {
       await pageFetchNext();
@@ -471,6 +475,7 @@ export function useAllPages<T>(
   return {
     ...page,
     error: page.error ?? additionalError,
+    isError: Boolean(page.error ?? additionalError),
   };
 }
 
