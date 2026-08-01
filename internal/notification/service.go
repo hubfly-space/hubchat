@@ -10,8 +10,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hubchat/hubchat/internal/conversation"
 	"github.com/hubchat/hubchat/internal/database"
 	"github.com/hubchat/hubchat/internal/events"
+	filemodule "github.com/hubchat/hubchat/internal/file"
 	"github.com/hubchat/hubchat/internal/ids"
 	"github.com/hubchat/hubchat/internal/jobs"
 	"github.com/jackc/pgx/v5"
@@ -23,6 +25,7 @@ var ErrInvalidPreference = errors.New("notification: invalid preference")
 type Service struct {
 	pool      *database.Pool
 	jobs      *jobs.Client
+	files     *filemodule.Service
 	surveys   SurveyDispatcher
 	publicURL *url.URL
 	seenMu    sync.Mutex
@@ -92,6 +95,12 @@ func (s *Service) SetSurveyDispatcher(dispatcher SurveyDispatcher) {
 
 func (s *Service) SetPublicURL(publicURL *url.URL) {
 	s.publicURL = publicURL
+}
+
+// SetFileService lets customer-facing reply delivery include files attached
+// to the message. It is optional for installations without storage.
+func (s *Service) SetFileService(files *filemodule.Service) {
+	s.files = files
 }
 
 func (s *Service) Preferences(ctx context.Context, workspaceID, memberID string) ([]Preference, error) {
@@ -311,9 +320,11 @@ func preferenceTypeFor(notificationType string) string {
 }
 
 type emailPayload struct {
-	To      string `json:"to"`
-	Subject string `json:"subject"`
-	Body    string `json:"body"`
+	To            string   `json:"to"`
+	Subject       string   `json:"subject"`
+	Body          string   `json:"body"`
+	WorkspaceID   string   `json:"workspace_id,omitempty"`
+	AttachmentIDs []string `json:"attachment_ids,omitempty"`
 }
 
 func (s *Service) queueEmail(ctx context.Context, workspaceID, memberID, notificationID, preferenceType, title, body, url string) error {
@@ -442,6 +453,15 @@ func (s *Service) processEvent(ctx context.Context, record events.Record) error 
 		return s.NotifyFeedbackSubscribers(ctx, record.WorkspaceID, record.EntityID, record.ID)
 	case events.ChangelogPublished:
 		return s.NotifyChangelogSubscribers(ctx, record.WorkspaceID, record.EntityID, record.ID)
+	case events.MessageCreated:
+		var message conversation.MessageEvent
+		if err := json.Unmarshal(record.Data, &message); err != nil {
+			return fmt.Errorf("notification: decode message event: %w", err)
+		}
+		if message.AuthorType != "agent" || message.Kind != "reply" || strings.TrimSpace(message.Body) == "" {
+			return nil
+		}
+		return s.NotifyTicketCustomerReply(ctx, record.WorkspaceID, message, record.ID)
 	case events.TicketCreated:
 		return s.NotifyTicketCustomer(ctx, record.WorkspaceID, record.EntityID, record.ID, record.Type)
 	case events.TicketStateSet:
@@ -489,6 +509,11 @@ func (s *Service) NotifyChangelogSubscribers(ctx context.Context, workspaceID, e
 		  ON preferences.customer_id=c.id AND preferences.workspace_id=c.workspace_id
 		WHERE c.workspace_id=$1 AND NULLIF(c.email::text,'') IS NOT NULL
 		  AND coalesce(preferences.changelog,false)
+		  AND NOT EXISTS (
+			SELECT 1 FROM email_suppressions suppression
+			WHERE suppression.workspace_id=c.workspace_id
+			  AND suppression.address::text=c.email::text
+		  )
 	`, workspaceID)
 	if err != nil {
 		return fmt.Errorf("notification: resolve changelog subscribers: %w", err)
@@ -634,6 +659,11 @@ func (s *Service) NotifyFeedbackSubscribers(ctx context.Context, workspaceID, it
 		  ON preferences.customer_id=c.id AND preferences.workspace_id=c.workspace_id
 		WHERE subscriptions.item_id=$2 AND NULLIF(c.email::text,'') IS NOT NULL
 		  AND coalesce(preferences.feedback_updates,true)
+		  AND NOT EXISTS (
+			SELECT 1 FROM email_suppressions suppression
+			WHERE suppression.workspace_id=c.workspace_id
+			  AND suppression.address::text=c.email::text
+		  )
 	`, workspaceID, itemID)
 	if err != nil {
 		return fmt.Errorf("notification: resolve feedback subscribers: %w", err)
@@ -682,6 +712,11 @@ func (s *Service) NotifyTicketCustomer(ctx context.Context, workspaceID, ticketI
 		WHERE t.workspace_id=$1 AND t.id=$2
 		  AND NULLIF(c.email::text,'') IS NOT NULL
 		  AND coalesce(preferences.ticket_status,true)
+		  AND NOT EXISTS (
+			SELECT 1 FROM email_suppressions suppression
+			WHERE suppression.workspace_id=c.workspace_id
+			  AND suppression.address::text=c.email::text
+		  )
 	`, workspaceID, ticketID).Scan(&customerID, &address, &name, &number, &title, &status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -705,6 +740,99 @@ func (s *Service) NotifyTicketCustomer(ctx context.Context, workspaceID, ticketI
 		return fmt.Errorf("notification: queue ticket customer email: %w", err)
 	}
 	return nil
+}
+
+// NotifyTicketCustomerReply queues a transactional customer email for an
+// agent reply on a non-email ticket conversation. Email-channel replies are
+// deliberately excluded because emailchannel owns their RFC message IDs,
+// In-Reply-To headers, and attachment processing.
+func (s *Service) NotifyTicketCustomerReply(ctx context.Context, workspaceID string, message conversation.MessageEvent, sourceEventID string) error {
+	if s.jobs == nil || strings.TrimSpace(sourceEventID) == "" {
+		return nil
+	}
+	var customerID, address, name, number, title, ticketID string
+	err := s.pool.QueryRow(ctx, `
+		SELECT customer.id, NULLIF(customer.email::text,''), coalesce(customer.name,''),
+		       ticket.prefix || '-' || ticket.number::text, ticket.title, ticket.id
+		FROM conversations conversation
+		JOIN tickets ticket
+		  ON ticket.workspace_id=conversation.workspace_id AND ticket.conversation_id=conversation.id
+		JOIN customers customer
+		  ON customer.workspace_id=ticket.workspace_id AND customer.id=ticket.customer_id
+		WHERE conversation.workspace_id=$1 AND conversation.id=$2
+		  AND conversation.channel <> 'email'
+		  AND NULLIF(customer.email::text,'') IS NOT NULL
+		  AND NOT EXISTS (
+			SELECT 1 FROM email_suppressions suppression
+			WHERE suppression.workspace_id=customer.workspace_id
+			  AND suppression.address::text=customer.email::text
+		  )
+	`, workspaceID, message.ConversationID).Scan(&customerID, &address, &name, &number, &title, &ticketID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("notification: resolve ticket reply customer: %w", err)
+	}
+
+	subject, body := ticketReplyMessage(name, number, title, message.AuthorName, message.Body, s.ticketLink(ticketID))
+	var attachmentIDs []string
+	if s.files != nil {
+		attachments, attachmentErr := s.files.MessageAttachments(ctx, workspaceID, message.MessageID)
+		if attachmentErr != nil {
+			return fmt.Errorf("notification: load ticket reply attachments: %w", attachmentErr)
+		}
+		for _, attachment := range attachments {
+			attachmentIDs = append(attachmentIDs, attachment.ID)
+		}
+	}
+	_, err = s.jobs.Enqueue(ctx, jobs.Spec{
+		WorkspaceID: workspaceID,
+		Queue:       "email",
+		Type:        "email.send",
+		Payload: emailPayload{
+			To: address, Subject: subject, Body: body,
+			WorkspaceID: workspaceID, AttachmentIDs: attachmentIDs,
+		},
+		DedupeKey: "ticket-reply-email:" + sourceEventID + ":" + customerID,
+	})
+	if errors.Is(err, jobs.ErrDuplicate) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("notification: queue ticket reply email: %w", err)
+	}
+	return nil
+}
+
+func ticketReplyMessage(name, number, title, authorName, body, link string) (string, string) {
+	subject := "New reply on ticket " + number
+	message := "Hi " + strings.TrimSpace(name) + ",\n\n"
+	if strings.TrimSpace(authorName) == "" {
+		message += "Our support team replied to your ticket"
+	} else {
+		message += strings.TrimSpace(authorName) + " replied to your ticket"
+	}
+	message += " “" + title + "”:\n\n" + body
+	if link != "" {
+		message += "\n\nView your request: " + link
+	}
+	return subject, message
+}
+
+func (s *Service) ticketLink(ticketID string) string {
+	if strings.TrimSpace(ticketID) == "" {
+		return ""
+	}
+	path := "/portal/tickets/" + url.PathEscape(ticketID)
+	if s.publicURL == nil {
+		return path
+	}
+	base := *s.publicURL
+	base.Path = strings.TrimRight(base.Path, "/") + path
+	base.RawQuery = ""
+	base.Fragment = ""
+	return base.String()
 }
 
 func ticketCustomerMessage(eventType events.Type, name, number, title, status string) (string, string) {

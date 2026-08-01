@@ -67,6 +67,17 @@ func TestTicketCustomerMessage(t *testing.T) {
 	}
 }
 
+func TestTicketReplyMessage(t *testing.T) {
+	subject, body := ticketReplyMessage(" Ada ", "SUP-42", "Cannot sign in", "Grace Hopper", "The link is fixed.", "/portal/tickets/tic_42")
+	if subject != "New reply on ticket SUP-42" || body != "Hi Ada,\n\nGrace Hopper replied to your ticket “Cannot sign in”:\n\nThe link is fixed.\n\nView your request: /portal/tickets/tic_42" {
+		t.Fatalf("reply message = %q / %q", subject, body)
+	}
+	subject, body = ticketReplyMessage("Ada", "SUP-42", "Cannot sign in", "", "The link is fixed.", "")
+	if subject != "New reply on ticket SUP-42" || body != "Hi Ada,\n\nOur support team replied to your ticket “Cannot sign in”:\n\nThe link is fixed." {
+		t.Fatalf("anonymous-author reply message = %q / %q", subject, body)
+	}
+}
+
 func TestProcessEventDispatchesSurveysOnlyForTerminalTicketStates(t *testing.T) {
 	dispatcher := &fakeSurveyDispatcher{}
 	service := New(nil)
@@ -95,5 +106,17 @@ func TestChangelogLinkUsesConfiguredPublicURL(t *testing.T) {
 	service.SetPublicURL(base)
 	if got := service.changelogLink("chg_123"); got != "https://support.example.test/base/portal/changelog#chg_123" {
 		t.Fatalf("changelog link = %q", got)
+	}
+}
+
+func TestTicketLinkUsesConfiguredPublicURL(t *testing.T) {
+	base, err := url.Parse("https://support.example.test/base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := New(nil)
+	service.SetPublicURL(base)
+	if got := service.ticketLink("tic_123"); got != "https://support.example.test/base/portal/tickets/tic_123" {
+		t.Fatalf("ticket link = %q", got)
 	}
 }
