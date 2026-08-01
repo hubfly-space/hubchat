@@ -273,20 +273,36 @@ func handleDeleteWidget(deps Deps) http.HandlerFunc {
 func handleListWidgetVersions(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
-		versions, err := deps.Widget.Versions(r.Context(), actor.WorkspaceID, r.PathValue("id"))
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		beforeVersion := 0
+		if cursor.Value != "" {
+			beforeVersion, err = strconv.Atoi(cursor.Value)
+			if err != nil || beforeVersion <= 0 {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+				return
+			}
+		}
+		versions, err := deps.Widget.VersionsPage(r.Context(), actor.WorkspaceID, r.PathValue("id"), beforeVersion, limit+1)
 		if err != nil {
 			writeWidgetError(w, r, err)
 			return
 		}
-		out := make([]map[string]any, len(versions))
-		for i, v := range versions {
+		page := NewPage(versions, limit, func(v widget.ConfigVersion) Cursor {
+			return Cursor{Value: strconv.Itoa(v.Version), ID: v.ID}
+		})
+		out := make([]map[string]any, len(page.Data))
+		for i, v := range page.Data {
 			out[i] = map[string]any{
 				"id": v.ID, "version": v.Version, "modes": v.Modes, "appearance": v.Appearance,
 				"content": v.Content, "behavior": v.Behavior, "changed_by": v.ChangedBy,
 				"note": v.Note, "created_at": v.CreatedAt,
 			}
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+		httpserver.WriteJSON(w, http.StatusOK, Page[map[string]any]{Data: out, NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
 }
 
@@ -651,7 +667,12 @@ func handleWidgetListForms(deps Deps) http.HandlerFunc {
 			writeWidgetError(w, r, err)
 			return
 		}
-		items, err := deps.Form.ListPublic(r.Context(), widgetRecord.WorkspaceID)
+		limit, cursor, pageErr := PageParams(r)
+		if pageErr != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed form cursor.")
+			return
+		}
+		items, err := deps.Form.ListPublicPage(r.Context(), widgetRecord.WorkspaceID, cursor.Value, cursor.ID, limit+1)
 		if err != nil {
 			writeWidgetError(w, r, err)
 			return
@@ -660,7 +681,7 @@ func handleWidgetListForms(deps Deps) http.HandlerFunc {
 		for _, item := range items {
 			out = append(out, formJSON(item, false))
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(out, limit, func(item map[string]any) Cursor { return Cursor{Value: item["name"].(string), ID: item["id"].(string)} }))
 	}
 }
 
@@ -774,18 +795,28 @@ func handleWidgetFeedbackBoards(deps Deps) http.HandlerFunc {
 			writeWidgetError(w, r, err)
 			return
 		}
-		boards, err := deps.Feedback.ListBoards(r.Context(), item.WorkspaceID)
+		limit, cursor, pageErr := PageParams(r)
+		if pageErr != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed feedback cursor.")
+			return
+		}
+		var beforePosition *int
+		if !cursor.IsZero() {
+			position, parseErr := strconv.Atoi(cursor.Value)
+			if parseErr != nil {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed feedback cursor.")
+				return
+			}
+			beforePosition = &position
+		}
+		boards, err := deps.Feedback.ListPublicBoardsPage(r.Context(), item.WorkspaceID, beforePosition, cursor.ID, limit+1)
 		if err != nil {
 			writeWidgetError(w, r, err)
 			return
 		}
-		public := make([]feedback.Board, 0, len(boards))
-		for _, board := range boards {
-			if board.Visibility == "public" {
-				public = append(public, board)
-			}
-		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": public})
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(boards, limit, func(board feedback.Board) Cursor {
+			return Cursor{Value: strconv.Itoa(board.Position), ID: board.ID}
+		}))
 	}
 }
 
@@ -807,12 +838,34 @@ func handleWidgetFeedbackItems(deps Deps) http.HandlerFunc {
 			writeWidgetError(w, r, feedback.ErrNotFound)
 			return
 		}
-		items, err := deps.Feedback.ListItems(r.Context(), item.WorkspaceID, board.ID, r.URL.Query().Get("status"), r.URL.Query().Get("sort"), r.URL.Query().Get("q"), customerID, 100)
+		limit, cursor, pageErr := PageParams(r)
+		if pageErr != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed feedback cursor.")
+			return
+		}
+		sortOrder := r.URL.Query().Get("sort")
+		var beforeVote *int64
+		if sortOrder != "recent" && !cursor.IsZero() {
+			value, parseErr := strconv.ParseInt(cursor.Value, 10, 64)
+			if parseErr != nil {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed feedback cursor.")
+				return
+			}
+			beforeVote = &value
+		}
+		items, err := deps.Feedback.ListItemsPage(r.Context(), item.WorkspaceID, board.ID, r.URL.Query().Get("status"), sortOrder, r.URL.Query().Get("q"), customerID, cursor.At, cursor.ID, beforeVote, limit+1)
 		if err != nil {
 			writeWidgetError(w, r, err)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		page := NewPage(items, limit, func(item feedback.Item) Cursor {
+			value := ""
+			if sortOrder != "recent" {
+				value = strconv.Itoa(item.VoteCount)
+			}
+			return Cursor{Value: value, At: item.CreatedAt, ID: item.ID}
+		})
+		httpserver.WriteJSON(w, http.StatusOK, page)
 	}
 }
 

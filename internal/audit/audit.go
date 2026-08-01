@@ -17,9 +17,11 @@ package audit
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/netip"
 	"time"
 
@@ -266,6 +268,51 @@ func (l *Log) List(ctx context.Context, workspaceID string, filter Filter) ([]Re
 		records = append(records, r)
 	}
 	return records, rows.Err()
+}
+
+// WriteCSV streams the complete filtered audit history for one workspace.
+// Metadata is already constrained by Record/RecordTx to exclude secrets and
+// sensitive values; exporting it does not bypass that publication boundary.
+func (l *Log) WriteCSV(ctx context.Context, workspaceID string, filter Filter, output io.Writer) error {
+	rows, err := l.pool.Query(ctx, `
+		SELECT id, workspace_id, actor_type, coalesce(actor_id, ''), actor_name,
+		       action, coalesce(entity_type, ''), coalesce(entity_id, ''),
+		       coalesce(request_id, ''), coalesce(host(ip), ''), metadata, occurred_at
+		FROM audit_logs
+		WHERE workspace_id = $1
+		  AND ($2 = '' OR actor_id = $2)
+		  AND ($3 = '' OR action = $3)
+		  AND ($4 = '' OR entity_type = $4)
+		  AND ($5 = '' OR entity_id = $5)
+		ORDER BY occurred_at ASC, id ASC
+	`, workspaceID, filter.ActorID, string(filter.Action), filter.EntityType, filter.EntityID)
+	if err != nil {
+		return fmt.Errorf("audit: export: %w", err)
+	}
+	defer rows.Close()
+
+	writer := csv.NewWriter(output)
+	if err := writer.Write([]string{"id", "workspace_id", "occurred_at", "actor_type", "actor_id", "actor_name", "action", "entity_type", "entity_id", "request_id", "ip", "metadata"}); err != nil {
+		return fmt.Errorf("audit: export header: %w", err)
+	}
+	for rows.Next() {
+		var record Record
+		if err := rows.Scan(&record.ID, &record.WorkspaceID, &record.ActorType, &record.ActorID, &record.ActorName, &record.Action, &record.EntityType, &record.EntityID, &record.RequestID, &record.IP, &record.Metadata, &record.OccurredAt); err != nil {
+			return fmt.Errorf("audit: export scan: %w", err)
+		}
+		writer.Write([]string{record.ID, record.WorkspaceID, record.OccurredAt.UTC().Format(time.RFC3339), string(record.ActorType), record.ActorID, record.ActorName, string(record.Action), record.EntityType, record.EntityID, record.RequestID, record.IP, string(record.Metadata)})
+		if err := writer.Error(); err != nil {
+			return fmt.Errorf("audit: export write: %w", err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("audit: export rows: %w", err)
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return fmt.Errorf("audit: export flush: %w", err)
+	}
+	return nil
 }
 
 func orEmptyObject(metadata any) any {

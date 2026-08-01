@@ -146,11 +146,28 @@ func (s *Service) Rotate(ctx context.Context, workspaceID, memberID, id, name st
 }
 
 func (s *Service) List(ctx context.Context, workspaceID string) ([]Key, error) {
-	rows, err := s.pool.Query(ctx, `
+	return s.ListPage(ctx, workspaceID, time.Time{}, "", 0)
+}
+
+func (s *Service) ListPage(ctx context.Context, workspaceID string, before time.Time, beforeID string, limit int) ([]Key, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 201 {
+		limit = 201
+	}
+	query := `
 		SELECT id, workspace_id, name, prefix, scopes, last_used_at, expires_at,
 		       created_by, revoked_at, created_at
-		FROM api_keys WHERE workspace_id=$1 ORDER BY created_at DESC, id DESC
-	`, workspaceID)
+		FROM api_keys WHERE workspace_id=$1`
+	args := []any{workspaceID}
+	if !before.IsZero() {
+		query += ` AND (created_at,id) < ($2,$3)`
+		args = append(args, before, beforeID)
+	}
+	query += fmt.Sprintf(` ORDER BY created_at DESC, id DESC LIMIT $%d`, len(args)+1)
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("api key: list: %w", err)
 	}
