@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/hubchat/hubchat/internal/audit"
@@ -238,14 +237,11 @@ func handleGetCustomer(deps Deps) http.HandlerFunc {
 	}
 }
 
-// handleSearchCustomers serves three call shapes on one path, distinguished
-// by query params: ids= is a batch lookup (a page of rows that each
-// reference a customer), cursor/tag_id/company_id/verification select the
-// server-driven paginated directory (CustomerList), and a bare q= (or
-// nothing) stays the small unpaginated picker search every other page's
-// customer-lookup already relies on. All three return the same {data: [...]}
-// shape a picker only ever reads .data from, so none of the existing callers
-// notice the directory case also sets next_cursor/has_more.
+// handleSearchCustomers serves two call shapes on one path: ids= is a bounded
+// batch lookup used to decorate another paginated resource, while every
+// directory or picker search uses the same cursor-paginated customer list.
+// Keeping one response contract prevents a small picker query from becoming a
+// hidden offset/unbounded list API.
 func handleSearchCustomers(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
@@ -254,23 +250,6 @@ func handleSearchCustomers(deps Deps) http.HandlerFunc {
 		if idsParam := query.Get("ids"); idsParam != "" {
 			ids := strings.Split(idsParam, ",")
 			customers, err := deps.Customer.GetMany(r.Context(), actor.WorkspaceID, ids)
-			if err != nil {
-				httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load customers.")
-				return
-			}
-			httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": customerJSONList(r, deps, actor.WorkspaceID, customers)})
-			return
-		}
-
-		isDirectory := query.Has("cursor") || query.Get("tag_id") != "" || query.Get("company_id") != "" || query.Get("verification") != ""
-		if !isDirectory {
-			limit := 20
-			if raw := query.Get("limit"); raw != "" {
-				if parsed, parseErr := strconv.Atoi(raw); parseErr == nil {
-					limit = parsed
-				}
-			}
-			customers, err := deps.Customer.Search(r.Context(), actor.WorkspaceID, query.Get("q"), limit)
 			if err != nil {
 				httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load customers.")
 				return

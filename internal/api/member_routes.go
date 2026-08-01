@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -270,18 +272,54 @@ func handleDeleteRole(deps Deps) http.HandlerFunc {
 func handleListRoles(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
-		roles, err := deps.Workspace.ListRoles(r.Context(), actor.WorkspaceID)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed role cursor.")
+			return
+		}
+		roleCursor, err := decodeRoleCursor(cursor.Value)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed role cursor.")
+			return
+		}
+		roles, err := deps.Workspace.ListRolesPage(r.Context(), actor.WorkspaceID, roleCursor, limit+1)
 		if err != nil {
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load roles.")
 			return
 		}
 
-		out := make([]roleJSON, 0, len(roles))
-		for _, role := range roles {
+		page := NewPage(roles, limit, func(role workspace.RoleDefinition) Cursor {
+			return Cursor{Value: encodeRoleCursor(workspace.RoleCursorFor(role)), ID: role.ID}
+		})
+		out := make([]roleJSON, 0, len(page.Data))
+		for _, role := range page.Data {
 			out = append(out, roleJSONValue(&role))
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+		httpserver.WriteJSON(w, http.StatusOK, Page[roleJSON]{Data: out, NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
+}
+
+func encodeRoleCursor(cursor workspace.RoleListCursor) string {
+	payload, err := json.Marshal(cursor)
+	if err != nil {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func decodeRoleCursor(value string) (workspace.RoleListCursor, error) {
+	if value == "" {
+		return workspace.RoleListCursor{}, nil
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return workspace.RoleListCursor{}, ErrBadCursor
+	}
+	var cursor workspace.RoleListCursor
+	if err := json.Unmarshal(payload, &cursor); err != nil || cursor.Key == "" || cursor.Name == "" || cursor.BuiltinRank < 0 || cursor.BuiltinRank > 1 || cursor.OwnerRank < 0 || cursor.OwnerRank > 1 {
+		return workspace.RoleListCursor{}, ErrBadCursor
+	}
+	return cursor, nil
 }
 
 func writeRoleError(w http.ResponseWriter, r *http.Request, err error) {
