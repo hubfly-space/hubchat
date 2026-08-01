@@ -173,6 +173,30 @@ func TestPasswordResetRevokesExistingSessions(t *testing.T) {
 	}
 }
 
+func TestAdminPasswordResetRoundTripAndSessionRevocation(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+
+	svc := newService(t, pool)
+	user := seedUser(t, ctx, svc, "admin-reset@example.com")
+	session, err := svc.CreateSession(ctx, user.ID, "admin-reset-browser", "")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	const newPassword = "admin-reset-password-x"
+	if _, err := svc.ResetPasswordForAdmin(ctx, user.Email, newPassword); err != nil {
+		t.Fatalf("admin reset password: %v", err)
+	}
+	if _, err := svc.UserForSession(ctx, session.Token); err == nil {
+		t.Fatal("an existing session survived an administrator password reset")
+	}
+	if _, err := svc.SignIn(ctx, user.Email, newPassword, "new-browser", ""); err != nil {
+		t.Fatalf("sign in with administrator-set password: %v", err)
+	}
+}
+
 func TestResetPasswordRejectsWeakPasswords(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.Reset(t, pool)

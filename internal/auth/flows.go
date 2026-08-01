@@ -258,6 +258,40 @@ func (s *Service) ResetPassword(ctx context.Context, token, newPassword string) 
 	return s.repo.userByID(ctx, userID)
 }
 
+// ResetPasswordForAdmin replaces a user's password from a trusted local
+// administration workflow. It deliberately has the same session and trusted
+// device invalidation semantics as a self-service reset: an administrator is
+// changing credentials because every existing credential must be treated as
+// potentially compromised.
+func (s *Service) ResetPasswordForAdmin(ctx context.Context, email, newPassword string) (*User, error) {
+	if len(newPassword) < minPasswordLength {
+		return nil, ErrWeakPassword
+	}
+
+	user, err := s.repo.userByEmail(ctx, normalizeEmail(email))
+	if err != nil {
+		return nil, err
+	}
+	hash, err := HashPassword(newPassword)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.updatePassword(ctx, user.ID, hash); err != nil {
+		return nil, err
+	}
+	if err := s.repo.revokeAllSessions(ctx, user.ID, nil); err != nil {
+		return nil, err
+	}
+	if err := s.repo.revokeAllTrustedDevices(ctx, user.ID); err != nil {
+		return nil, err
+	}
+	if err := s.repo.clearFailedAttempts(ctx, user.ID); err != nil {
+		return nil, err
+	}
+
+	return s.repo.userByID(ctx, user.ID)
+}
+
 // ChangePassword updates a password for a signed-in user.
 //
 // Other sessions are revoked but the current one is kept: forcing someone to
