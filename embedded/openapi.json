@@ -94,6 +94,38 @@
         }
       }
     },
+    "/v1/search": {
+      "get": {
+        "summary": "List resources",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "getSearch",
+        "tags": [
+          "Conversations"
+        ]
+      }
+    },
     "/v1/audit-logs": {
       "get": {
         "summary": "List resources",
@@ -2066,6 +2098,75 @@
         ]
       }
     },
+    "/v1/widget/articles": {
+      "get": {
+        "operationId": "getWidgetArticles",
+        "summary": "Search published widget articles",
+        "description": "Origin-gated, cursor-paginated search for published knowledge-base articles rendered in the widget.",
+        "security": [],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Public widget key."
+          },
+          {
+            "name": "url",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "The page URL hosting the widget."
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WidgetArticlePage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "tags": [
+          "Knowledge base"
+        ]
+      }
+    },
     "/v1/changelog": {
       "get": {
         "summary": "List resources",
@@ -3536,13 +3637,52 @@
         ],
         "responses": {
           "200": {
-            "$ref": "#/components/responses/Json"
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyticsRollupPage"
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Error"
           }
         },
         "operationId": "listAnalyticsRollups",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
+    "/v1/analytics/searches/no-results": {
+      "get": {
+        "summary": "List resources",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyticsSearchTermPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "listAnalyticsNoResultSearches",
         "tags": [
           "Analytics"
         ]
@@ -11053,44 +11193,6 @@
         ]
       }
     },
-    "/v1/search": {
-      "get": {
-        "operationId": "getSearch",
-        "summary": "get /v1/search",
-        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "Successful response.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "The request is invalid."
-          },
-          "401": {
-            "description": "Authentication is required."
-          },
-          "403": {
-            "description": "The actor lacks the required capability."
-          },
-          "404": {
-            "description": "The resource was not found."
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
     "/v1/workspace/settings": {
       "get": {
         "operationId": "getWorkspaceSettings",
@@ -15011,39 +15113,6 @@
         }
       }
     },
-    "/v1/widget/articles": {
-      "get": {
-        "operationId": "getWidgetArticles",
-        "summary": "get /v1/widget/articles",
-        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "Successful response.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "The request is invalid."
-          },
-          "401": {
-            "description": "Authentication is required."
-          },
-          "403": {
-            "description": "The actor lacks the required capability."
-          },
-          "404": {
-            "description": "The resource was not found."
-          }
-        }
-      }
-    },
     "/v1/widget/articles/{slug}": {
       "get": {
         "operationId": "getWidgetArticlesSlug",
@@ -16730,6 +16799,136 @@
           }
         }
       },
+      "AnalyticsRollup": {
+        "type": "object",
+        "required": [
+          "metric",
+          "grain",
+          "bucket",
+          "dimensions",
+          "value",
+          "count",
+          "computed_at"
+        ],
+        "properties": {
+          "metric": {
+            "type": "string"
+          },
+          "grain": {
+            "type": "string"
+          },
+          "bucket": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "dimensions": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "value": {
+            "type": "number"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "computed_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "AnalyticsRollupPage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageOf"
+          }
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnalyticsRollup"
+            }
+          }
+        }
+      },
+      "AnalyticsSearchTerm": {
+        "type": "object",
+        "required": [
+          "query",
+          "count",
+          "last_occurred_at"
+        ],
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "last_occurred_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "AnalyticsSearchTermPage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageOf"
+          }
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnalyticsSearchTerm"
+            }
+          }
+        }
+      },
+      "SearchResult": {
+        "type": "object",
+        "required": [
+          "kind",
+          "title",
+          "snippet",
+          "entity_id",
+          "conversation_id"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "snippet": {
+            "type": "string"
+          },
+          "entity_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "conversation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SearchPage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageOf"
+          }
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchResult"
+            }
+          }
+        }
+      },
       "OpsCheck": {
         "type": "object",
         "required": [
@@ -17158,6 +17357,55 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/FieldDefinition"
+            }
+          }
+        }
+      },
+      "WidgetArticle": {
+        "type": "object",
+        "required": [
+          "slug",
+          "title",
+          "excerpt",
+          "language",
+          "helpful_count",
+          "unhelpful_count"
+        ],
+        "properties": {
+          "slug": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "helpful_count": {
+            "type": "integer"
+          },
+          "unhelpful_count": {
+            "type": "integer"
+          }
+        }
+      },
+      "WidgetArticlePage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PageOf"
+          }
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WidgetArticle"
             }
           }
         }

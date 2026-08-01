@@ -52,6 +52,20 @@ concurrent attempts return `409 idempotency_in_flight`.
 picker searches, and subsequent pages. `ids=` is the deliberate bounded batch
 lookup exception used to decorate another paginated resource.
 
+`GET /api/v1/analytics/rollups` returns the same `data`, `has_more`, and
+`next_cursor` envelope. The cursor includes the bucket and the canonical
+dimension tie-breaker, so callers must pass it back unchanged when loading
+additional rollup rows.
+
+`GET /api/v1/analytics/searches/no-results` returns the exact query text and
+aggregated count for searches that returned no articles. It is also cursor
+paginated; pass `from` and `to` consistently across pages and return the
+opaque `next_cursor` unchanged.
+
+`GET /api/v1/search` returns workspace-scoped conversation and customer hits
+in the standard cursor page envelope. Preserve the query string and pass the
+opaque `next_cursor` unchanged when requesting another page.
+
 The automation content endpoints separate safe support use from configuration:
 `GET /api/v1/automation/replies` and its `/{id}/use` action require
 `conversation.reply`, so agents can use approved saved replies without

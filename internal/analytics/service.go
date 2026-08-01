@@ -63,6 +63,15 @@ type Rollup struct {
 	Value      float64        `json:"value"`
 	Count      int            `json:"count"`
 	ComputedAt time.Time      `json:"computed_at"`
+	// CursorKey preserves PostgreSQL's canonical jsonb text for stable
+	// pagination when multiple dimensions share the same bucket. It is an
+	// internal sort key and never appears in the public response.
+	CursorKey string `json:"-"`
+}
+type SearchTerm struct {
+	Query          string    `json:"query"`
+	Count          int       `json:"count"`
+	LastOccurredAt time.Time `json:"last_occurred_at"`
 }
 type Report struct {
 	ID             string         `json:"id"`
@@ -460,10 +469,35 @@ func metricsForEvent(record events.Record) []eventMetric {
 	}
 }
 func (s *Service) Rollups(ctx context.Context, workspaceID, metric, grain string, from, to time.Time) ([]Rollup, error) {
+	result := make([]Rollup, 0)
+	var afterBucket time.Time
+	afterDimensions := ""
+	for {
+		page, err := s.RollupsPage(ctx, workspaceID, metric, grain, from, to, afterBucket, afterDimensions, 200)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, page...)
+		if len(page) < 200 {
+			return result, nil
+		}
+		last := page[len(page)-1]
+		afterBucket = last.Bucket
+		afterDimensions = last.CursorKey
+	}
+}
+
+// RollupsPage returns rollups in stable bucket/dimension order. A bucket can
+// contain several dimension series, so bucket alone is not a sufficient
+// cursor; PostgreSQL's canonical jsonb text is the deterministic tie-breaker.
+func (s *Service) RollupsPage(ctx context.Context, workspaceID, metric, grain string, from, to, afterBucket time.Time, afterDimensions string, limit int) ([]Rollup, error) {
 	if grain == "" {
 		grain = "day"
 	}
-	query := `SELECT metric,grain,bucket,dimensions,value,count,computed_at FROM report_rollups WHERE workspace_id=$1 AND metric=$2 AND grain=$3`
+	if limit <= 0 || limit > 201 {
+		limit = 200
+	}
+	query := `SELECT metric,grain,bucket,dimensions::text,value,count,computed_at FROM report_rollups WHERE workspace_id=$1 AND metric=$2 AND grain=$3`
 	args := []any{workspaceID, metric, grain}
 	if !from.IsZero() {
 		query += ` AND bucket >= $` + fmt.Sprint(len(args)+1)
@@ -473,7 +507,12 @@ func (s *Service) Rollups(ctx context.Context, workspaceID, metric, grain string
 		query += ` AND bucket < $` + fmt.Sprint(len(args)+1)
 		args = append(args, to)
 	}
-	query += ` ORDER BY bucket`
+	if !afterBucket.IsZero() || afterDimensions != "" {
+		query += ` AND (bucket,dimensions::text) > ($` + fmt.Sprint(len(args)+1) + `,$` + fmt.Sprint(len(args)+2) + `)`
+		args = append(args, afterBucket, afterDimensions)
+	}
+	query += ` ORDER BY bucket ASC,dimensions::text ASC LIMIT $` + fmt.Sprint(len(args)+1)
+	args = append(args, limit)
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -482,15 +521,54 @@ func (s *Service) Rollups(ctx context.Context, workspaceID, metric, grain string
 	result := make([]Rollup, 0)
 	for rows.Next() {
 		var item Rollup
-		var dimensions []byte
+		var dimensions string
 		if err := rows.Scan(&item.Metric, &item.Grain, &item.Bucket, &dimensions, &item.Value, &item.Count, &item.ComputedAt); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(dimensions, &item.Dimensions)
+		item.CursorKey = dimensions
+		_ = json.Unmarshal([]byte(dimensions), &item.Dimensions)
 		result = append(result, item)
 	}
 	return result, rows.Err()
 }
+
+// NoResultSearchesPage returns the most frequent exact no-result queries. It
+// is intentionally raw operational data: Hubchat does not classify or infer
+// intent from customer search text.
+func (s *Service) NoResultSearchesPage(ctx context.Context, workspaceID string, from, to time.Time, afterCount int, after time.Time, afterQuery string, limit int) ([]SearchTerm, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 50
+	}
+	args := []any{workspaceID, from, to}
+	query := `WITH terms AS (
+		SELECT query,count(*)::int AS count,max(occurred_at) AS last_occurred_at
+		FROM article_searches
+		WHERE workspace_id=$1 AND result_count=0 AND query<>'' AND occurred_at >= $2 AND occurred_at < $3
+		GROUP BY query
+	)
+	SELECT query,count,last_occurred_at FROM terms`
+	if afterCount > 0 || !after.IsZero() || afterQuery != "" {
+		query += ` WHERE (count,last_occurred_at,query) < ($4,$5,$6)`
+		args = append(args, afterCount, after, afterQuery)
+	}
+	query += ` ORDER BY count DESC,last_occurred_at DESC,query DESC LIMIT $` + fmt.Sprint(len(args)+1)
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]SearchTerm, 0)
+	for rows.Next() {
+		var item SearchTerm
+		if err := rows.Scan(&item.Query, &item.Count, &item.LastOccurredAt); err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
 func (s *Service) ListReports(ctx context.Context, workspaceID string) ([]Report, error) {
 	return s.ListReportsPage(ctx, workspaceID, "", "", 200)
 }

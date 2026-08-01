@@ -29,6 +29,9 @@
     "/v1/meta": {
       "get": { "operationId": "getMeta", "security": [], "tags": ["Integrations"], "responses": { "200": { "$ref": "#/components/responses/Json" } } }
     },
+    "/v1/search": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "getSearch", "tags": ["Conversations"] }
+    },
     "/v1/audit-logs": {
       "get": { "$ref": "#/components/operations/list", "operationId": "listAuditLogs", "tags": ["Integrations"] }
     },
@@ -273,6 +276,24 @@
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceID" }],
       "get": { "$ref": "#/components/operations/publicList", "operationId": "searchPublicArticles", "security": [], "tags": ["Knowledge base"] }
     },
+    "/v1/widget/articles": {
+      "get": {
+        "operationId": "getWidgetArticles",
+        "summary": "Search published widget articles",
+        "description": "Origin-gated, cursor-paginated search for published knowledge-base articles rendered in the widget.",
+        "security": [],
+        "parameters": [
+          { "name": "key", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Public widget key." },
+          { "name": "url", "in": "query", "required": true, "schema": { "type": "string", "format": "uri" }, "description": "The page URL hosting the widget." },
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/Limit" },
+          { "name": "q", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "language", "in": "query", "required": false, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "$ref": "#/components/responses/Json" }, "default": { "$ref": "#/components/responses/Error" } },
+        "tags": ["Knowledge base"]
+      }
+    },
     "/v1/changelog": {
       "get": { "$ref": "#/components/operations/list", "operationId": "listChangelogEntries", "tags": ["Knowledge base"] },
       "post": { "$ref": "#/components/operations/create", "operationId": "createChangelogEntry", "tags": ["Knowledge base"] }
@@ -427,6 +448,9 @@
     "/v1/analytics/rollups": {
       "get": { "$ref": "#/components/operations/list", "operationId": "listAnalyticsRollups", "tags": ["Analytics"] }
     },
+    "/v1/analytics/searches/no-results": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listAnalyticsNoResultSearches", "tags": ["Analytics"] }
+    },
     "/v1/analytics/workload": {
       "get": { "$ref": "#/components/operations/list", "operationId": "getAnalyticsWorkload", "tags": ["Analytics"] }
     },
@@ -575,7 +599,11 @@
       "updateAutomationMacro": { "request": "MacroInput", "responses": { "200": "Macro" } },
       "useAutomationMacro": { "request": "MacroExecutionRequest", "responses": { "200": "MacroExecution" } },
       "getPortalTickets": { "responses": { "200": "PortalTicketPage" } },
-      "getPortalTicketsId": { "responses": { "200": "PortalTicketDetail" } }
+      "getPortalTicketsId": { "responses": { "200": "PortalTicketDetail" } },
+      "getSearch": { "responses": { "200": "SearchPage" } },
+      "listAnalyticsRollups": { "responses": { "200": "AnalyticsRollupPage" } },
+      "listAnalyticsNoResultSearches": { "responses": { "200": "AnalyticsSearchTermPage" } },
+      "getWidgetArticles": { "responses": { "200": "WidgetArticlePage" } }
     },
     "requestBodies": {
       "Json": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } }
@@ -608,6 +636,12 @@
       "LegalHold": { "type": "object", "required": ["id", "workspace_id", "category", "reason", "created_at"], "properties": { "id": { "$ref": "#/components/schemas/Id" }, "workspace_id": { "$ref": "#/components/schemas/Id" }, "category": { "type": "string", "enum": ["all", "events", "sessions", "webhooks", "surveys", "audit"] }, "reason": { "type": "string", "maxLength": 500 }, "created_by": { "anyOf": [{ "$ref": "#/components/schemas/Id" }, { "type": "null" }] }, "released_by": { "anyOf": [{ "$ref": "#/components/schemas/Id" }, { "type": "null" }] }, "created_at": { "$ref": "#/components/schemas/Timestamp" }, "released_at": { "type": ["string", "null"], "format": "date-time" } } },
       "LegalHoldInput": { "type": "object", "required": ["category", "reason"], "additionalProperties": false, "properties": { "category": { "type": "string", "enum": ["all", "events", "sessions", "webhooks", "surveys", "audit"] }, "reason": { "type": "string", "minLength": 1, "maxLength": 500 } } },
       "LegalHoldPage": { "allOf": [{ "$ref": "#/components/schemas/PageOf" }], "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/LegalHold" } } } },
+      "AnalyticsRollup": { "type": "object", "required": ["metric", "grain", "bucket", "dimensions", "value", "count", "computed_at"], "properties": { "metric": { "type": "string" }, "grain": { "type": "string" }, "bucket": { "$ref": "#/components/schemas/Timestamp" }, "dimensions": { "type": "object", "additionalProperties": true }, "value": { "type": "number" }, "count": { "type": "integer" }, "computed_at": { "$ref": "#/components/schemas/Timestamp" } } },
+      "AnalyticsRollupPage": { "allOf": [{ "$ref": "#/components/schemas/PageOf" }], "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/AnalyticsRollup" } } } },
+      "AnalyticsSearchTerm": { "type": "object", "required": ["query", "count", "last_occurred_at"], "properties": { "query": { "type": "string" }, "count": { "type": "integer" }, "last_occurred_at": { "$ref": "#/components/schemas/Timestamp" } } },
+      "AnalyticsSearchTermPage": { "allOf": [{ "$ref": "#/components/schemas/PageOf" }], "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/AnalyticsSearchTerm" } } } },
+      "SearchResult": { "type": "object", "required": ["kind", "title", "snippet", "entity_id", "conversation_id"], "properties": { "kind": { "type": "string" }, "title": { "type": "string" }, "snippet": { "type": "string" }, "entity_id": { "$ref": "#/components/schemas/Id" }, "conversation_id": { "type": ["string", "null"] } } },
+      "SearchPage": { "allOf": [{ "$ref": "#/components/schemas/PageOf" }], "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/SearchResult" } } } },
       "OpsCheck": { "type": "object", "required": ["id", "status", "detail"], "properties": { "id": { "type": "string" }, "status": { "type": "string", "enum": ["pass", "warn", "fail"] }, "detail": { "type": "string" } } },
       "OpsSummary": { "type": "object", "required": ["jobs", "webhooks", "email", "storage", "realtime", "checks", "computed_at"], "properties": { "jobs": { "type": "object", "additionalProperties": true }, "webhooks": { "type": "object", "additionalProperties": true }, "email": { "type": "object", "additionalProperties": true }, "storage": { "type": "object", "additionalProperties": true }, "realtime": { "type": "object", "additionalProperties": true }, "checks": { "type": "array", "items": { "$ref": "#/components/schemas/OpsCheck" } }, "computed_at": { "$ref": "#/components/schemas/Timestamp" } } },
       "TestEmailResult": { "type": "object", "required": ["job_id", "recipient", "status"], "properties": { "job_id": { "$ref": "#/components/schemas/Id" }, "recipient": { "type": "string", "format": "email" }, "status": { "type": "string", "enum": ["queued"] } } },
@@ -623,6 +657,8 @@
       "SavedReplyPage": { "allOf": [{ "$ref": "#/components/schemas/PageOf" }], "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/SavedReply" } } } },
       "AttributeDefinitionPage": { "allOf": [{ "$ref": "#/components/schemas/PageOf" }], "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/AttributeDefinition" } } } },
       "FieldDefinitionPage": { "allOf": [{ "$ref": "#/components/schemas/PageOf" }], "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/FieldDefinition" } } } },
+      "WidgetArticle": { "type": "object", "required": ["slug", "title", "excerpt", "language", "helpful_count", "unhelpful_count"], "properties": { "slug": { "type": "string" }, "title": { "type": "string" }, "excerpt": { "type": "string" }, "body": { "type": "string" }, "language": { "type": "string" }, "helpful_count": { "type": "integer" }, "unhelpful_count": { "type": "integer" } } },
+      "WidgetArticlePage": { "allOf": [{ "$ref": "#/components/schemas/PageOf" }], "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/WidgetArticle" } } } },
       "PortalTicket": { "type": "object", "required": ["id", "number", "prefix", "title", "description", "status", "priority", "conversation_id", "created_at", "updated_at"], "properties": { "id": { "$ref": "#/components/schemas/Id" }, "number": { "type": "integer" }, "prefix": { "type": "string" }, "title": { "type": "string" }, "description": { "type": "string" }, "status": { "type": "string" }, "priority": { "type": "string" }, "conversation_id": { "type": ["string", "null"] }, "created_at": { "$ref": "#/components/schemas/Timestamp" }, "updated_at": { "$ref": "#/components/schemas/Timestamp" } } },
       "PortalMessage": { "type": "object", "required": ["id", "conversation_id", "kind", "author_type", "author_id", "author_name", "body", "delivery", "sequence", "edited_at", "created_at", "attachments"], "properties": { "id": { "$ref": "#/components/schemas/Id" }, "conversation_id": { "$ref": "#/components/schemas/Id" }, "kind": { "type": "string" }, "author_type": { "type": "string" }, "author_id": { "type": ["string", "null"] }, "author_name": { "type": "string" }, "body": { "type": "string" }, "delivery": { "type": "string" }, "sequence": { "type": "integer", "format": "int64" }, "edited_at": { "type": ["string", "null"], "format": "date-time" }, "created_at": { "$ref": "#/components/schemas/Timestamp" }, "attachments": { "type": "array", "items": { "$ref": "#/components/schemas/Attachment" } } } },
       "PortalTicketPage": { "allOf": [{ "$ref": "#/components/schemas/PageOf" }], "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/PortalTicket" } } } },
