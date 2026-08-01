@@ -36,6 +36,22 @@ func TestSubmitPublishesEventAndAnalyticsSummaryIncludesCSAT(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create survey: %v", err)
 	}
+	second, err := service.Create(ctx, workspaceID, Input{
+		Name:      "Post-resolution NPS",
+		Type:      "nps",
+		Questions: []QuestionInput{{Prompt: "Would you recommend us?", Type: "number", Required: true}},
+	})
+	if err != nil {
+		t.Fatalf("create second survey: %v", err)
+	}
+	firstPage, err := service.ListPage(ctx, workspaceID, time.Time{}, "", 2)
+	if err != nil || len(firstPage) != 2 {
+		t.Fatalf("survey first page = %#v, err=%v", firstPage, err)
+	}
+	secondPage, err := service.ListPage(ctx, workspaceID, firstPage[len(firstPage)-1].CreatedAt, firstPage[len(firstPage)-1].ID, 2)
+	if err != nil || len(secondPage) != 0 || firstPage[0].ID != second.ID {
+		t.Fatalf("survey cursor pages = first %#v second %#v, err=%v", firstPage, secondPage, err)
+	}
 	questionID := created.Questions[0].ID
 	if _, err := service.Submit(ctx, workspaceID, created.ID, customerID, ResponseInput{
 		Answers: map[string]any{questionID: float64(4)},

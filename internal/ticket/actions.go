@@ -407,6 +407,10 @@ func (s *Service) Links(ctx context.Context, workspaceID, id string) ([]TicketLi
 	return s.repo.links(ctx, workspaceID, id)
 }
 
+func (s *Service) LinksPage(ctx context.Context, workspaceID, id, beforeID string, limit int) ([]TicketLink, error) {
+	return s.repo.linksPage(ctx, workspaceID, id, beforeID, limit)
+}
+
 // SetParent makes id a child of parentID, or clears the relationship when
 // parentID is nil. Rejects the one-hop self-parent (already caught by the
 // tickets_parent_not_self CHECK, but returning a typed error here means the
@@ -454,6 +458,10 @@ func (s *Service) SetParent(ctx context.Context, workspaceID, actorMemberID, id 
 
 func (s *Service) Children(ctx context.Context, workspaceID, id string) ([]string, error) {
 	return s.repo.childIDs(ctx, workspaceID, id)
+}
+
+func (s *Service) ChildrenPage(ctx context.Context, workspaceID, id, beforeID string, limit int) ([]string, error) {
+	return s.repo.childIDsPage(ctx, workspaceID, id, beforeID, limit)
 }
 
 // DuplicateCandidates surfaces other open tickets that plausibly describe

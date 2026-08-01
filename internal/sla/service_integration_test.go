@@ -50,3 +50,47 @@ func TestUpdateCalendarReplacesScheduleAndIsWorkspaceScoped(t *testing.T) {
 		t.Fatalf("cross-workspace calendar lookup error = %v", err)
 	}
 }
+
+func TestConfigurationListsUseStableCursors(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id,name,slug) VALUES ('wrk_sla_page','SLA page','sla-page')`); err != nil {
+		t.Fatal(err)
+	}
+
+	service := New(pool)
+	weekly := [7][]Window{}
+	for _, input := range []CalendarInput{
+		{Name: "Default hours", Timezone: "UTC", Weekly: weekly, IsDefault: true},
+		{Name: "Overflow hours", Timezone: "UTC", Weekly: weekly},
+	} {
+		if _, err := service.CreateCalendar(ctx, "wrk_sla_page", input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	firstCalendars, err := service.ListCalendarsPage(ctx, "wrk_sla_page", nil, "", "", 1)
+	if err != nil || len(firstCalendars) != 1 || !firstCalendars[0].IsDefault {
+		t.Fatalf("first calendar page = %+v, err=%v", firstCalendars, err)
+	}
+	secondCalendars, err := service.ListCalendarsPage(ctx, "wrk_sla_page", &firstCalendars[0].IsDefault, firstCalendars[0].Name, firstCalendars[0].ID, 1)
+	if err != nil || len(secondCalendars) != 1 || secondCalendars[0].Name != "Overflow hours" {
+		t.Fatalf("second calendar page = %+v, err=%v", secondCalendars, err)
+	}
+
+	for _, name := range []string{"Basic support", "Priority support"} {
+		if _, err := service.CreatePolicy(ctx, "wrk_sla_page", PolicyInput{Name: name, Targets: []Target{{Priority: "normal", FirstResponseMinutes: intPtr(60)}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	firstPolicies, err := service.ListPoliciesPage(ctx, "wrk_sla_page", "", "", 1)
+	if err != nil || len(firstPolicies) != 1 || firstPolicies[0].Name != "Basic support" {
+		t.Fatalf("first policy page = %+v, err=%v", firstPolicies, err)
+	}
+	secondPolicies, err := service.ListPoliciesPage(ctx, "wrk_sla_page", firstPolicies[0].Name, firstPolicies[0].ID, 1)
+	if err != nil || len(secondPolicies) != 1 || secondPolicies[0].Name != "Priority support" {
+		t.Fatalf("second policy page = %+v, err=%v", secondPolicies, err)
+	}
+}
+
+func intPtr(value int) *int { return &value }

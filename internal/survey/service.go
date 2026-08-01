@@ -187,7 +187,28 @@ func (s *Service) Create(ctx context.Context, workspaceID string, input Input) (
 }
 
 func (s *Service) List(ctx context.Context, workspaceID string) ([]Survey, error) {
-	rows, err := s.pool.Query(ctx, `SELECT s.id,s.workspace_id,s.name,s.type,s.delivery,s.trigger,s.completion,s.anonymous,s.max_responses,s.response_count,s.sent_count,AVG(r.score) FILTER (WHERE r.submitted_at IS NOT NULL),CASE WHEN s.sent_count=0 THEN NULL ELSE s.response_count::double precision/s.sent_count END,s.enabled,s.expires_at,s.created_at,s.updated_at FROM surveys s LEFT JOIN survey_responses r ON r.survey_id=s.id AND r.workspace_id=s.workspace_id WHERE s.workspace_id=$1 GROUP BY s.id ORDER BY s.created_at DESC`, workspaceID)
+	return s.ListPage(ctx, workspaceID, time.Time{}, "", 0)
+}
+
+// ListPage returns surveys in stable reverse-created order. The id tiebreaker
+// keeps a page boundary deterministic when surveys share a creation timestamp.
+func (s *Service) ListPage(ctx context.Context, workspaceID string, before time.Time, beforeID string, limit int) ([]Survey, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 201 {
+		limit = 201
+	}
+	query := `SELECT s.id,s.workspace_id,s.name,s.type,s.delivery,s.trigger,s.completion,s.anonymous,s.max_responses,s.response_count,s.sent_count,AVG(r.score) FILTER (WHERE r.submitted_at IS NOT NULL),CASE WHEN s.sent_count=0 THEN NULL ELSE s.response_count::double precision/s.sent_count END,s.enabled,s.expires_at,s.created_at,s.updated_at FROM surveys s LEFT JOIN survey_responses r ON r.survey_id=s.id AND r.workspace_id=s.workspace_id WHERE s.workspace_id=$1`
+	args := []any{workspaceID}
+	if !before.IsZero() {
+		query += ` AND (s.created_at,s.id) < ($2,$3)`
+		args = append(args, before, beforeID)
+	}
+	query += ` GROUP BY s.id ORDER BY s.created_at DESC,s.id DESC`
+	query += fmt.Sprintf(` LIMIT $%d`, len(args)+1)
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
