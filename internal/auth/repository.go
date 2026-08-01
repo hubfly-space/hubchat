@@ -17,6 +17,7 @@ type User struct {
 	Name         string
 	Email        string
 	PasswordHash string
+	AuthMethod   string
 	CreatedAt    time.Time
 }
 
@@ -81,13 +82,13 @@ func (r *repository) insertSession(
 	ctx context.Context,
 	id, userID string,
 	tokenHash []byte,
-	userAgent, ip string,
+	userAgent, ip, authMethod string,
 	expiresAt time.Time,
 ) error {
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO user_sessions (id, user_id, token_hash, user_agent, ip, expires_at)
-		VALUES ($1, $2, $3, $4, NULLIF($5, '')::inet, $6)
-	`, id, userID, tokenHash, userAgent, ip, expiresAt)
+		INSERT INTO user_sessions (id, user_id, token_hash, user_agent, ip, auth_method, expires_at)
+		VALUES ($1, $2, $3, $4, NULLIF($5, '')::inet, $6, $7)
+	`, id, userID, tokenHash, userAgent, ip, authMethod, expiresAt)
 	return err
 }
 
@@ -104,8 +105,8 @@ func (r *repository) sessionUser(ctx context.Context, tokenHash []byte) (*User, 
 		  AND s.revoked_at IS NULL
 		  AND s.expires_at > now()
 		  AND u.id = s.user_id
-		RETURNING u.id, u.name, u.email, u.password_hash, u.created_at
-	`, tokenHash).Scan(&u.ID, &u.Name, &u.Email, &u.PasswordHash, &u.CreatedAt)
+		RETURNING u.id, u.name, u.email, u.password_hash, u.created_at, s.auth_method
+	`, tokenHash).Scan(&u.ID, &u.Name, &u.Email, &u.PasswordHash, &u.CreatedAt, &u.AuthMethod)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrUserNotFound

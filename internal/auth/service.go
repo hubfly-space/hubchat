@@ -2,8 +2,9 @@
 //
 // # Responsibilities
 //
-// Password hashing, magic links, OAuth adapters, TOTP, recovery codes, and
-// session issue/rotate/revoke.
+// Password hashing, magic links, TOTP, recovery codes, and session
+// issue/rotate/revoke. OAuth remains an optional adapter boundary; the base
+// binary does not enable a provider.
 //
 // # Boundary
 //
@@ -27,6 +28,12 @@ var (
 	ErrInvalidEmail       = errors.New("auth: a valid email address is required")
 )
 
+const (
+	AuthMethodPassword  = "password"
+	AuthMethodMagicLink = "magic_link"
+	AuthMethodOAuth     = "oauth"
+)
+
 // Session is what a caller needs to set the session cookie and to know when
 // it expires.
 type Session struct {
@@ -43,6 +50,7 @@ type Service struct {
 	pool     *database.Pool
 	session  sessionConfig
 	security securityConfig
+	oauth    *oauthProvider
 }
 
 // securityConfig holds the brute-force policy. Copied in at construction for
@@ -73,6 +81,7 @@ type Options struct {
 	CookieSecure    bool
 	LoginAttempts   int
 	LockoutWindow   time.Duration
+	OAuth           *OAuthOptions
 }
 
 // New constructs the auth service.
@@ -96,6 +105,7 @@ func New(pool *database.Pool, opts Options) *Service {
 			LoginAttempts: opts.LoginAttempts,
 			LockoutWindow: opts.LockoutWindow,
 		},
+		oauth: newOAuthProvider(pool, opts.OAuth),
 	}
 }
 
@@ -148,6 +158,13 @@ func (s *Service) Authenticate(ctx context.Context, email, password string) (*Us
 // the only time the raw value exists outside the client's cookie jar. Only
 // its hash is persisted (§11.5).
 func (s *Service) CreateSession(ctx context.Context, userID, userAgent, ip string) (*Session, error) {
+	return s.CreateSessionWithMethod(ctx, userID, userAgent, ip, AuthMethodPassword)
+}
+
+func (s *Service) CreateSessionWithMethod(ctx context.Context, userID, userAgent, ip, authMethod string) (*Session, error) {
+	if authMethod != AuthMethodPassword && authMethod != AuthMethodMagicLink && authMethod != AuthMethodOAuth {
+		authMethod = AuthMethodPassword
+	}
 	token, err := NewToken()
 	if err != nil {
 		return nil, err
@@ -156,7 +173,7 @@ func (s *Service) CreateSession(ctx context.Context, userID, userAgent, ip strin
 	expiresAt := time.Now().Add(s.session.Lifetime)
 	id := ids.New(ids.PrefixSession)
 
-	if err := s.repo.insertSession(ctx, id, userID, HashToken(token), userAgent, ip, expiresAt); err != nil {
+	if err := s.repo.insertSession(ctx, id, userID, HashToken(token), userAgent, ip, authMethod, expiresAt); err != nil {
 		return nil, err
 	}
 
