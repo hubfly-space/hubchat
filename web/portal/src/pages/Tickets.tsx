@@ -3,10 +3,12 @@ import {
   Button,
   Card,
   EmptyState,
+  Pagination,
   SegmentedControl,
   formatRelativeShort,
   api,
-  useQuery,
+  useInfinite,
+  type Paginated,
   type BadgeTone,
 } from "@hubchat/shared";
 import { Plus, TicketCheck } from "lucide-react";
@@ -37,18 +39,22 @@ export default function Tickets() {
   const [filter, setFilter] = useState<"open" | "all">("open");
   const location = useLocation();
   const { data: portalData } = usePortal();
-  const query = useQuery<{ data: PortalTicket[]; has_more: boolean; next_cursor: string | null }>(
+  const query = useInfinite<PortalTicket>(
     portalData?.viewer ? ["portal", "tickets"] : null,
-    (signal) => api.get("/portal/tickets?limit=100", { signal }),
+    (cursor, signal) => {
+      const params = new URLSearchParams({ limit: "25" });
+      if (cursor) params.set("cursor", cursor);
+      return api.get<Paginated<PortalTicket>>(`/portal/tickets?${params.toString()}`, { signal });
+    },
   );
 
   if (!portalData?.viewer) {
     return <EmptyState icon={TicketCheck} title="Sign in to view your requests" description="Use your email to access requests and replies from this portal." action={<Button variant="primary" size="sm" asChild><Link to={`/sign-in?portal=${encodeURIComponent(portalData?.portal.id ?? "")}&next=${encodeURIComponent(location.pathname + location.search)}`}>Sign in</Link></Button>} />;
   }
   if (query.isLoading) return <div className="py-12 text-center text-sm text-fg-muted">Loading your requests…</div>;
-  if (query.isError) return <div className="py-12 text-center text-sm text-danger">{portalErrorMessage(query.error)} <Button className="ml-2" variant="secondary" size="sm" onClick={query.refetch}>Try again</Button></div>;
+  if (query.error) return <div className="py-12 text-center text-sm text-danger">{portalErrorMessage(query.error)} <Button className="ml-2" variant="secondary" size="sm" onClick={query.refetch}>Try again</Button></div>;
 
-  const tickets = query.data?.data ?? [];
+  const tickets = query.items;
   const visible = tickets.filter((ticket) =>
     filter === "open" ? ticket.status !== "resolved" : true,
   );
@@ -120,6 +126,14 @@ export default function Tickets() {
           })}
         </ul>
       )}
+
+      <Pagination
+        hasPrevious={false}
+        hasNext={query.hasMore}
+        onPrevious={() => undefined}
+        onNext={() => void query.fetchNext()}
+        summary={`${tickets.length} request${tickets.length === 1 ? "" : "s"} loaded`}
+      />
     </div>
   );
 }

@@ -1,11 +1,11 @@
-import { ApiError, Card, CardBody, EmptyState, SearchInput, api, useQuery } from "@hubchat/shared";
+import { ApiError, Card, CardBody, EmptyState, SearchInput, api, useQuery, type Paginated } from "@hubchat/shared";
 import { ArrowRight, Book, Lightbulb, MessageSquarePlus } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { portalAccent, usePortal } from "../portal-context";
 
 type Article = { id: string; slug: string; title: string; excerpt: string; updated_at: string; view_count: number };
-type SearchResponse = { data: Array<{ article: Article }> };
+type SearchResponse = Paginated<{ article: Article }>;
 
 /**
  * Portal home.

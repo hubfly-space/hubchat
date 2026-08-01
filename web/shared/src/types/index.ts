@@ -138,6 +138,10 @@ export type Team = {
   member_ids: Id[];
   inbox_ids: Id[];
   routing_strategy: RoutingStrategy;
+  routing_config?: {
+    languages?: string[];
+    attributes?: Record<string, string[]>;
+  };
   created_at: Timestamp;
 };
 
@@ -626,6 +630,7 @@ export type Portal = {
   subdomain: string;
   custom_domain: string | null;
   domain_status: "unverified" | "pending" | "active" | "error";
+  domains?: PortalDomain[];
   theme: PortalTheme;
   navigation: PortalNavItem[];
   features: {
@@ -639,6 +644,16 @@ export type Portal = {
   permissions: PortalPermissions;
   enabled: boolean;
   updated_at: Timestamp;
+};
+
+export type PortalDomain = {
+  id: Id;
+  portal_id: Id;
+  domain: string;
+  status: "pending" | "verified" | "failed";
+  verification_token?: string;
+  verified_at?: Timestamp | null;
+  last_checked_at?: Timestamp | null;
 };
 
 export type PortalTheme = {
