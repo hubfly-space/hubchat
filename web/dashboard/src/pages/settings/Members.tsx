@@ -92,9 +92,11 @@ export default function Members() {
   });
   const teams = useAllPages<Team>(["teams", "lookup"], (cursor, signal) => api.get<Paginated<Team>>(`/teams?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
   const roles = useQuery<{ data: RoleDefinition[] }>(["roles"], (signal) => api.get("/roles", { signal }));
-  const invites = useInfinite<Invite>(["invites"], (cursor, signal) => api.get<Paginated<Invite>>(`/invites?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
-  const roleDefinitions = roles.data?.data ?? [];
-  const assignableRoles = roleDefinitions.filter((role) => role.key !== "owner");
+	const invites = useInfinite<Invite>(["invites"], (cursor, signal) => api.get<Paginated<Invite>>(`/invites?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
+	const roleDefinitions = roles.data?.data ?? [];
+	const assignableRoles = roleDefinitions.length > 0
+		? roleDefinitions.filter((role) => role.key !== "owner")
+		: (Object.keys(ROLE) as BuiltinMemberRole[]).filter((role) => role !== "owner").map((key) => ({ id: key, key, name: ROLE[key].label, description: ROLE[key].detail, is_builtin: true, capabilities: [] }));
 
   const setRole = useMutation<{ id: string; role: string }, unknown>(
     ({ id, role }) => api.patch(`/members/${id}/role`, { role }),
@@ -335,9 +337,9 @@ export default function Members() {
 function InviteDialog() {
   const [open, setOpen] = useState(false);
   const [emails, setEmails] = useState("");
-  const [role, setRole] = useState<MemberRole>("agent");
-  const roles = useQuery<{ data: RoleDefinition[] }>(["roles"], (signal) => api.get("/roles", { signal }));
-  const roleOptions = (roles.data?.data ?? []).filter((item) => item.key !== "owner");
+	const [role, setRole] = useState<MemberRole>("agent");
+	const roles = useQuery<{ data: RoleDefinition[] }>(["roles"], (signal) => api.get("/roles", { signal }));
+	const roleOptions = roles.data?.data?.filter((item) => item.key !== "owner") ?? (Object.keys(ROLE) as BuiltinMemberRole[]).filter((item) => item !== "owner").map((key) => ({ id: key, key, name: ROLE[key].label, description: ROLE[key].detail, is_builtin: true, capabilities: [] }));
 
   const invite = useMutation<{ emails: string[]; role: MemberRole }, void>(
     async ({ emails: list, role: r }) => {

@@ -16,7 +16,6 @@ import {
   PageHeader,
   QueryBoundary,
   Section,
-  Tooltip,
   cn,
   idempotencyKey,
   useMutation,
@@ -76,7 +75,7 @@ const CAPABILITY_GROUPS: { group: string; items: { key: Capability; label: strin
   },
 ];
 
-const ROLE_SUMMARY: Record<MemberRole, string> = {
+const ROLE_SUMMARY: Record<BuiltinMemberRole, string> = {
   owner: "Everything, including transferring ownership and deleting the workspace. There is always exactly one.",
   admin: "Manages people, surfaces, and integrations. Cannot transfer ownership.",
   manager: "Runs queues, assignments, SLAs, and reporting. No workspace configuration.",
@@ -123,7 +122,7 @@ export default function Roles() {
 
         <QueryBoundary query={roles}>
           {(roleData) => {
-            const capabilitiesFor = (role: MemberRole): Capability[] =>
+            const capabilitiesFor = (role: BuiltinMemberRole): Capability[] =>
               roleData.data.find((r) => r.key === role)?.capabilities ?? [];
 
             return (
@@ -245,5 +244,5 @@ function RoleEditor({ role, pending, error, onCancel, onSave }: { role: RoleDefi
   const [description, setDescription] = useState(role?.description ?? "");
   const [capabilities, setCapabilities] = useState<Capability[]>(role?.capabilities ?? []);
   const toggle = (capability: Capability, checked: boolean) => setCapabilities((current) => checked ? [...current, capability] : current.filter((item) => item !== capability));
-  return <Dialog open onOpenChange={(open) => !open && onCancel()}><DialogContent title={role ? `Edit ${role.name}` : "Create custom role"} description="Choose the capabilities this role grants. Changes take effect for assigned members on their next request." size="lg" footer={<><Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button><Button variant="primary" size="sm" loading={pending} disabled={!name.trim() || (!role && !/^[a-z][a-z0-9_]{1,31}$/.test(key))} onClick={() => onSave({ id: role?.id, key: role ? undefined : key, name: name.trim(), description: description.trim(), capabilities })}>{role ? "Save changes" : "Create role"}</Button></>}>{error ? <Callout tone="danger" className="mb-4">Could not save this role.</Callout> : null}<div className="space-y-4"><div className="grid gap-4 sm:grid-cols-2"><Field label="Key" description={role ? "The key cannot change after creation." : "Lowercase letters, numbers, and underscores."}><Input value={key} disabled={Boolean(role)} onChange={(event) => setKey(event.target.value)} placeholder="billing_specialist" /></Field><Field label="Name"><Input autoFocus={!role} value={name} onChange={(event) => setName(event.target.value)} placeholder="Billing specialist" /></Field></div><Field label="Description"><Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Handles billing conversations and reports." /></Field><div><p className="mb-2 text-sm font-medium text-fg">Capabilities</p><div className="grid gap-2 sm:grid-cols-2">{CAPABILITY_GROUPS.flatMap((group) => group.items).map((item) => <label key={item.key} className="flex items-start gap-2 rounded-md border border-line-subtle px-3 py-2"><Checkbox checked={capabilities.includes(item.key)} onCheckedChange={(checked) => toggle(item.key, checked)} /><span><span className="block text-xs text-fg">{item.label}</span><span className="block font-mono text-2xs text-fg-muted">{item.key}</span></span></label>)}</div></div></div></DialogContent></Dialog>;
+  return <Dialog open onOpenChange={(open) => !open && onCancel()}><DialogContent title={role ? `Edit ${role.name}` : "Create custom role"} description="Choose the capabilities this role grants. Changes take effect for assigned members on their next request." size="lg" footer={<><Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button><Button variant="primary" size="sm" loading={pending} disabled={!name.trim() || (!role && !/^[a-z][a-z0-9_]{1,31}$/.test(key))} onClick={() => onSave({ id: role?.id, key: role ? undefined : key, name: name.trim(), description: description.trim(), capabilities })}>{role ? "Save changes" : "Create role"}</Button></>}>{error ? <Callout tone="danger" className="mb-4">Could not save this role.</Callout> : null}<div className="space-y-4"><div className="grid gap-4 sm:grid-cols-2"><Field label="Key" description={role ? "The key cannot change after creation." : "Lowercase letters, numbers, and underscores."}><Input value={key} disabled={Boolean(role)} onChange={(event) => setKey(event.target.value)} placeholder="billing_specialist" /></Field><Field label="Name"><Input autoFocus={!role} value={name} onChange={(event) => setName(event.target.value)} placeholder="Billing specialist" /></Field></div><Field label="Description"><Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Handles billing conversations and reports." /></Field><div><p className="mb-2 text-sm font-medium text-fg">Capabilities</p><div className="grid gap-2 sm:grid-cols-2">{CAPABILITY_GROUPS.flatMap((group) => group.items).map((item) => <label key={item.key} className="flex items-start gap-2 rounded-md border border-line-subtle px-3 py-2"><Checkbox checked={capabilities.includes(item.key)} onCheckedChange={(checked) => toggle(item.key, checked === true)} /><span><span className="block text-xs text-fg">{item.label}</span><span className="block font-mono text-2xs text-fg-muted">{item.key}</span></span></label>)}</div></div></div></DialogContent></Dialog>;
 }

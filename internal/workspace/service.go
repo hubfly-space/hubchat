@@ -136,10 +136,9 @@ func (s *Service) AllocateTicketNumber(ctx context.Context, tx pgx.Tx, workspace
 	return s.repo.allocateTicketNumber(ctx, tx, workspaceID)
 }
 
-// ListRoles returns every built-in role with its effective capability set,
-// for the read-only Roles & permissions screen (§5.9). Owner's row is filled
-// in from authorization.AllCapabilityNames rather than role_permissions,
-// mirroring how Actor.Can short-circuits owner instead of looking it up.
+// ListRoles returns the built-in catalog plus the current workspace's custom
+// roles. Owner's row is filled in from authorization.AllCapabilityNames rather
+// than role_permissions, mirroring how Actor.Can short-circuits owner.
 func (s *Service) ListRoles(ctx context.Context, workspaceID string) ([]RoleDefinition, error) {
 	roles, err := s.repo.listRoleDefinitions(ctx, workspaceID)
 	if err != nil {
