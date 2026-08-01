@@ -72,7 +72,15 @@ export default function ReportsOverview() {
     if (cursor) params.set("cursor", cursor);
     return api.get<Paginated<SavedReport>>(`/reports?${params.toString()}`, { signal });
   });
-  const schedules = useQuery<Paginated<ReportSchedule>>(["report-schedules", selectedReportID], (signal) => selectedReportID ? api.get("/reports/" + encodeURIComponent(selectedReportID) + "/schedules?limit=25", { signal }) : Promise.resolve({ data: [], next_cursor: null, has_more: false }));
+  const schedules = useInfinite<ReportSchedule>(
+    selectedReportID ? ["report-schedules", selectedReportID] : null,
+    (cursor, signal) => {
+      if (!selectedReportID) return Promise.resolve({ data: [], next_cursor: null, has_more: false });
+      const params = new URLSearchParams({ limit: "25" });
+      if (cursor) params.set("cursor", cursor);
+      return api.get<Paginated<ReportSchedule>>(`/reports/${encodeURIComponent(selectedReportID)}/schedules?${params.toString()}`, { signal });
+    },
+  );
   const summary = useQuery<Summary>(["reports", "summary", range], (signal) => api.get(`/analytics/summary?from=${encodeURIComponent(new Date(Date.now() - days * 86400000).toISOString())}`, { signal }));
 
   const conversationPoints = toPoints(conversations.data?.data ?? []);
@@ -159,7 +167,59 @@ export default function ReportsOverview() {
             </Section>
 
             <Section title="Saved reports">
-              {reports.isLoading ? <p className="text-sm text-fg-muted">Loading saved reports…</p> : reports.error ? <EmptyState icon={CalendarClock} title="Saved reports unavailable" description="Could not load saved report schedules." action={<Button variant="secondary" size="sm" onClick={reports.refetch}>Try again</Button>} /> : reports.items.length === 0 ? <Card><CardBody><EmptyState icon={CalendarClock} title="No saved reports" description="Schedule a report to create a reusable saved report and delivery schedule." /></CardBody></Card> : <><div className="grid gap-3 lg:grid-cols-2">{reports.items.map((report) => (<Card key={report.id} className={selectedReportID === report.id ? "ring-1 ring-accent" : ""}><CardBody><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><button type="button" className="text-left text-sm font-medium text-fg hover:underline" onClick={() => setSelectedReportID(report.id)}>{report.name}</button><p className="mt-1 text-xs text-fg-muted">{report.date_range.replaceAll("_", " ")} · {report.timezone || "UTC"}</p></div><Button variant="secondary" size="xs" onClick={() => setSelectedReportID(report.id)}>{selectedReportID === report.id ? "Selected" : "Manage"}</Button></div>{selectedReportID === report.id && <div className="mt-4 border-t border-line-subtle pt-3">{schedules.isLoading ? <p className="text-xs text-fg-muted">Loading schedules…</p> : schedules.error ? <p className="text-xs text-danger">Could not load schedules.</p> : (schedules.data?.data ?? []).length === 0 ? <p className="text-xs text-fg-muted">No delivery schedules for this report.</p> : <ul className="divide-y divide-line-subtle">{(schedules.data?.data ?? []).map((item) => (<li key={item.id} className="flex flex-wrap items-center gap-3 py-2.5"><div className="min-w-0 flex-1"><p className="text-xs font-medium capitalize text-fg">{item.cadence} CSV · {item.recipients.join(", ")}</p><p className="mt-0.5 text-2xs text-fg-muted">{item.enabled ? "Next run " + (item.next_run_at ? formatDateTime(item.next_run_at, { timeZone: report.timezone || "UTC" }) : "pending") : "Disabled"}{item.last_sent_at ? " · last sent " + formatDateTime(item.last_sent_at, { timeZone: report.timezone || "UTC" }) : ""}</p></div><Switch checked={item.enabled} onCheckedChange={(enabled) => void toggleSchedule.mutate({ schedule: item, enabled }).catch(() => {})} aria-label={(item.enabled ? "Disable " : "Enable ") + item.cadence + " schedule"} /><Button variant="ghost" size="xs" iconOnly leading={<Trash2 />} aria-label={"Delete " + item.cadence + " schedule"} onClick={() => setDeletingSchedule(item)} /></li>))}</ul>}</div>}</CardBody></Card>))}</div>{reports.hasMore && <div className="flex justify-center pt-4"><Button variant="secondary" size="sm" loading={reports.isFetching} onClick={() => void reports.fetchNext()}>Load more saved reports</Button></div>}</>}
+              {reports.isLoading ? (
+                <p className="text-sm text-fg-muted">Loading saved reports…</p>
+              ) : reports.error ? (
+                <EmptyState icon={CalendarClock} title="Saved reports unavailable" description="Could not load saved report schedules." action={<Button variant="secondary" size="sm" onClick={reports.refetch}>Try again</Button>} />
+              ) : reports.items.length === 0 ? (
+                <Card><CardBody><EmptyState icon={CalendarClock} title="No saved reports" description="Schedule a report to create a reusable saved report and delivery schedule." /></CardBody></Card>
+              ) : (
+                <>
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    {reports.items.map((report) => (
+                      <Card key={report.id} className={selectedReportID === report.id ? "ring-1 ring-accent" : ""}>
+                        <CardBody>
+                          <div className="flex items-start gap-3">
+                            <div className="min-w-0 flex-1">
+                              <button type="button" className="text-left text-sm font-medium text-fg hover:underline" onClick={() => setSelectedReportID(report.id)}>{report.name}</button>
+                              <p className="mt-1 text-xs text-fg-muted">{report.date_range.replaceAll("_", " ")} · {report.timezone || "UTC"}</p>
+                            </div>
+                            <Button variant="secondary" size="xs" onClick={() => setSelectedReportID(report.id)}>{selectedReportID === report.id ? "Selected" : "Manage"}</Button>
+                          </div>
+                          {selectedReportID === report.id && (
+                            <div className="mt-4 border-t border-line-subtle pt-3">
+                              {schedules.isLoading ? (
+                                <p className="text-xs text-fg-muted">Loading schedules…</p>
+                              ) : schedules.error ? (
+                                <p className="text-xs text-danger">Could not load schedules.</p>
+                              ) : schedules.items.length === 0 ? (
+                                <p className="text-xs text-fg-muted">No delivery schedules for this report.</p>
+                              ) : (
+                                <>
+                                  <ul className="divide-y divide-line-subtle">
+                                    {schedules.items.map((item) => (
+                                      <li key={item.id} className="flex flex-wrap items-center gap-3 py-2.5">
+                                        <div className="min-w-0 flex-1">
+                                          <p className="text-xs font-medium capitalize text-fg">{item.cadence} CSV · {item.recipients.join(", ")}</p>
+                                          <p className="mt-0.5 text-2xs text-fg-muted">{item.enabled ? "Next run " + (item.next_run_at ? formatDateTime(item.next_run_at, { timeZone: report.timezone || "UTC" }) : "pending") : "Disabled"}{item.last_sent_at ? " · last sent " + formatDateTime(item.last_sent_at, { timeZone: report.timezone || "UTC" }) : ""}</p>
+                                        </div>
+                                        <Switch checked={item.enabled} onCheckedChange={(enabled) => void toggleSchedule.mutate({ schedule: item, enabled }).catch(() => {})} aria-label={(item.enabled ? "Disable " : "Enable ") + item.cadence + " schedule"} />
+                                        <Button variant="ghost" size="xs" iconOnly leading={<Trash2 />} aria-label={"Delete " + item.cadence + " schedule"} onClick={() => setDeletingSchedule(item)} />
+                                      </li>
+                                    ))}
+                                  </ul>
+                                  {schedules.hasMore && <div className="flex justify-center border-t border-line-subtle p-3"><Button variant="secondary" size="xs" loading={schedules.isFetching} onClick={() => void schedules.fetchNext()}>Load more schedules</Button></div>}
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </CardBody>
+                      </Card>
+                    ))}
+                  </div>
+                  {reports.hasMore && <div className="flex justify-center pt-4"><Button variant="secondary" size="sm" loading={reports.isFetching} onClick={() => void reports.fetchNext()}>Load more saved reports</Button></div>}
+                </>
+              )}
             </Section>
           </>
         )}

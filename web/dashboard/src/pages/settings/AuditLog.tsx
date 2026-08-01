@@ -15,7 +15,7 @@ import {
   formatDateTime,
   formatRelativeShort,
   useInfinite,
-  useQuery,
+  useAllPages,
   type AuditLog as AuditLogEntry,
   type Column,
   type FilterCondition,
@@ -63,7 +63,7 @@ export default function AuditLog() {
   );
   const [expanded, setExpanded] = useState<string | null>(null);
 
-  const members = useQuery<{ data: Member[] }>(["members"], (signal) => api.get("/members", { signal }));
+  const members = useAllPages<Member>(["members", "lookup"], (cursor, signal) => api.get<Paginated<Member>>(`/members?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
 
   const actorId = conditionValue(conditions, "actor");
   const action = conditionValue(conditions, "action");
@@ -75,7 +75,7 @@ export default function AuditLog() {
         label: "Actor",
         icon: <User />,
         operators: ["is"],
-        options: (members.data?.data ?? []).map((member) => ({ value: member.id, label: member.name })),
+        options: members.items.map((member) => ({ value: member.id, label: member.name })),
       },
       {
         key: "action",
@@ -85,7 +85,7 @@ export default function AuditLog() {
         options: KNOWN_ACTIONS.map((value) => ({ value, label: value })),
       },
     ],
-    [members.data],
+    [members.items],
   );
 
   const log = useInfinite<AuditLogEntry>(

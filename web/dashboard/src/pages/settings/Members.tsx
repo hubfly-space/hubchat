@@ -25,7 +25,6 @@ import {
   PageBody,
   PageHeader,
   Pagination,
-  Pagination,
   RadioGroup,
   SearchInput,
   Switch,
@@ -37,13 +36,12 @@ import {
   formatRelativeShort,
   invalidate,
   useInfinite,
+  useAllPages,
   useMutation,
-  useQuery,
   type BadgeTone,
   type Column,
   type Member,
   type MemberRole,
-  type Paginated,
   type Paginated,
   type Team,
 } from "@hubchat/shared";
@@ -82,7 +80,7 @@ export default function Members() {
     if (cursor) params.set("cursor", cursor);
     return api.get<Paginated<Member>>(`/members?${params.toString()}`, { signal });
   });
-  const teams = useQuery<{ data: Team[] }>(["teams"], (signal) => api.get("/teams", { signal }));
+  const teams = useAllPages<Team>(["teams", "lookup"], (cursor, signal) => api.get<Paginated<Team>>(`/teams?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
   const invites = useInfinite<Invite>(["invites"], (cursor, signal) => api.get<Paginated<Invite>>(`/invites?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
 
   const setRole = useMutation<{ id: string; role: string }, unknown>(
@@ -98,7 +96,7 @@ export default function Members() {
     { invalidates: [["invites"]] },
   );
 
-  const teamById = new Map((teams.data?.data ?? []).map((team) => [team.id, team]));
+  const teamById = new Map(teams.items.map((team) => [team.id, team]));
 
   const rows = members.items;
 
@@ -317,7 +315,7 @@ export default function Members() {
       </PageBody>
 
       {managingTeamsFor ? (
-        <ManageTeamsDialog member={managingTeamsFor} teams={teams.data?.data ?? []} onClose={() => setManagingTeamsFor(null)} />
+        <ManageTeamsDialog member={managingTeamsFor} teams={teams.items} onClose={() => setManagingTeamsFor(null)} />
       ) : null}
     </Page>
   );
