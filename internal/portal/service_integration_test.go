@@ -202,3 +202,50 @@ func TestListDomainsPageUsesDomainCursorAndWorkspaceScope(t *testing.T) {
 		t.Fatalf("cross-workspace domain page = %#v, err=%v", other, err)
 	}
 }
+
+func TestTicketsUsesStableCursorCompanyScopeAndWorkspaceIsolation(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspaces (id, name, slug) VALUES
+			('wrk_ticket_page', 'Ticket Page', 'ticket-page'),
+			('wrk_ticket_other', 'Ticket Other', 'ticket-other');
+		INSERT INTO companies (id, workspace_id, name) VALUES ('com_ticket_page', 'wrk_ticket_page', 'Acme');
+		INSERT INTO customers (id, workspace_id, name, email) VALUES
+			('cus_ticket_owner', 'wrk_ticket_page', 'Owner', 'owner@example.com'),
+			('cus_ticket_colleague', 'wrk_ticket_page', 'Colleague', 'colleague@example.com'),
+			('cus_ticket_other', 'wrk_ticket_other', 'Other', 'other@example.com');
+		INSERT INTO company_customers (company_id, customer_id) VALUES
+			('com_ticket_page', 'cus_ticket_owner'),
+			('com_ticket_page', 'cus_ticket_colleague');
+		INSERT INTO tickets (id, workspace_id, number, prefix, title, customer_id, updated_at) VALUES
+			('tkt_ticket_recent', 'wrk_ticket_page', 3, 'SUP', 'Recent colleague', 'cus_ticket_colleague', '2026-01-03T00:00:00Z'),
+			('tkt_ticket_owned', 'wrk_ticket_page', 2, 'SUP', 'Owned ticket', 'cus_ticket_owner', '2026-01-02T00:00:00Z'),
+			('tkt_ticket_old', 'wrk_ticket_page', 1, 'SUP', 'Old colleague', 'cus_ticket_colleague', '2026-01-01T00:00:00Z'),
+			('tkt_ticket_other', 'wrk_ticket_other', 1, 'OTH', 'Other workspace', 'cus_ticket_other', '2026-01-04T00:00:00Z')
+	`); err != nil {
+		t.Fatalf("seed tickets: %v", err)
+	}
+
+	service := portal.New(pool, portal.Options{})
+	session := &portal.Session{
+		WorkspaceID: "wrk_ticket_page",
+		CustomerID:  "cus_ticket_owner",
+		Portal:      &portal.Portal{ID: "prl_ticket_page", WorkspaceID: "wrk_ticket_page", Permissions: map[string]any{"view_company_tickets": true}},
+	}
+	first, err := service.Tickets(ctx, session, portal.TicketFilter{Limit: 2})
+	if err != nil || len(first) != 2 || first[0].ID != "tkt_ticket_recent" || first[1].ID != "tkt_ticket_owned" {
+		t.Fatalf("first ticket page = %#v, err=%v", first, err)
+	}
+	second, err := service.Tickets(ctx, session, portal.TicketFilter{Before: first[1].UpdatedAt, BeforeID: first[1].ID, Limit: 2})
+	if err != nil || len(second) != 1 || second[0].ID != "tkt_ticket_old" {
+		t.Fatalf("second ticket page = %#v, err=%v", second, err)
+	}
+
+	session.Portal.Permissions = map[string]any{}
+	owned, err := service.Tickets(ctx, session, portal.TicketFilter{Limit: 10})
+	if err != nil || len(owned) != 1 || owned[0].ID != "tkt_ticket_owned" {
+		t.Fatalf("permission-scoped tickets = %#v, err=%v", owned, err)
+	}
+}

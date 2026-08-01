@@ -33,6 +33,8 @@ const (
 	KindCompaniesCSV          = "companies_csv"
 	KindTicketsCSV            = "tickets_csv"
 	KindFeedbackCSV           = "feedback_csv"
+	KindAuditCSV              = "audit_csv"
+	KindSurveyCSV             = "survey_csv"
 	KindKnowledgeBaseMarkdown = "knowledgebase_markdown"
 )
 
@@ -119,6 +121,7 @@ func (s *Service) SetKnowledgeBaseImporter(importer *knowledgebase.Service) {
 }
 
 func (s *Service) CreateExport(ctx context.Context, workspaceID, memberID, kind string, scope map[string]any) (*Request, error) {
+	kind = normalizeExportKind(kind)
 	if err := validateExportKind(kind); err != nil {
 		return nil, err
 	}
@@ -131,11 +134,15 @@ func (s *Service) CreateExport(ctx context.Context, workspaceID, memberID, kind 
 	}
 	id := ids.New(ids.PrefixExport)
 	var request Request
+	format := "json"
+	if kind != KindWorkspace {
+		format = "csv"
+	}
 	err = s.pool.QueryRow(ctx, `
 		INSERT INTO export_requests(id,workspace_id,kind,scope,format,requested_by)
-		VALUES($1,$2,$3,$4::jsonb,'json',NULLIF($5,''))
+		VALUES($1,$2,$3,$4::jsonb,$5,NULLIF($6,''))
 		RETURNING id,workspace_id,kind,scope,format,file_id,state,row_count,coalesce(error,''),requested_by,expires_at,completed_at,created_at`,
-		id, workspaceID, kind, scopeJSON, memberID,
+		id, workspaceID, kind, scopeJSON, format, memberID,
 	).Scan(exportArgs(&request)...)
 	if err != nil {
 		return nil, fmt.Errorf("portability: create export: %w", err)
@@ -155,8 +162,12 @@ func (s *Service) CreateExport(ctx context.Context, workspaceID, memberID, kind 
 // file. Callers can use the result to show the operator what will be included
 // before the irreversible download is generated.
 func (s *Service) PreviewExport(ctx context.Context, workspaceID, kind string, scope map[string]any) ([]TableSummary, error) {
+	kind = normalizeExportKind(kind)
 	if err := validateExportKind(kind); err != nil {
 		return nil, err
+	}
+	if kind != KindWorkspace {
+		return s.previewCSVExport(ctx, workspaceID, kind)
 	}
 	_, summaries, err := Export(ctx, s.pool, workspaceID, time.Now().UTC())
 	if err != nil {
@@ -169,7 +180,17 @@ func validateExportKind(kind string) error {
 	if kind == "" || kind == KindWorkspace {
 		return nil
 	}
-	return errors.New("portability: only workspace archives are currently supported")
+	if _, ok := csvExportSpecFor(kind); ok {
+		return nil
+	}
+	return fmt.Errorf("portability: unsupported export kind %q", kind)
+}
+
+func normalizeExportKind(kind string) string {
+	if strings.TrimSpace(kind) == "" {
+		return KindWorkspace
+	}
+	return strings.TrimSpace(kind)
 }
 
 func (s *Service) CreateImport(ctx context.Context, workspaceID, memberID, fileID, kind string, mapping map[string]any, start bool) (*Request, error) {
@@ -411,17 +432,26 @@ func (s *Service) ExportManifest(ctx context.Context, workspaceID, id string) (*
 	if err != nil {
 		return nil, fmt.Errorf("portability: export file: %w", err)
 	}
-	archive, err := s.readArchive(ctx, workspaceID, request.FileID)
-	if err != nil {
-		return nil, err
-	}
-
-	summaries := make([]TableSummary, 0, len(tableSpecs))
+	var summaries []TableSummary
 	var rowCount int64
-	for _, spec := range tableSpecs {
-		rows := len(archive.Tables[spec.name])
-		summaries = append(summaries, TableSummary{Name: spec.name, Rows: rows})
-		rowCount += int64(rows)
+	if request.Kind != KindWorkspace {
+		spec, ok := csvExportSpecFor(request.Kind)
+		if !ok {
+			return nil, fmt.Errorf("portability: unsupported export kind %q", request.Kind)
+		}
+		rowCount = valueOrZero(request.RowCount)
+		summaries = []TableSummary{{Name: spec.Name, Rows: int(rowCount)}}
+	} else {
+		archive, readErr := s.readArchive(ctx, workspaceID, request.FileID)
+		if readErr != nil {
+			return nil, readErr
+		}
+		summaries = make([]TableSummary, 0, len(tableSpecs))
+		for _, spec := range tableSpecs {
+			rows := len(archive.Tables[spec.name])
+			summaries = append(summaries, TableSummary{Name: spec.name, Rows: rows})
+			rowCount += int64(rows)
+		}
 	}
 	manifest := &Manifest{
 		ExportID: request.ID, WorkspaceID: request.WorkspaceID, FileID: fileRecord.ID,
@@ -429,17 +459,23 @@ func (s *Service) ExportManifest(ctx context.Context, workspaceID, id string) (*
 		Checksum: filemodule.ChecksumHex(fileRecord.Checksum), ExpiresAt: request.ExpiresAt,
 		RowCount: rowCount, Tables: summaries,
 	}
-	for _, raw := range archive.Tables["files"] {
-		var object struct {
-			SizeBytes int64  `json:"size_bytes"`
-			OwnerType string `json:"owner_type"`
+	if request.Kind == KindWorkspace {
+		archive, readErr := s.readArchive(ctx, workspaceID, request.FileID)
+		if readErr != nil {
+			return nil, readErr
 		}
-		if err := json.Unmarshal(raw, &object); err != nil {
-			return nil, fmt.Errorf("portability: manifest file row: %w", err)
-		}
-		if object.OwnerType != "workspace" {
-			manifest.AttachmentCount++
-			manifest.AttachmentBytes += object.SizeBytes
+		for _, raw := range archive.Tables["files"] {
+			var object struct {
+				SizeBytes int64  `json:"size_bytes"`
+				OwnerType string `json:"owner_type"`
+			}
+			if err := json.Unmarshal(raw, &object); err != nil {
+				return nil, fmt.Errorf("portability: manifest file row: %w", err)
+			}
+			if object.OwnerType != "workspace" {
+				manifest.AttachmentCount++
+				manifest.AttachmentBytes += object.SizeBytes
+			}
 		}
 	}
 	return manifest, nil
@@ -531,24 +567,41 @@ func (s *Service) RunExport(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	archive, summaries, err := Export(ctx, s.pool, request.WorkspaceID, time.Now().UTC())
-	if err != nil {
-		return s.failExport(ctx, id, err)
-	}
 	var buffer bytes.Buffer
-	gzipWriter := gzip.NewWriter(&buffer)
-	if err := json.NewEncoder(gzipWriter).Encode(archive); err != nil {
-		_ = gzipWriter.Close()
-		return s.failExport(ctx, id, err)
+	var summaries []TableSummary
+	mimeType := "application/gzip"
+	fileName := "hubchat-" + request.WorkspaceID + "-" + id + ".json.gz"
+	if request.Kind == KindWorkspace || request.Kind == "" {
+		archive, exportSummaries, exportErr := Export(ctx, s.pool, request.WorkspaceID, time.Now().UTC())
+		if exportErr != nil {
+			return s.failExport(ctx, id, exportErr)
+		}
+		summaries = exportSummaries
+		gzipWriter := gzip.NewWriter(&buffer)
+		if encodeErr := json.NewEncoder(gzipWriter).Encode(archive); encodeErr != nil {
+			_ = gzipWriter.Close()
+			return s.failExport(ctx, id, encodeErr)
+		}
+		if closeErr := gzipWriter.Close(); closeErr != nil {
+			return s.failExport(ctx, id, closeErr)
+		}
+	} else {
+		var exportErr error
+		buffer, summaries, exportErr = s.exportCSV(ctx, request.WorkspaceID, request.Kind)
+		if exportErr != nil {
+			return s.failExport(ctx, id, exportErr)
+		}
+		mimeType = "text/csv"
+		fileName = "hubchat-" + request.WorkspaceID + "-" + id + "-" + request.Kind + ".csv"
 	}
-	if err := gzipWriter.Close(); err != nil {
-		return s.failExport(ctx, id, err)
+	if int64(buffer.Len()) > maxArchiveBytes {
+		return s.failExport(ctx, id, errors.New("portability: export exceeds the 512 MiB limit"))
 	}
 	if s.files == nil {
 		return s.failExport(ctx, id, errors.New("portability: file service is unavailable"))
 	}
 	fileRecord, err := s.files.Create(ctx, request.WorkspaceID, filemodule.UploadInput{
-		Name: "hubchat-" + request.WorkspaceID + "-" + id + ".json.gz", MIMEType: "application/gzip",
+		Name: fileName, MIMEType: mimeType,
 		SizeBytes: int64(buffer.Len()), Body: bytes.NewReader(buffer.Bytes()), OwnerType: "workspace", OwnerID: request.WorkspaceID,
 		UploadedByType: "system",
 	})

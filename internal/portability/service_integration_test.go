@@ -7,6 +7,8 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,6 +62,66 @@ func TestExportManifestIncludesChecksumAndAttachmentTotals(t *testing.T) {
 	}
 	if manifest.Checksum == "" || manifest.SizeBytes != int64(compressed.Len()) || manifest.RowCount != 1 || manifest.AttachmentCount != 1 || manifest.AttachmentBytes != 42 {
 		t.Fatalf("manifest = %+v", manifest)
+	}
+}
+
+func TestCSVExportJobIsWorkspaceScopedAndProducesManifest(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspaces (id,name,slug) VALUES
+			('wrk_csv_export_a','CSV export A','csv-export-a'),
+			('wrk_csv_export_b','CSV export B','csv-export-b');
+		INSERT INTO customers (id,workspace_id,external_id,email,name,verification)
+		VALUES
+			('cus_csv_export_a','wrk_csv_export_a','customer-a','a@example.com','Customer A','verified'),
+			('cus_csv_export_b','wrk_csv_export_b','customer-b','b@example.com','Customer B','verified')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	store, err := filemodule.NewLocalStore(t.TempDir(), 1<<20, []string{"text/csv"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := filemodule.New(pool, store)
+	if _, err := pool.Exec(ctx, `INSERT INTO export_requests (id,workspace_id,kind,format,state) VALUES ('exp_csv_export','wrk_csv_export_a',$1,'csv','pending')`, KindCustomersCSV); err != nil {
+		t.Fatal(err)
+	}
+	service := New(pool, files, nil)
+	if err := service.RunExport(ctx, "exp_csv_export"); err != nil {
+		t.Fatal(err)
+	}
+	request, err := service.Get(ctx, "wrk_csv_export_a", "exp_csv_export")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.State != "completed" || request.FileID == nil || request.RowCount == nil || *request.RowCount != 1 {
+		t.Fatalf("export request = %+v", request)
+	}
+	record, err := files.Get(ctx, "wrk_csv_export_a", *request.FileID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, opened, err := files.Open(ctx, "wrk_csv_export_a", record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(opened)
+	_ = opened.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body)
+	if !strings.Contains(content, "external_id,email,name") || !strings.Contains(content, "customer-a") || strings.Contains(content, "customer-b") {
+		t.Fatalf("unexpected CSV export: %q", content)
+	}
+	manifest, err := service.ExportManifest(ctx, "wrk_csv_export_a", request.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.FileName == "" || manifest.Checksum == "" || manifest.RowCount != 1 || manifest.AttachmentCount != 0 || len(manifest.Tables) != 1 || manifest.Tables[0].Name != "customers" {
+		t.Fatalf("CSV manifest = %+v", manifest)
 	}
 }
 
