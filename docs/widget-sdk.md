@@ -23,9 +23,15 @@ global declaration.
 
 ```js
 Hubchat("show");
+Hubchat("open"); // alias for show
+Hubchat("hide");
+Hubchat("close"); // alias for hide
+Hubchat("toggle");
 Hubchat("startConversation", { message: "I need help with billing" });
 Hubchat("openArticle", { slug: "billing/refunds" });
+Hubchat("openForm", { slug: "contact-support" });
 Hubchat("openTicketForm", { slug: "contact-support" });
+Hubchat("openFeedback", { slug: "roadmap" });
 Hubchat("openFeedbackForm", { slug: "roadmap" });
 
 Hubchat("identify", {
@@ -40,6 +46,7 @@ Hubchat("context", { page: "pricing", plan: "pro" });
 Hubchat("update", { attributes: { plan: "pro" } });
 Hubchat("track", { type: "checkout.started", payload: { currency: "RWF" } });
 Hubchat("reset");
+Hubchat("on", { event: "ready", handler: () => console.log("Hubchat is ready") });
 ```
 
 `open`/`close` are aliases for `show`/`hide`. `openForm` and `openFeedback`
@@ -72,6 +79,8 @@ small and contain no internal notes or sensitive dashboard-only fields.
 
 - The API is available only after `boot` has supplied a public widget key.
 - Calls made before lazy loading completes replay in their original order.
+- If the public configuration request fails, `boot` remains retryable; calls
+  already queued are retained and replay after the next successful boot.
 - `context` and `track` create visitor events; `update` writes declared customer
   attributes through the server-side metadata validator.
 - The loader does not expose secrets and does not use customer identity as a
