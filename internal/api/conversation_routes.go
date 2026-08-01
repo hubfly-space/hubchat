@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -308,14 +309,13 @@ func handleListMessages(deps Deps) http.HandlerFunc {
 		actor := actorFromRequest(r)
 		id := r.PathValue("id")
 
-		var after int64
-		if raw := r.URL.Query().Get("after"); raw != "" {
-			if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
-				after = parsed
-			}
+		before, after, limit, err := messagePageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, err.Error())
+			return
 		}
 
-		messages, err := deps.Conversation.Messages(r.Context(), actor.WorkspaceID, id, after)
+		messages, hasMore, err := deps.Conversation.ListMessagesPage(r.Context(), actor.WorkspaceID, id, before, after, limit)
 		if err != nil {
 			writeConversationError(w, r, err)
 			return
@@ -325,8 +325,55 @@ func handleListMessages(deps Deps) http.HandlerFunc {
 		for i, m := range messages {
 			out[i] = messageJSONWithAttachments(r, deps, actor.WorkspaceID, m)
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+		response := map[string]any{"data": out, "has_more": hasMore, "next_cursor": nil}
+		if hasMore && len(messages) > 0 && after == 0 {
+			response["next_cursor"] = Cursor{Value: strconv.FormatInt(messages[0].Sequence, 10)}.Encode()
+		}
+		if hasMore && len(messages) > 0 && after > 0 {
+			response["next_after"] = messages[len(messages)-1].Sequence
+		}
+		httpserver.WriteJSON(w, http.StatusOK, response)
 	}
+}
+
+func messagePageParams(r *http.Request) (before, after int64, limit int, err error) {
+	limit = 100
+	query := r.URL.Query()
+	beforeRaw := query.Get("before")
+	if encoded := query.Get("cursor"); encoded != "" {
+		cursor, decodeErr := DecodeCursor(encoded)
+		if decodeErr != nil || cursor.Value == "" {
+			return 0, 0, 0, errors.New("cursor is malformed")
+		}
+		beforeRaw = cursor.Value
+	}
+	parse := func(name, raw string) (int64, error) {
+		if raw == "" {
+			return 0, nil
+		}
+		value, parseErr := strconv.ParseInt(raw, 10, 64)
+		if parseErr != nil || value < 1 {
+			return 0, fmt.Errorf("%s must be a positive integer", name)
+		}
+		return value, nil
+	}
+	if before, err = parse("before", beforeRaw); err != nil {
+		return 0, 0, 0, err
+	}
+	if after, err = parse("after", query.Get("after")); err != nil {
+		return 0, 0, 0, err
+	}
+	if before > 0 && after > 0 {
+		return 0, 0, 0, errors.New("before and after cannot be used together")
+	}
+	if raw := query.Get("limit"); raw != "" {
+		parsed, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || parsed < 1 || parsed > 200 {
+			return 0, 0, 0, errors.New("limit must be between 1 and 200")
+		}
+		limit = parsed
+	}
+	return before, after, limit, nil
 }
 
 type postMessageRequest struct {

@@ -221,12 +221,19 @@ func handleListFeedbackComments(deps Deps) http.HandlerFunc {
 func handleListFeedbackLinks(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
-		links, err := deps.Feedback.ListLinks(r.Context(), actor.WorkspaceID, r.PathValue("id"))
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed feedback link cursor.")
+			return
+		}
+		links, err := deps.Feedback.ListLinksPage(r.Context(), actor.WorkspaceID, r.PathValue("id"), cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			writeFeedbackError(w, r, err)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": links})
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(links, limit, func(link feedback.Link) Cursor {
+			return Cursor{At: link.CreatedAt, ID: link.ID}
+		}))
 	}
 }
 func handleAddFeedbackLink(deps Deps) http.HandlerFunc {

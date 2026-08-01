@@ -183,6 +183,10 @@
       "get": { "$ref": "#/components/operations/get", "operationId": "getArticle", "tags": ["Knowledge base"] },
       "patch": { "$ref": "#/components/operations/update", "operationId": "updateArticle", "tags": ["Knowledge base"] }
     },
+    "/v1/articles/{id}/revisions": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/list", "operationId": "listArticleRevisions", "tags": ["Knowledge base"] }
+    },
     "/v1/public/knowledge-bases/{workspaceID}/search": {
       "parameters": [{ "$ref": "#/components/parameters/WorkspaceID" }],
       "get": { "$ref": "#/components/operations/publicList", "operationId": "searchPublicArticles", "security": [], "tags": ["Knowledge base"] }

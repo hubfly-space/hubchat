@@ -46,12 +46,18 @@ func handleEmailStatus(deps Deps) http.HandlerFunc {
 
 func handleListMailboxes(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := deps.EmailChannel.List(r.Context(), actorFromRequest(r).WorkspaceID)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed mailbox cursor.")
+			return
+		}
+		items, err := deps.EmailChannel.ListPage(r.Context(), actorFromRequest(r).WorkspaceID, cursor.Value, cursor.ID, limit+1)
 		if err != nil {
 			writeEmailChannelInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		page := NewPage(items, limit, func(item emailchannel.Mailbox) Cursor { return Cursor{Value: item.Address, ID: item.ID} })
+		httpserver.WriteJSON(w, http.StatusOK, page)
 	}
 }
 
