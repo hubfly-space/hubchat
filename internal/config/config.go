@@ -26,6 +26,7 @@ type Config struct {
 	Database      Database
 	Storage       Storage
 	Email         Email
+	OAuth         OAuth
 	Security      Security
 	Realtime      Realtime
 	Jobs          Jobs
@@ -118,6 +119,25 @@ type Email struct {
 	FromAddress  string
 	ReplyTo      string
 	InboundMode  string // "webhook", "imap", "off"
+}
+
+// OAuth is an optional deployment-level OIDC/OAuth2 sign-in adapter. The
+// endpoints are configured by the operator rather than accepted from a
+// request, which prevents callback SSRF and keeps provider secrets out of
+// workspace-owned records. Workspace-specific SSO policy is a later layer.
+type OAuth struct {
+	Enabled  bool
+	Provider string
+	// Profile selects a built-in identity adapter. Empty infers google or
+	// microsoft from Provider; all other values use the generic adapter.
+	Profile          string
+	ClientID         string
+	ClientSecret     string // secret
+	AuthorizationURL string
+	TokenURL         string
+	UserinfoURL      string
+	Scopes           []string
+	AllowedDomains   []string
 }
 
 type Security struct {
@@ -333,6 +353,34 @@ func Load() (Config, error) {
 		}
 	}
 
+	if v := os.Getenv("HUBCHAT_OAUTH_PROVIDER"); v != "" {
+		cfg.OAuth.Enabled = true
+		cfg.OAuth.Provider = strings.ToLower(strings.TrimSpace(v))
+		cfg.OAuth.Profile = strings.ToLower(strings.TrimSpace(os.Getenv("HUBCHAT_OAUTH_PROFILE")))
+		cfg.OAuth.ClientID = os.Getenv("HUBCHAT_OAUTH_CLIENT_ID")
+		cfg.OAuth.ClientSecret = os.Getenv("HUBCHAT_OAUTH_CLIENT_SECRET")
+		cfg.OAuth.AuthorizationURL = os.Getenv("HUBCHAT_OAUTH_AUTHORIZATION_URL")
+		cfg.OAuth.TokenURL = os.Getenv("HUBCHAT_OAUTH_TOKEN_URL")
+		cfg.OAuth.UserinfoURL = os.Getenv("HUBCHAT_OAUTH_USERINFO_URL")
+		if scopes := os.Getenv("HUBCHAT_OAUTH_SCOPES"); scopes != "" {
+			for _, scope := range strings.Split(scopes, ",") {
+				if scope = strings.TrimSpace(scope); scope != "" {
+					cfg.OAuth.Scopes = append(cfg.OAuth.Scopes, scope)
+				}
+			}
+		}
+		if domains := os.Getenv("HUBCHAT_OAUTH_ALLOWED_DOMAINS"); domains != "" {
+			for _, domain := range strings.Split(domains, ",") {
+				if domain = strings.ToLower(strings.TrimSpace(domain)); domain != "" {
+					cfg.OAuth.AllowedDomains = append(cfg.OAuth.AllowedDomains, domain)
+				}
+			}
+		}
+		if err := applyOAuthProfileDefaults(&cfg.OAuth); err != nil {
+			return cfg, err
+		}
+	}
+
 	if v := os.Getenv("HUBCHAT_LOG_FORMAT"); v != "" {
 		cfg.Observability.LogFormat = v
 	}
@@ -352,6 +400,66 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+const (
+	OAuthProfileGeneric   = "generic"
+	OAuthProfileGoogle    = "google"
+	OAuthProfileMicrosoft = "microsoft"
+)
+
+// applyOAuthProfileDefaults fills only endpoints and scopes owned by a
+// built-in adapter. Generic providers still have to provide every URL
+// explicitly, so adding a profile cannot turn an arbitrary provider name into
+// an outbound request target.
+func applyOAuthProfileDefaults(oauth *OAuth) error {
+	if oauth == nil {
+		return nil
+	}
+	profile := strings.TrimSpace(strings.ToLower(oauth.Profile))
+	if profile == "" {
+		switch oauth.Provider {
+		case OAuthProfileGoogle:
+			profile = OAuthProfileGoogle
+		case "microsoft", "entra", "entra-id":
+			profile = OAuthProfileMicrosoft
+		default:
+			profile = OAuthProfileGeneric
+		}
+	}
+	switch profile {
+	case OAuthProfileGeneric:
+	case OAuthProfileGoogle:
+		if oauth.AuthorizationURL == "" {
+			oauth.AuthorizationURL = "https://accounts.google.com/o/oauth2/v2/auth"
+		}
+		if oauth.TokenURL == "" {
+			oauth.TokenURL = "https://oauth2.googleapis.com/token"
+		}
+		if oauth.UserinfoURL == "" {
+			oauth.UserinfoURL = "https://openidconnect.googleapis.com/v1/userinfo"
+		}
+		if len(oauth.Scopes) == 0 {
+			oauth.Scopes = []string{"openid", "email", "profile"}
+		}
+	case OAuthProfileMicrosoft:
+		if oauth.AuthorizationURL == "" {
+			oauth.AuthorizationURL = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+		}
+		if oauth.TokenURL == "" {
+			oauth.TokenURL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+		}
+		if oauth.UserinfoURL == "" {
+			oauth.UserinfoURL = "https://graph.microsoft.com/v1.0/me"
+		}
+		if len(oauth.Scopes) == 0 {
+			oauth.Scopes = []string{"openid", "email", "profile", "User.Read"}
+		}
+	default:
+		return fmt.Errorf("oauth: unsupported profile %q (use generic, google, or microsoft)", profile)
+	}
+	oauth.Profile = profile
+	return nil
 }
 
 // Validate reports every problem it finds rather than the first, because an
@@ -400,6 +508,29 @@ func (c Config) Validate() error {
 		}
 		if c.Storage.S3AccessKey == "" || c.Storage.S3SecretKey == "" {
 			problems = append(problems, errors.New("storage: S3 backend requires credentials"))
+		}
+	}
+
+	if c.OAuth.Enabled {
+		if err := applyOAuthProfileDefaults(&c.OAuth); err != nil {
+			problems = append(problems, err)
+		}
+		if c.OAuth.Provider == "" || c.OAuth.ClientID == "" || c.OAuth.ClientSecret == "" ||
+			c.OAuth.AuthorizationURL == "" || c.OAuth.TokenURL == "" || c.OAuth.UserinfoURL == "" {
+			problems = append(problems, errors.New("oauth: provider, client credentials, authorization URL, token URL, and userinfo URL are required when OAuth is enabled"))
+		}
+		for name, raw := range map[string]string{
+			"authorization": c.OAuth.AuthorizationURL,
+			"token":         c.OAuth.TokenURL,
+			"userinfo":      c.OAuth.UserinfoURL,
+		} {
+			if raw == "" {
+				continue
+			}
+			u, err := url.Parse(raw)
+			if err != nil || u.Scheme != "https" || u.Host == "" {
+				problems = append(problems, fmt.Errorf("oauth: %s URL must be an absolute https URL", name))
+			}
 		}
 	}
 
@@ -453,6 +584,7 @@ func (c Config) Redacted() Config {
 	redacted.Storage.S3AccessKey = mask(c.Storage.S3AccessKey)
 	redacted.Storage.S3SecretKey = mask(c.Storage.S3SecretKey)
 	redacted.Email.SMTPPassword = mask(c.Email.SMTPPassword)
+	redacted.OAuth.ClientSecret = mask(c.OAuth.ClientSecret)
 	return redacted
 }
 
