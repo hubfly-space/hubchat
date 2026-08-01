@@ -55,9 +55,10 @@ type Challenge struct {
 // two nullable fields rather than two return paths keeps the caller honest:
 // there is no way to read Session without noticing Challenge exists.
 type SignInResult struct {
-	User      *User
-	Session   *Session
-	Challenge *Challenge
+	User          *User
+	Session       *Session
+	Challenge     *Challenge
+	TrustedDevice *TrustedDeviceCredential
 }
 
 // SignIn verifies a password, applies lockout, and either issues a session or
@@ -68,6 +69,13 @@ type SignInResult struct {
 // before, the attempt counter after, the 2FA branch in the middle — is exactly
 // the mistake the split invited.
 func (s *Service) SignIn(ctx context.Context, email, password, userAgent, ip string) (*SignInResult, error) {
+	return s.SignInWithTrustedDevice(ctx, email, password, userAgent, ip, "")
+}
+
+// SignInWithTrustedDevice accepts a previously issued device credential only
+// to satisfy the account's existing TOTP requirement. It never becomes a
+// session and is scoped to the same user account.
+func (s *Service) SignInWithTrustedDevice(ctx context.Context, email, password, userAgent, ip, trustedToken string) (*SignInResult, error) {
 	user, err := s.repo.userByEmail(ctx, normalizeEmail(email))
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
@@ -105,22 +113,50 @@ func (s *Service) SignIn(ctx context.Context, email, password, userAgent, ip str
 		return nil, err
 	}
 	if enabled {
-		challenge, err := s.issueTOTPChallenge(ctx, user.ID, userAgent, ip)
+		if trusted, err := s.trustedDeviceValid(ctx, user.ID, trustedToken); err != nil {
+			return nil, err
+		} else if trusted {
+			return s.createSessionResult(ctx, user, userAgent, ip, AuthMethodPassword)
+		}
+		challenge, err := s.issueTOTPChallengeWithMethod(ctx, user.ID, userAgent, ip, AuthMethodPassword)
 		if err != nil {
 			return nil, err
 		}
 		return &SignInResult{User: user, Challenge: challenge}, nil
 	}
 
-	session, err := s.CreateSession(ctx, user.ID, userAgent, ip)
+	return s.createSessionResult(ctx, user, userAgent, ip, AuthMethodPassword)
+}
+
+func (s *Service) createSessionResult(ctx context.Context, user *User, userAgent, ip, authMethod string) (*SignInResult, error) {
+	session, err := s.CreateSessionWithMethod(ctx, user.ID, userAgent, ip, authMethod)
 	if err != nil {
 		return nil, err
 	}
 	if err := s.repo.markSignedIn(ctx, user.ID); err != nil {
 		return nil, err
 	}
-
 	return &SignInResult{User: user, Session: session}, nil
+}
+
+func (s *Service) finishUserSignIn(ctx context.Context, user *User, userAgent, ip, trustedToken, authMethod string) (*SignInResult, error) {
+	enabled, err := s.repo.totpEnabled(ctx, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	if enabled {
+		if trusted, err := s.trustedDeviceValid(ctx, user.ID, trustedToken); err != nil {
+			return nil, err
+		} else if trusted {
+			return s.createSessionResult(ctx, user, userAgent, ip, authMethod)
+		}
+		challenge, err := s.issueTOTPChallengeWithMethod(ctx, user.ID, userAgent, ip, authMethod)
+		if err != nil {
+			return nil, err
+		}
+		return &SignInResult{User: user, Challenge: challenge}, nil
+	}
+	return s.createSessionResult(ctx, user, userAgent, ip, authMethod)
 }
 
 // burnPasswordTime spends roughly one bcrypt's worth of CPU so that a
@@ -212,6 +248,9 @@ func (s *Service) ResetPassword(ctx context.Context, token, newPassword string) 
 	if err := s.repo.revokeAllSessions(ctx, userID, nil); err != nil {
 		return nil, err
 	}
+	if err := s.repo.revokeAllTrustedDevices(ctx, userID); err != nil {
+		return nil, err
+	}
 	if err := s.repo.clearFailedAttempts(ctx, userID); err != nil {
 		return nil, err
 	}
@@ -244,7 +283,10 @@ func (s *Service) ChangePassword(ctx context.Context, userID, currentPassword, n
 	if err := s.repo.updatePassword(ctx, userID, hash); err != nil {
 		return err
 	}
-	return s.repo.revokeAllSessions(ctx, userID, optionalHash(keepToken))
+	if err := s.repo.revokeAllSessions(ctx, userID, optionalHash(keepToken)); err != nil {
+		return err
+	}
+	return s.repo.revokeAllTrustedDevices(ctx, userID)
 }
 
 // ------------------------------------------------------------ magic links
@@ -276,6 +318,10 @@ func (s *Service) IssueMagicLink(ctx context.Context, email, redirectTo, ip stri
 // to an address that has since been changed must not still sign its holder in
 // — otherwise "change your email" fails to revoke access from the old one.
 func (s *Service) RedeemMagicLink(ctx context.Context, token, userAgent, ip string) (*SignInResult, error) {
+	return s.RedeemMagicLinkWithTrustedDevice(ctx, token, userAgent, ip, "")
+}
+
+func (s *Service) RedeemMagicLinkWithTrustedDevice(ctx context.Context, token, userAgent, ip, trustedToken string) (*SignInResult, error) {
 	userID, redirectTo, err := s.repo.consumeMagicLink(ctx, HashToken(token))
 	if err != nil {
 		return nil, err
@@ -292,30 +338,13 @@ func (s *Service) RedeemMagicLink(ctx context.Context, token, userAgent, ip stri
 		return nil, err
 	}
 
-	// A second factor still applies. Proving mailbox access is not proving
-	// possession of the authenticator, and skipping 2FA here would make the
-	// magic link a bypass for it.
-	enabled, err := s.repo.totpEnabled(ctx, userID)
+	// A second factor still applies. A previously trusted device is the only
+	// exception, and it is checked against this exact user above the session
+	// boundary rather than treated as a general bearer login token.
+	result, err := s.finishUserSignIn(ctx, user, userAgent, ip, trustedToken, AuthMethodMagicLink)
 	if err != nil {
 		return nil, err
 	}
-	if enabled {
-		challenge, err := s.issueTOTPChallenge(ctx, userID, userAgent, ip)
-		if err != nil {
-			return nil, err
-		}
-		return &SignInResult{User: user, Challenge: challenge}, nil
-	}
-
-	session, err := s.CreateSession(ctx, userID, userAgent, ip)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.repo.markSignedIn(ctx, userID); err != nil {
-		return nil, err
-	}
-
-	result := &SignInResult{User: user, Session: session}
 	_ = redirectTo // returned to the handler through the token row when needed
 	return result, nil
 }
@@ -323,6 +352,10 @@ func (s *Service) RedeemMagicLink(ctx context.Context, token, userAgent, ip stri
 // ------------------------------------------------------------------- TOTP
 
 func (s *Service) issueTOTPChallenge(ctx context.Context, userID, userAgent, ip string) (*Challenge, error) {
+	return s.issueTOTPChallengeWithMethod(ctx, userID, userAgent, ip, AuthMethodPassword)
+}
+
+func (s *Service) issueTOTPChallengeWithMethod(ctx context.Context, userID, userAgent, ip, authMethod string) (*Challenge, error) {
 	token, err := NewToken()
 	if err != nil {
 		return nil, err
@@ -330,7 +363,7 @@ func (s *Service) issueTOTPChallenge(ctx context.Context, userID, userAgent, ip 
 
 	expiresAt := time.Now().Add(totpChallengeLifetime)
 	err = s.repo.insertTOTPChallenge(
-		ctx, ids.New("tch"), userID, HashToken(token), userAgent, ip, expiresAt)
+		ctx, ids.New("tch"), userID, HashToken(token), userAgent, ip, authMethod, expiresAt)
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +435,10 @@ func (s *Service) DisableTOTP(ctx context.Context, userID, password string) erro
 	if !VerifyPassword(user.PasswordHash, password) {
 		return ErrPasswordMismatch
 	}
-	return s.repo.disableTOTP(ctx, userID)
+	if err := s.repo.disableTOTP(ctx, userID); err != nil {
+		return err
+	}
+	return s.repo.revokeAllTrustedDevices(ctx, userID)
 }
 
 // VerifyTOTPChallenge exchanges a challenge plus a code for a session.
@@ -410,7 +446,11 @@ func (s *Service) DisableTOTP(ctx context.Context, userID, password string) erro
 // Accepts either an authenticator code or an unused recovery code, because
 // "my phone is gone" is precisely when the second factor is most in the way.
 func (s *Service) VerifyTOTPChallenge(ctx context.Context, challengeToken, code, userAgent, ip string) (*SignInResult, error) {
-	userID, attempts, err := s.repo.loadTOTPChallenge(ctx, HashToken(challengeToken))
+	return s.VerifyTOTPChallengeWithTrust(ctx, challengeToken, code, userAgent, ip, false)
+}
+
+func (s *Service) VerifyTOTPChallengeWithTrust(ctx context.Context, challengeToken, code, userAgent, ip string, trustDevice bool) (*SignInResult, error) {
+	userID, attempts, authMethod, err := s.repo.loadTOTPChallenge(ctx, HashToken(challengeToken))
 	if err != nil {
 		return nil, err
 	}
@@ -447,15 +487,25 @@ func (s *Service) VerifyTOTPChallenge(ctx context.Context, challengeToken, code,
 	if err != nil {
 		return nil, err
 	}
-	session, err := s.CreateSession(ctx, userID, userAgent, ip)
+	var trusted *TrustedDeviceCredential
+	if trustDevice {
+		trusted, err = s.issueTrustedDevice(ctx, userID, userAgent, ip)
+		if err != nil {
+			return nil, err
+		}
+	}
+	session, err := s.CreateSessionWithMethod(ctx, userID, userAgent, ip, authMethod)
 	if err != nil {
+		if trusted != nil {
+			_ = s.repo.revokeTrustedDeviceByHash(ctx, userID, HashToken(trusted.Token))
+		}
 		return nil, err
 	}
 	if err := s.repo.markSignedIn(ctx, userID); err != nil {
 		return nil, err
 	}
 
-	return &SignInResult{User: user, Session: session}, nil
+	return &SignInResult{User: user, Session: session, TrustedDevice: trusted}, nil
 }
 
 // TOTPEnabled reports whether a user has a second factor configured.

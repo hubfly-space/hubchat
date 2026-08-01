@@ -2,7 +2,8 @@
 //
 // # Responsibilities
 //
-// Password hashing, magic links, OAuth adapters, TOTP, recovery codes, and session issue/rotate/revoke.
+// Password hashing, magic links, TOTP, recovery codes, sessions, and the
+// optional operator-configured OAuth/OIDC sign-in adapter.
 //
 // # Boundary
 //

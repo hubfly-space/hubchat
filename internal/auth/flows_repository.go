@@ -343,36 +343,36 @@ func (r *repository) disableTOTP(ctx context.Context, userID string) error {
 
 func (r *repository) insertTOTPChallenge(
 	ctx context.Context, id, userID string, tokenHash []byte,
-	userAgent, ip string, expiresAt time.Time,
+	userAgent, ip, authMethod string, expiresAt time.Time,
 ) error {
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO totp_challenges (id, user_id, token_hash, user_agent, ip, expires_at)
-		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, '')::inet, $6)
-	`, id, userID, tokenHash, userAgent, ip, expiresAt)
+		INSERT INTO totp_challenges (id, user_id, token_hash, user_agent, ip, auth_method, expires_at)
+		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, '')::inet, $6, $7)
+	`, id, userID, tokenHash, userAgent, ip, authMethod, expiresAt)
 	if err != nil {
 		return fmt.Errorf("auth: issue totp challenge: %w", err)
 	}
 	return nil
 }
 
-func (r *repository) loadTOTPChallenge(ctx context.Context, tokenHash []byte) (userID string, attempts int, err error) {
+func (r *repository) loadTOTPChallenge(ctx context.Context, tokenHash []byte) (userID string, attempts int, authMethod string, err error) {
 	var expiresAt time.Time
 	err = r.pool.QueryRow(ctx, `
-		SELECT user_id, attempts, expires_at
+		SELECT user_id, attempts, auth_method, expires_at
 		FROM totp_challenges
 		WHERE token_hash = $1 AND used_at IS NULL
-	`, tokenHash).Scan(&userID, &attempts, &expiresAt)
+	`, tokenHash).Scan(&userID, &attempts, &authMethod, &expiresAt)
 
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", 0, ErrTokenInvalid
+		return "", 0, "", ErrTokenInvalid
 	}
 	if err != nil {
-		return "", 0, fmt.Errorf("auth: load totp challenge: %w", err)
+		return "", 0, "", fmt.Errorf("auth: load totp challenge: %w", err)
 	}
 	if time.Now().After(expiresAt) {
-		return "", 0, ErrTokenExpired
+		return "", 0, "", ErrTokenExpired
 	}
-	return userID, attempts, nil
+	return userID, attempts, authMethod, nil
 }
 
 func (r *repository) recordTOTPAttempt(ctx context.Context, tokenHash []byte) error {
