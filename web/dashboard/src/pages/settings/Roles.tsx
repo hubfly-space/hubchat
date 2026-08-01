@@ -88,7 +88,7 @@ const ROLE_SUMMARY: Record<BuiltinMemberRole, string> = {
  * Roles and capabilities (§5.9).
  */
 export default function Roles() {
-  const roles = useQuery<{ data: RoleDefinition[] }>(["roles"], (signal) => api.get("/roles", { signal }));
+  const roles = useQuery<Paginated<RoleDefinition>>(["roles"], (signal) => api.get("/roles", { signal }));
   const members = useAllPages<Member>(["members", "lookup"], (cursor, signal) => api.get<Paginated<Member>>(`/members?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
   const [editor, setEditor] = useState<RoleDefinition | null | false>(false);
   const customRoles = roles.data?.data.filter((role) => !role.is_builtin) ?? [];

@@ -14,6 +14,7 @@ import {
   useMutation,
   useQuery,
   type Customer,
+  type Paginated,
   type Ticket,
 } from "@hubchat/shared";
 import { useState } from "react";
@@ -48,7 +49,7 @@ export function NewTicketDialog({
 
   const defaultInboxId = inboxId || inboxes.find((i) => i.is_default)?.id || inboxes[0]?.id || "";
 
-  const customerResults = useQuery<{ data: Customer[] }>(
+  const customerResults = useQuery<Paginated<Customer>>(
     customerQuery.trim().length > 1 ? ["customers", "search", customerQuery] : null,
     (signal) => api.get(`/customers?q=${encodeURIComponent(customerQuery)}&limit=5`, { signal }),
   );

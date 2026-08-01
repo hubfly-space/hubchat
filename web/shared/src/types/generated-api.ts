@@ -57,6 +57,25 @@ export type ApiConversation = {
   "created_at": ApiTimestamp;
 };
 
+export type ApiConversationLink = {
+  "id": ApiId;
+  "workspace_id": ApiId;
+  "source_id": ApiId;
+  "target_id": ApiId;
+  "relation": "related" | "duplicate_of" | "follow_up";
+  "created_by"?: string | null;
+  "created_at": ApiTimestamp;
+};
+
+export type ApiConversationLinkInput = {
+  "target_id": ApiId;
+  "relation"?: "related" | "duplicate_of" | "follow_up";
+};
+
+export type ApiConversationLinkPage = ApiPageOf & {
+  "data"?: ApiConversationLink[];
+};
+
 export type ApiConversationPage = ApiPageOf & {
   "data"?: ApiConversation[];
 };
@@ -709,6 +728,7 @@ export type ApiOperationId =
   | "getWidgetsIdVersions"
   | "getWorkspaceSettings"
   | "getWorkspaceUsage"
+  | "linkConversation"
   | "linkFeedbackSupportWork"
   | "listAnalyticsRollups"
   | "listAPIKeys"
@@ -720,6 +740,7 @@ export type ApiOperationId =
   | "listAutomationReplies"
   | "listAutomationRules"
   | "listChangelogEntries"
+  | "listConversationLinks"
   | "listConversationMessages"
   | "listConversations"
   | "listCustomers"
@@ -893,6 +914,7 @@ export type ApiOperationId =
   | "submitPublicForm"
   | "submitSurveyResponse"
   | "subscribeToFeedbackItem"
+  | "unlinkConversation"
   | "unlinkFeedbackSupportWork"
   | "unsubscribeFromFeedbackItem"
   | "updateArticle"
@@ -1418,6 +1440,7 @@ export type ApiOperationCatalog = {
   "getWorkspaceUsage": { method: "GET"; path: "/v1/workspace/usage"; request: unknown; response: {
   [key: string]: unknown;
 }; };
+  "linkConversation": { method: "POST"; path: "/v1/conversations/{id}/links"; request: ApiConversationLinkInput; response: ApiConversationLink; };
   "linkFeedbackSupportWork": { method: "POST"; path: "/v1/feedback/items/{id}/links"; request: {
   [key: string]: unknown;
 }; response: {
@@ -1449,6 +1472,7 @@ export type ApiOperationCatalog = {
   "listChangelogEntries": { method: "GET"; path: "/v1/changelog"; request: unknown; response: {
   [key: string]: unknown;
 }; };
+  "listConversationLinks": { method: "GET"; path: "/v1/conversations/{id}/links"; request: unknown; response: ApiConversationLinkPage; };
   "listConversationMessages": { method: "GET"; path: "/v1/conversations/{id}/messages"; request: unknown; response: ApiMessagePage; };
   "listConversations": { method: "GET"; path: "/v1/conversations"; request: unknown; response: ApiConversationPage; };
   "listCustomers": { method: "GET"; path: "/v1/customers"; request: unknown; response: ApiCustomerPage; };
@@ -2230,6 +2254,7 @@ export type ApiOperationCatalog = {
 }; response: {
   [key: string]: unknown;
 }; };
+  "unlinkConversation": { method: "DELETE"; path: "/v1/conversations/{id}/links/{targetID}"; request: unknown; response: unknown; };
   "unlinkFeedbackSupportWork": { method: "DELETE"; path: "/v1/feedback/items/{id}/links/{linkID}"; request: unknown; response: unknown; };
   "unsubscribeFromFeedbackItem": { method: "DELETE"; path: "/v1/public/feedback/{workspaceID}/items/{id}/subscription"; request: unknown; response: {
   [key: string]: unknown;

@@ -247,7 +247,7 @@ export default function TicketList() {
     () => [...new Set(list.items.map((t) => t.customer_id).filter((id): id is string => !!id))],
     [list.items],
   );
-  const customers = useQuery<{ data: Customer[] }>(
+  const customers = useQuery<Paginated<Customer>>(
     customerIds.length > 0 ? ["customers", "by-ids", customerIds.join(",")] : null,
     (signal) => api.get(`/customers?ids=${customerIds.join(",")}`, { signal }),
   );
