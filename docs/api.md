@@ -49,7 +49,13 @@ are skipped, while nullable assignee/author references are cleared safely.
 The checked-in document is generated from
 [`openapi.template.json`](../embedded/openapi.template.json) with
 `node scripts/generate-openapi.mjs`; `make openapi-check` validates the
-published artifact.
+published artifact. Generation also discovers every `/v1` route registered by
+the Go HTTP mux. Hand-authored template entries provide the detailed schemas,
+examples, and tags; newly added routes receive a deliberately conservative
+baseline operation so a shipped endpoint cannot be absent from the public
+contract. A baseline entry is a documentation signal, not permission to rely
+on an untyped payload: add the endpoint's request and response schemas to the
+template before publishing a stable integration.
 
 The embeddable browser contract is documented separately in
 [`widget-sdk.md`](widget-sdk.md), including the typed `window.Hubchat` API and
@@ -65,6 +71,13 @@ contract. GET /api/v1/surveys and
 GET /api/v1/widget/feedback/boards/{slug}/items accept limit and cursor;
 the widget endpoint also preserves the requested status, sort, search, and
 visitor identity across pages.
+
+Conversation message history is bounded as well. The authenticated and widget
+message endpoints return the newest window by default, expose `has_more` and
+`next_cursor` for older history, and accept the cursor opaquely as `cursor`.
+The existing `after` sequence parameter remains available for realtime HTTP
+fallback and resume; `before` is retained as a compatibility alias for older
+clients.
 
 Workspace archive exports support `POST /api/v1/portability/exports/preview`
 before `POST /api/v1/portability/exports`. The preview is read-only and returns

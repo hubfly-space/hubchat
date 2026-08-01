@@ -26,9 +26,12 @@ make dev-db
 make test-integration
 ```
 
-`make test-integration` defaults to `hubchat_test`, a dedicated database it
-creates, migrates, and then destroys data in — it never touches the development
-database (`hubchat`). Point it elsewhere only deliberately:
+`make test-integration` defaults to `hubchat_test`, a dedicated database. When
+the local Compose PostgreSQL service is running, the target creates that
+database if necessary; otherwise it assumes the URL already points at an
+externally provisioned test database. It migrates and then destroys test data
+only — it never touches the development database (`hubchat`). Point it
+elsewhere only deliberately:
 `export HUBCHAT_TEST_DATABASE_URL="postgres://hubchat:hubchat@127.0.0.1:5432/other?sslmode=disable"`.
 
 The suite runs one package at a time because each package resets the shared

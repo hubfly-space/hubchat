@@ -131,7 +131,7 @@ openapi-check: ## Validate the checked-in public API contract
 # The default targets hubchat_test, a dedicated database: the suite deletes
 # every workspace and user between cases, so it must never touch the
 # development database (hubchat) where local work lives.
-TEST_DATABASE_URL ?= postgres://hubchat:hubchat@127.0.0.1:5432/hubchat_test?sslmode=disable
+TEST_DATABASE_URL ?= $(if $(HUBCHAT_TEST_DATABASE_URL),$(HUBCHAT_TEST_DATABASE_URL),postgres://hubchat:hubchat@127.0.0.1:5432/hubchat_test?sslmode=disable)
 
 # -p 1 runs one package at a time. These tests share one database and reset it
 # between cases, so running two packages concurrently has them deleting each
@@ -139,9 +139,13 @@ TEST_DATABASE_URL ?= postgres://hubchat:hubchat@127.0.0.1:5432/hubchat_test?sslm
 # deadlocks that look like product bugs but are not.
 .PHONY: test-integration
 test-integration: ## Go tests that require a live PostgreSQL (make dev-db first)
-	@echo "==> preparing test database (create + migrate if needed)"
-	@docker compose exec -T postgres psql -U hubchat -tAc "SELECT 1 FROM pg_database WHERE datname='hubchat_test'" | grep -q 1 \
-		|| docker compose exec -T postgres createdb -U hubchat hubchat_test
+	@echo "==> preparing test database (migrate if needed)"
+	@if docker compose ps --services --filter status=running 2>/dev/null | grep -qx postgres; then \
+		docker compose exec -T postgres psql -U hubchat -tAc "SELECT 1 FROM pg_database WHERE datname='hubchat_test'" | grep -q 1 \
+			|| docker compose exec -T postgres createdb -U hubchat hubchat_test; \
+	else \
+		echo "==> using the externally provisioned PostgreSQL test database"; \
+	fi
 	HUBCHAT_DATABASE_URL="$(TEST_DATABASE_URL)" $(GO) run $(PKG) migrate
 	HUBCHAT_TEST_DATABASE_URL="$(TEST_DATABASE_URL)" \
 		$(GO) test ./... -race -count=1 -p 1 -tags=integration
