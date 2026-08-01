@@ -38,6 +38,44 @@
     "/v1/workspace/usage": {
       "get": { "$ref": "#/components/operations/get", "operationId": "getWorkspaceUsage", "tags": ["Analytics"] }
     },
+    "/v1/workspace/legal-holds": {
+      "get": {
+        "summary": "List workspace legal holds",
+        "operationId": "listWorkspaceLegalHolds",
+        "tags": ["Integrations"],
+        "parameters": [
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Cursor" },
+          { "name": "include_released", "in": "query", "schema": { "type": "boolean", "default": false } }
+        ],
+        "responses": {
+          "200": { "description": "Workspace legal hold history", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegalHoldPage" } } } },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "summary": "Place a workspace legal hold",
+        "operationId": "createWorkspaceLegalHold",
+        "tags": ["Integrations"],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegalHoldInput" } } } },
+        "responses": {
+          "201": { "description": "Legal hold created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegalHold" } } } },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/workspace/legal-holds/{id}/release": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "post": {
+        "summary": "Release a workspace legal hold",
+        "operationId": "releaseWorkspaceLegalHold",
+        "tags": ["Integrations"],
+        "responses": {
+          "200": { "description": "Legal hold released", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegalHold" } } } },
+          "default": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/v1/conversations": {
       "get": { "$ref": "#/components/operations/list" , "operationId": "listConversations", "tags": ["Conversations"] },
       "post": { "$ref": "#/components/operations/create", "operationId": "createConversation", "tags": ["Conversations"] }
@@ -85,6 +123,10 @@
       "parameters": [{ "$ref": "#/components/parameters/Id" }],
       "get": { "$ref": "#/components/operations/get", "operationId": "getCustomer", "tags": ["Customers"] },
       "patch": { "$ref": "#/components/operations/update", "operationId": "updateCustomer", "tags": ["Customers"] }
+    },
+    "/v1/customers/{id}/360": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "summary": "Get the bounded customer 360 context", "operationId": "getCustomer360", "tags": ["Customers"], "responses": { "200": { "description": "Recent cross-module customer context", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Customer360" } } } }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/v1/events": {
       "get": { "$ref": "#/components/operations/list", "operationId": "listEvents", "tags": ["Customers"] },
@@ -272,6 +314,9 @@
     "/v1/ops/summary": {
       "get": { "$ref": "#/components/operations/get", "operationId": "getOperationalSummary", "tags": ["Integrations"] }
     },
+    "/v1/ops/test-email": {
+      "post": { "$ref": "#/components/operations/create", "operationId": "sendOperationalTestEmail", "tags": ["Integrations"] }
+    },
     "/v1/sla/calendars/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/Id" }],
       "get": { "$ref": "#/components/operations/get", "operationId": "getSLACalendar", "tags": ["SLA"] },
@@ -342,12 +387,21 @@
     "/v1/analytics/rollups": {
       "get": { "$ref": "#/components/operations/list", "operationId": "listAnalyticsRollups", "tags": ["Analytics"] }
     },
+    "/v1/analytics/workload": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "getAnalyticsWorkload", "tags": ["Analytics"] }
+    },
     "/v1/analytics/export.csv": {
       "get": { "operationId": "exportAnalyticsCsv", "tags": ["Analytics"], "responses": { "200": { "description": "Workspace-scoped analytics CSV", "content": { "text/csv": { "schema": { "type": "string" } } } }, "default": { "$ref": "#/components/responses/Error" } } }
     },
     "/v1/reports": {
       "get": { "$ref": "#/components/operations/list", "operationId": "listReports", "tags": ["Analytics"] },
       "post": { "$ref": "#/components/operations/create", "operationId": "createReport", "tags": ["Analytics"] }
+    },
+    "/v1/reports/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/get", "operationId": "getReport", "tags": ["Analytics"] },
+      "patch": { "$ref": "#/components/operations/update", "operationId": "updateReport", "tags": ["Analytics"] },
+      "delete": { "$ref": "#/components/operations/delete", "operationId": "deleteReport", "tags": ["Analytics"] }
     },
     "/v1/reports/{id}/schedules": {
       "parameters": [{ "$ref": "#/components/parameters/Id" }],
@@ -462,6 +516,9 @@
       "updateTicket": { "request": "UpdateTicketRequest", "responses": { "200": "Ticket" } },
       "listCustomers": { "responses": { "200": "CustomerPage" } },
       "getCustomer": { "responses": { "200": "Customer" } },
+      "getCustomer360": { "responses": { "200": "Customer360" } },
+      "getOperationalSummary": { "responses": { "200": "OpsSummary" } },
+      "sendOperationalTestEmail": { "responses": { "202": "TestEmailResult" } },
       "updateCustomer": { "request": "UpdateCustomerRequest", "responses": { "200": "Customer" } },
       "getAttributeDefinitions": { "responses": { "200": "AttributeDefinitionPage" } },
       "getFieldDefinitions": { "responses": { "200": "FieldDefinitionPage" } },
@@ -473,7 +530,9 @@
       "createAutomationMacro": { "request": "MacroInput", "responses": { "201": "Macro" } },
       "getAutomationMacro": { "responses": { "200": "Macro" } },
       "updateAutomationMacro": { "request": "MacroInput", "responses": { "200": "Macro" } },
-      "useAutomationMacro": { "request": "MacroExecutionRequest", "responses": { "200": "MacroExecution" } }
+      "useAutomationMacro": { "request": "MacroExecutionRequest", "responses": { "200": "MacroExecution" } },
+      "getPortalTickets": { "responses": { "200": "PortalTicketPage" } },
+      "getPortalTicketsId": { "responses": { "200": "PortalTicketDetail" } }
     },
     "requestBodies": {
       "Json": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } }
@@ -496,6 +555,18 @@
       "Message": { "type": "object", "required": ["id", "client_id", "conversation_id", "workspace_id", "kind", "author_type", "author_id", "author_name", "author_avatar_url", "body", "event_type", "event_data", "attachments", "quoted_message_id", "delivery", "edited_at", "redacted_at", "sequence", "created_at"], "properties": { "id": { "$ref": "#/components/schemas/Id" }, "client_id": { "type": ["string", "null"] }, "conversation_id": { "$ref": "#/components/schemas/Id" }, "workspace_id": { "$ref": "#/components/schemas/Id" }, "kind": { "type": "string" }, "author_type": { "type": "string" }, "author_id": { "type": ["string", "null"] }, "author_name": { "type": "string" }, "author_avatar_url": { "type": ["string", "null"], "format": "uri" }, "body": { "type": "string" }, "event_type": { "type": ["string", "null"] }, "event_data": { "type": ["object", "null"], "additionalProperties": true }, "attachments": { "type": "array", "items": { "oneOf": [{ "$ref": "#/components/schemas/Attachment" }, { "type": "string" }] } }, "quoted_message_id": { "type": ["string", "null"] }, "delivery": { "type": "string" }, "edited_at": { "type": ["string", "null"], "format": "date-time" }, "redacted_at": { "type": ["string", "null"], "format": "date-time" }, "sequence": { "type": "integer", "format": "int64" }, "created_at": { "$ref": "#/components/schemas/Timestamp" } } },
       "Ticket": { "type": "object", "required": ["id", "workspace_id", "number", "prefix", "title", "description", "status", "priority", "type", "customer_id", "company_id", "inbox_id", "channel", "assignee_id", "team_id", "conversation_id", "parent_id", "child_ids", "linked_ticket_ids", "tag_ids", "field_values", "sla", "viewers", "due_at", "version", "created_at", "updated_at", "resolved_at", "closed_at"], "properties": { "id": { "$ref": "#/components/schemas/Id" }, "workspace_id": { "$ref": "#/components/schemas/Id" }, "number": { "type": "integer" }, "prefix": { "type": "string" }, "title": { "type": "string" }, "description": { "type": "string" }, "status": { "type": "string" }, "priority": { "type": "string" }, "type": { "type": ["string", "null"] }, "customer_id": { "type": ["string", "null"] }, "company_id": { "type": ["string", "null"] }, "inbox_id": { "$ref": "#/components/schemas/Id" }, "channel": { "type": "string" }, "assignee_id": { "type": ["string", "null"] }, "team_id": { "type": ["string", "null"] }, "conversation_id": { "type": ["string", "null"] }, "parent_id": { "type": ["string", "null"] }, "child_ids": { "type": "array", "items": { "$ref": "#/components/schemas/Id" } }, "linked_ticket_ids": { "type": "array", "items": { "$ref": "#/components/schemas/Id" } }, "tag_ids": { "type": "array", "items": { "$ref": "#/components/schemas/Id" } }, "field_values": { "type": "object", "additionalProperties": true }, "sla": { "anyOf": [{ "$ref": "#/components/schemas/ConversationSLA" }, { "type": "null" }] }, "viewers": { "type": "array", "items": { "$ref": "#/components/schemas/Id" } }, "due_at": { "type": ["string", "null"], "format": "date-time" }, "version": { "type": "integer" }, "created_at": { "$ref": "#/components/schemas/Timestamp" }, "updated_at": { "$ref": "#/components/schemas/Timestamp" }, "resolved_at": { "type": ["string", "null"], "format": "date-time" }, "closed_at": { "type": ["string", "null"], "format": "date-time" } } },
       "Customer": { "type": "object", "required": ["id", "workspace_id", "name", "email", "phone", "avatar_url", "external_id", "verification", "company_ids", "language", "timezone", "attributes", "masked_attribute_keys", "tag_ids", "owner_id", "presence", "current_url", "first_seen_at", "last_seen_at", "last_contacted_at", "version"], "properties": { "id": { "$ref": "#/components/schemas/Id" }, "workspace_id": { "$ref": "#/components/schemas/Id" }, "name": { "type": ["string", "null"] }, "email": { "type": ["string", "null"], "format": "email" }, "phone": { "type": ["string", "null"] }, "avatar_url": { "type": ["string", "null"], "format": "uri" }, "external_id": { "type": ["string", "null"] }, "verification": { "type": "string" }, "company_ids": { "type": "array", "items": { "$ref": "#/components/schemas/Id" } }, "language": { "type": ["string", "null"] }, "timezone": { "type": ["string", "null"] }, "attributes": { "type": "object", "additionalProperties": true }, "masked_attribute_keys": { "type": "array", "items": { "type": "string" } }, "tag_ids": { "type": "array", "items": { "$ref": "#/components/schemas/Id" } }, "owner_id": { "type": ["string", "null"] }, "presence": { "type": "string" }, "current_url": { "type": ["string", "null"], "format": "uri" }, "first_seen_at": { "$ref": "#/components/schemas/Timestamp" }, "last_seen_at": { "type": ["string", "null"], "format": "date-time" }, "last_contacted_at": { "type": ["string", "null"], "format": "date-time" }, "version": { "type": "integer" } } },
+      "Customer360": { "type": "object", "required": ["feedback", "feedback_truncated", "surveys", "surveys_truncated", "articles", "articles_truncated", "identities", "identities_truncated", "merges", "merges_truncated"], "properties": { "feedback": { "type": "array", "items": { "$ref": "#/components/schemas/Customer360Feedback" } }, "feedback_truncated": { "type": "boolean" }, "surveys": { "type": "array", "items": { "$ref": "#/components/schemas/Customer360Survey" } }, "surveys_truncated": { "type": "boolean" }, "articles": { "type": "array", "items": { "$ref": "#/components/schemas/Customer360Article" } }, "articles_truncated": { "type": "boolean" }, "identities": { "type": "array", "items": { "$ref": "#/components/schemas/Customer360Identity" } }, "identities_truncated": { "type": "boolean" }, "merges": { "type": "array", "items": { "$ref": "#/components/schemas/Customer360Merge" } }, "merges_truncated": { "type": "boolean" } } },
+      "Customer360Feedback": { "type": "object", "required": ["id", "title", "board_id", "board_name", "status", "vote_count", "comment_count", "created_at"], "properties": { "id": { "$ref": "#/components/schemas/Id" }, "title": { "type": "string" }, "board_id": { "$ref": "#/components/schemas/Id" }, "board_name": { "type": "string" }, "status": { "type": "string" }, "vote_count": { "type": "integer" }, "comment_count": { "type": "integer" }, "created_at": { "$ref": "#/components/schemas/Timestamp" } } },
+      "Customer360Survey": { "type": "object", "required": ["id", "survey_id", "survey_name", "survey_type"], "properties": { "id": { "$ref": "#/components/schemas/Id" }, "survey_id": { "$ref": "#/components/schemas/Id" }, "survey_name": { "type": "string" }, "survey_type": { "type": "string" }, "score": { "type": ["number", "null"] }, "comment": { "type": "string" }, "submitted_at": { "type": ["string", "null"], "format": "date-time" } } },
+      "Customer360Article": { "type": "object", "required": ["id", "article_id", "title", "slug", "helpful", "created_at"], "properties": { "id": { "$ref": "#/components/schemas/Id" }, "article_id": { "$ref": "#/components/schemas/Id" }, "title": { "type": "string" }, "slug": { "type": "string" }, "helpful": { "type": "boolean" }, "comment": { "type": "string" }, "created_at": { "$ref": "#/components/schemas/Timestamp" } } },
+      "Customer360Identity": { "type": "object", "required": ["id", "kind", "value", "is_primary", "created_at"], "properties": { "id": { "$ref": "#/components/schemas/Id" }, "kind": { "type": "string", "enum": ["email", "phone"] }, "value": { "type": "string" }, "verified_at": { "type": ["string", "null"], "format": "date-time" }, "is_primary": { "type": "boolean" }, "created_at": { "$ref": "#/components/schemas/Timestamp" } } },
+      "Customer360Merge": { "type": "object", "required": ["id", "winner_id", "loser_id", "moved_counts", "created_at"], "properties": { "id": { "$ref": "#/components/schemas/Id" }, "winner_id": { "$ref": "#/components/schemas/Id" }, "loser_id": { "$ref": "#/components/schemas/Id" }, "moved_counts": { "type": "object", "additionalProperties": true }, "reversible_until": { "type": ["string", "null"], "format": "date-time" }, "reversed_at": { "type": ["string", "null"], "format": "date-time" }, "created_at": { "$ref": "#/components/schemas/Timestamp" } } },
+      "LegalHold": { "type": "object", "required": ["id", "workspace_id", "category", "reason", "created_at"], "properties": { "id": { "$ref": "#/components/schemas/Id" }, "workspace_id": { "$ref": "#/components/schemas/Id" }, "category": { "type": "string", "enum": ["all", "events", "sessions", "webhooks", "surveys", "audit"] }, "reason": { "type": "string", "maxLength": 500 }, "created_by": { "anyOf": [{ "$ref": "#/components/schemas/Id" }, { "type": "null" }] }, "released_by": { "anyOf": [{ "$ref": "#/components/schemas/Id" }, { "type": "null" }] }, "created_at": { "$ref": "#/components/schemas/Timestamp" }, "released_at": { "type": ["string", "null"], "format": "date-time" } } },
+      "LegalHoldInput": { "type": "object", "required": ["category", "reason"], "additionalProperties": false, "properties": { "category": { "type": "string", "enum": ["all", "events", "sessions", "webhooks", "surveys", "audit"] }, "reason": { "type": "string", "minLength": 1, "maxLength": 500 } } },
+      "LegalHoldPage": { "allOf": [{ "$ref": "#/components/schemas/PageOf" }], "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/LegalHold" } } } },
+      "OpsCheck": { "type": "object", "required": ["id", "status", "detail"], "properties": { "id": { "type": "string" }, "status": { "type": "string", "enum": ["pass", "warn", "fail"] }, "detail": { "type": "string" } } },
+      "OpsSummary": { "type": "object", "required": ["jobs", "webhooks", "email", "storage", "realtime", "checks", "computed_at"], "properties": { "jobs": { "type": "object", "additionalProperties": true }, "webhooks": { "type": "object", "additionalProperties": true }, "email": { "type": "object", "additionalProperties": true }, "storage": { "type": "object", "additionalProperties": true }, "realtime": { "type": "object", "additionalProperties": true }, "checks": { "type": "array", "items": { "$ref": "#/components/schemas/OpsCheck" } }, "computed_at": { "$ref": "#/components/schemas/Timestamp" } } },
+      "TestEmailResult": { "type": "object", "required": ["job_id", "recipient", "status"], "properties": { "job_id": { "$ref": "#/components/schemas/Id" }, "recipient": { "type": "string", "format": "email" }, "status": { "type": "string", "enum": ["queued"] } } },
       "FieldValidation": { "type": "object", "properties": { "min": { "type": "number" }, "max": { "type": "number" }, "min_length": { "type": "integer" }, "max_length": { "type": "integer" }, "pattern": { "type": "string" } }, "additionalProperties": false },
       "AttributeDefinition": { "type": "object", "required": ["id", "workspace_id", "entity_type", "key", "label", "type", "description", "options", "allowed_sources", "required_capability", "sensitive", "searchable", "validation", "retention_days", "created_at"], "properties": { "id": { "$ref": "#/components/schemas/Id" }, "workspace_id": { "$ref": "#/components/schemas/Id" }, "entity_type": { "type": "string" }, "key": { "type": "string" }, "label": { "type": "string" }, "type": { "type": "string" }, "description": { "type": ["string", "null"] }, "options": { "type": "array", "items": { "type": "string" } }, "allowed_sources": { "type": "array", "items": { "type": "string" } }, "required_capability": { "type": ["string", "null"] }, "sensitive": { "type": "boolean" }, "searchable": { "type": "boolean" }, "validation": { "anyOf": [{ "$ref": "#/components/schemas/FieldValidation" }, { "type": "null" }] }, "retention_days": { "type": ["integer", "null"] }, "created_at": { "$ref": "#/components/schemas/Timestamp" } } },
       "FieldDefinition": { "type": "object", "required": ["id", "workspace_id", "key", "label", "type", "description", "options", "required", "visibility", "sensitive", "searchable", "allowed_sources", "required_capability", "validation", "created_at"], "properties": { "id": { "$ref": "#/components/schemas/Id" }, "workspace_id": { "$ref": "#/components/schemas/Id" }, "key": { "type": "string" }, "label": { "type": "string" }, "type": { "type": "string" }, "description": { "type": ["string", "null"] }, "options": { "type": ["array", "null"], "items": { "type": "string" } }, "required": { "type": "boolean" }, "visibility": { "type": "string" }, "sensitive": { "type": "boolean" }, "searchable": { "type": "boolean" }, "allowed_sources": { "type": "array", "items": { "type": "string" } }, "required_capability": { "type": ["string", "null"] }, "validation": { "anyOf": [{ "$ref": "#/components/schemas/FieldValidation" }, { "type": "null" }] }, "created_at": { "$ref": "#/components/schemas/Timestamp" } } },
@@ -507,6 +578,10 @@
       "SavedReplyPage": { "allOf": [{ "$ref": "#/components/schemas/PageOf" }], "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/SavedReply" } } } },
       "AttributeDefinitionPage": { "allOf": [{ "$ref": "#/components/schemas/PageOf" }], "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/AttributeDefinition" } } } },
       "FieldDefinitionPage": { "allOf": [{ "$ref": "#/components/schemas/PageOf" }], "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/FieldDefinition" } } } },
+      "PortalTicket": { "type": "object", "required": ["id", "number", "prefix", "title", "description", "status", "priority", "conversation_id", "created_at", "updated_at"], "properties": { "id": { "$ref": "#/components/schemas/Id" }, "number": { "type": "integer" }, "prefix": { "type": "string" }, "title": { "type": "string" }, "description": { "type": "string" }, "status": { "type": "string" }, "priority": { "type": "string" }, "conversation_id": { "type": ["string", "null"] }, "created_at": { "$ref": "#/components/schemas/Timestamp" }, "updated_at": { "$ref": "#/components/schemas/Timestamp" } } },
+      "PortalMessage": { "type": "object", "required": ["id", "conversation_id", "kind", "author_type", "author_id", "author_name", "body", "delivery", "sequence", "edited_at", "created_at", "attachments"], "properties": { "id": { "$ref": "#/components/schemas/Id" }, "conversation_id": { "$ref": "#/components/schemas/Id" }, "kind": { "type": "string" }, "author_type": { "type": "string" }, "author_id": { "type": ["string", "null"] }, "author_name": { "type": "string" }, "body": { "type": "string" }, "delivery": { "type": "string" }, "sequence": { "type": "integer", "format": "int64" }, "edited_at": { "type": ["string", "null"], "format": "date-time" }, "created_at": { "$ref": "#/components/schemas/Timestamp" }, "attachments": { "type": "array", "items": { "$ref": "#/components/schemas/Attachment" } } } },
+      "PortalTicketPage": { "allOf": [{ "$ref": "#/components/schemas/PageOf" }], "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/PortalTicket" } } } },
+      "PortalTicketDetail": { "type": "object", "required": ["ticket", "messages", "has_more", "next_cursor"], "properties": { "ticket": { "$ref": "#/components/schemas/PortalTicket" }, "messages": { "type": "array", "items": { "$ref": "#/components/schemas/PortalMessage" } }, "has_more": { "type": "boolean" }, "next_cursor": { "type": ["string", "null"] } } },
       "CreateConversationRequest": { "type": "object", "required": ["inbox_id", "channel", "body"], "properties": { "inbox_id": { "$ref": "#/components/schemas/Id" }, "channel": { "type": "string" }, "subject": { "type": ["string", "null"] }, "customer_id": { "type": ["string", "null"] }, "author_name": { "type": "string" }, "body": { "type": "string" }, "file_ids": { "type": "array", "items": { "$ref": "#/components/schemas/Id" } } } },
       "CreateConversationMessageRequest": { "type": "object", "required": ["body"], "properties": { "kind": { "type": "string", "enum": ["reply", "note"] }, "author_name": { "type": "string" }, "body": { "type": "string" }, "file_ids": { "type": "array", "items": { "$ref": "#/components/schemas/Id" } } } },
       "CreateTicketRequest": { "type": "object", "required": ["title", "inbox_id"], "properties": { "title": { "type": "string" }, "description": { "type": "string" }, "type": { "type": ["string", "null"] }, "priority": { "type": "string", "default": "normal" }, "customer_id": { "type": ["string", "null"] }, "company_id": { "type": ["string", "null"] }, "inbox_id": { "$ref": "#/components/schemas/Id" }, "channel": { "type": "string", "default": "manual" }, "assignee_id": { "type": ["string", "null"] }, "team_id": { "type": ["string", "null"] }, "conversation_id": { "type": ["string", "null"] }, "parent_id": { "type": ["string", "null"] }, "due_at": { "type": ["string", "null"], "format": "date-time" }, "field_values": { "type": "object", "additionalProperties": true } } },

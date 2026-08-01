@@ -14,7 +14,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-var ErrInvalidReportName = errors.New("analytics: report name is required")
+var (
+	ErrInvalidReportName = errors.New("analytics: report name is required")
+	ErrReportForbidden   = errors.New("analytics: report is not visible to this role")
+)
 
 type Service struct{ pool *database.Pool }
 type MetricDefinition struct {
@@ -35,6 +38,7 @@ type Summary struct {
 	BacklogConversations  int64     `json:"backlog_conversations"`
 	BacklogTickets        int64     `json:"backlog_tickets"`
 	FirstResponseSeconds  float64   `json:"first_response_seconds"`
+	NextResponseSeconds   float64   `json:"next_response_seconds"`
 	ResolutionSeconds     float64   `json:"resolution_seconds"`
 	SLACompliancePercent  float64   `json:"sla_compliance_percent"`
 	SLAInstances          int64     `json:"sla_instances"`
@@ -92,12 +96,28 @@ var metricDefinitions = []MetricDefinition{
 	{Metric: "conversations.resolved", Label: "Conversations resolved", Definition: "Conversations transitioned to resolved in the selected period."},
 	{Metric: "tickets.resolved", Label: "Tickets resolved", Definition: "Tickets transitioned to resolved or closed in the selected period."},
 	{Metric: "support.first_response_seconds", Label: "First response", Definition: "Average elapsed wall-clock time from the first customer reply to the first agent reply in each conversation.", Unit: "seconds"},
+	{Metric: "support.next_response_seconds", Label: "Next response", Definition: "Average elapsed wall-clock time from each customer reply to the next agent reply in the selected period.", Unit: "seconds"},
 	{Metric: "support.resolution_seconds", Label: "Resolution time", Definition: "Average elapsed wall-clock time from ticket creation to its first resolution timestamp.", Unit: "seconds"},
 	{Metric: "sla.compliance_percent", Label: "SLA compliance", Definition: "SLA instances satisfied divided by all met or breached instances in the selected period.", Unit: "percent"},
 	{Metric: "support.backlog", Label: "Backlog", Definition: "Open conversations and tickets at the end of the selected period."},
+	{Metric: "conversations.reopened", Label: "Conversations reopened", Definition: "Conversations moved from resolved back to an active state in the selected period."},
+	{Metric: "tickets.reopened", Label: "Tickets reopened", Definition: "Tickets moved from resolved or closed back to an active state in the selected period."},
+	{Metric: "forms.submitted", Label: "Forms submitted", Definition: "Form submissions recorded in the selected period."},
+	{Metric: "sla.approaching", Label: "SLA warnings", Definition: "SLA instances that entered their warning window in the selected period."},
+	{Metric: "sla.breached", Label: "SLA breaches", Definition: "SLA instances that breached their target in the selected period."},
 	{Metric: "surfaces.widget.impressions", Label: "Widget impressions", Definition: "Widget mounts recorded by the visitor event channel in the selected period."},
 	{Metric: "surfaces.widget.opens", Label: "Widget opens", Definition: "Widget panels opened by visitors in the selected period."},
 	{Metric: "surfaces.widget.articles_viewed", Label: "Widget article views", Definition: "Knowledge-base articles opened inside the widget in the selected period."},
+	{Metric: "surfaces.widget.conversations_started", Label: "Widget conversations", Definition: "Conversations started from the widget in the selected period."},
+	{Metric: "surfaces.portal.conversations_started", Label: "Portal conversations", Definition: "Conversations started from the portal in the selected period."},
+	{Metric: "knowledgebase.article_views", Label: "Article views", Definition: "Published knowledge-base article views recorded by the portal or widget surface in the selected period."},
+	{Metric: "knowledgebase.searches", Label: "Knowledge-base searches", Definition: "Public knowledge-base searches recorded in the selected period."},
+	{Metric: "knowledgebase.search_no_results", Label: "No-result searches", Definition: "Public knowledge-base searches that returned no articles in the selected period."},
+	{Metric: "knowledgebase.article_helpful", Label: "Helpful article votes", Definition: "Positive helpfulness responses recorded for published articles in the selected period."},
+	{Metric: "knowledgebase.article_unhelpful", Label: "Unhelpful article votes", Definition: "Negative helpfulness responses recorded for published articles in the selected period."},
+	{Metric: "feedback.items_created", Label: "Feedback items created", Definition: "Feedback items submitted in the selected period."},
+	{Metric: "feedback.votes", Label: "Feedback votes", Definition: "Customer votes recorded on feedback items in the selected period."},
+	{Metric: "feedback.status_changed", Label: "Feedback status changes", Definition: "Feedback status transitions recorded in the selected period, grouped by destination status."},
 	{Metric: "surveys.responses", Label: "Survey responses", Definition: "Completed survey responses recorded in the selected period."},
 	{Metric: "surveys.csat", Label: "CSAT", Definition: "Average score from completed CSAT survey responses in the selected period."},
 	{Metric: "surveys.ces", Label: "CES", Definition: "Average score from completed CES survey responses in the selected period."},
@@ -156,6 +176,22 @@ func (s *Service) Summary(ctx context.Context, workspaceID string, from, to time
 		) reply ON true
 	`, workspaceID, from, to).Scan(&result.FirstResponseSeconds); err != nil {
 		return nil, fmt.Errorf("analytics: first response: %w", err)
+	}
+	if err := s.pool.QueryRow(ctx, `
+		SELECT COALESCE(avg(extract(epoch FROM (reply.created_at - customer_message.created_at))),0)::float8
+		FROM messages customer_message
+		JOIN LATERAL (
+			SELECT created_at FROM messages m
+			WHERE m.workspace_id=$1 AND m.conversation_id=customer_message.conversation_id
+			  AND m.kind='reply' AND m.author_type IN ('agent','automation')
+			  AND m.created_at > customer_message.created_at
+			ORDER BY m.created_at, m.id LIMIT 1
+		) reply ON true
+		WHERE customer_message.workspace_id=$1
+		  AND customer_message.kind='reply' AND customer_message.author_type='customer'
+		  AND customer_message.created_at >= $2 AND customer_message.created_at < $3
+	`, workspaceID, from, to).Scan(&result.NextResponseSeconds); err != nil {
+		return nil, fmt.Errorf("analytics: next response: %w", err)
 	}
 	if err := s.pool.QueryRow(ctx, `
 		SELECT COALESCE(avg(extract(epoch FROM (first_resolved_at - created_at))),0)::float8
@@ -321,9 +357,13 @@ type eventMetric struct {
 
 func metricsForEvent(record events.Record) []eventMetric {
 	var data struct {
-		Channel    string `json:"channel"`
-		AuthorType string `json:"author_type"`
-		Type       string `json:"type"`
+		Channel     string `json:"channel"`
+		AuthorType  string `json:"author_type"`
+		Type        string `json:"type"`
+		Surface     string `json:"surface"`
+		ResultCount int    `json:"result_count"`
+		Helpful     bool   `json:"helpful"`
+		To          string `json:"to"`
 	}
 	_ = json.Unmarshal(record.Data, &data)
 	dimensions := map[string]any{}
@@ -365,7 +405,33 @@ func metricsForEvent(record events.Record) []eventMetric {
 		}
 		return result
 	case events.FeedbackCreated:
-		return []eventMetric{{name: "feedback.created", dimensions: dimensions}}
+		return []eventMetric{{name: "feedback.items_created", dimensions: dimensions}}
+	case events.FeedbackVoteRecorded:
+		return []eventMetric{{name: "feedback.votes", dimensions: dimensions}}
+	case events.FeedbackStatusChanged:
+		if data.To != "" {
+			dimensions["status"] = data.To
+		}
+		return []eventMetric{{name: "feedback.status_changed", dimensions: dimensions}}
+	case events.ArticleViewed:
+		if data.Surface != "" {
+			dimensions["surface"] = data.Surface
+		}
+		return []eventMetric{{name: "knowledgebase.article_views", dimensions: dimensions}}
+	case events.ArticleFeedbackRecorded:
+		if data.Helpful {
+			return []eventMetric{{name: "knowledgebase.article_helpful", dimensions: dimensions}}
+		}
+		return []eventMetric{{name: "knowledgebase.article_unhelpful", dimensions: dimensions}}
+	case events.ArticleSearchRecorded:
+		if data.Surface != "" {
+			dimensions["surface"] = data.Surface
+		}
+		result := []eventMetric{{name: "knowledgebase.searches", dimensions: dimensions}}
+		if data.ResultCount == 0 {
+			result = append(result, eventMetric{name: "knowledgebase.search_no_results", dimensions: dimensions})
+		}
+		return result
 	case events.SurveyResponseCreated:
 		return []eventMetric{{name: "surveys.responses", dimensions: dimensions}}
 	case events.FormSubmitted:
@@ -432,13 +498,26 @@ func (s *Service) ListReports(ctx context.Context, workspaceID string) ([]Report
 // ListReportsPage returns saved reports in stable name/id order. The cursor
 // uses the same two fields so reports with identical names are not skipped.
 func (s *Service) ListReportsPage(ctx context.Context, workspaceID, beforeName, beforeID string, limit int) ([]Report, error) {
+	return s.listReportsPage(ctx, workspaceID, "", "", true, beforeName, beforeID, limit)
+}
+
+// ListReportsPageForActor applies the report's optional role visibility to a
+// member-facing list. Owners retain access to every report in their workspace;
+// other roles see reports explicitly shared with their role, reports owned by
+// them, and reports with no visibility restriction.
+func (s *Service) ListReportsPageForActor(ctx context.Context, workspaceID, role, memberID, beforeName, beforeID string, limit int) ([]Report, error) {
+	return s.listReportsPage(ctx, workspaceID, role, memberID, false, beforeName, beforeID, limit)
+}
+
+func (s *Service) listReportsPage(ctx context.Context, workspaceID, role, memberID string, includeAll bool, beforeName, beforeID string, limit int) ([]Report, error) {
 	if limit <= 0 || limit > 201 {
 		limit = 200
 	}
 	query := `SELECT id,workspace_id,name,coalesce(description,''),definition,date_range,coalesce(timezone,''),visible_to_roles,owner_id,created_at,updated_at FROM saved_reports WHERE workspace_id=$1`
-	args := []any{workspaceID}
+	args := []any{workspaceID, includeAll, role, memberID}
+	query += ` AND ($2::boolean OR cardinality(visible_to_roles)=0 OR $3=ANY(visible_to_roles) OR owner_id=$4)`
 	if beforeName != "" || beforeID != "" {
-		query += ` AND (name,id) > ($2,$3)`
+		query += fmt.Sprintf(` AND (name,id) > ($%d,$%d)`, len(args)+1, len(args)+2)
 		args = append(args, beforeName, beforeID)
 	}
 	query += ` ORDER BY name ASC,id ASC LIMIT $` + fmt.Sprint(len(args)+1)
@@ -457,6 +536,32 @@ func (s *Service) ListReportsPage(ctx context.Context, workspaceID, beforeName, 
 		result = append(result, *item)
 	}
 	return result, rows.Err()
+}
+
+// GetReportForActor returns a report only when the caller can see it. The
+// workspace predicate remains in GetReport, so a foreign id is never revealed
+// as a visibility decision.
+func (s *Service) GetReportForActor(ctx context.Context, workspaceID, role, memberID, id string) (*Report, error) {
+	item, err := s.GetReport(ctx, workspaceID, id)
+	if err != nil {
+		return nil, err
+	}
+	if !reportVisibleToActor(item, role, memberID) {
+		return nil, ErrReportForbidden
+	}
+	return item, nil
+}
+
+func reportVisibleToActor(item *Report, role, memberID string) bool {
+	if item == nil || role == "owner" || len(item.VisibleToRoles) == 0 || item.OwnerID != nil && *item.OwnerID == memberID {
+		return item != nil
+	}
+	for _, visibleRole := range item.VisibleToRoles {
+		if visibleRole == role {
+			return true
+		}
+	}
+	return false
 }
 func (s *Service) CreateReport(ctx context.Context, workspaceID, ownerID string, input ReportInput) (*Report, error) {
 	if strings.TrimSpace(input.Name) == "" {
@@ -484,6 +589,46 @@ func (s *Service) CreateReport(ctx context.Context, workspaceID, ownerID string,
 func (s *Service) GetReport(ctx context.Context, workspaceID, id string) (*Report, error) {
 	item, err := scanReport(s.pool.QueryRow(ctx, `SELECT id,workspace_id,name,coalesce(description,''),definition,date_range,coalesce(timezone,''),visible_to_roles,owner_id,created_at,updated_at FROM saved_reports WHERE workspace_id=$1 AND id=$2`, workspaceID, id))
 	return item, err
+}
+
+// UpdateReport replaces the saved report definition within one workspace.
+// Schedules remain attached to the stable report id and therefore continue to
+// use the new definition on their next run.
+func (s *Service) UpdateReport(ctx context.Context, workspaceID, id string, input ReportInput) (*Report, error) {
+	if strings.TrimSpace(input.Name) == "" {
+		return nil, ErrInvalidReportName
+	}
+	if input.DateRange == "" {
+		input.DateRange = "last_30_days"
+	}
+	definition, _ := json.Marshal(input.Definition)
+	visibleToRoles := input.VisibleToRoles
+	if visibleToRoles == nil {
+		visibleToRoles = []string{}
+	}
+	tag, err := s.pool.Exec(ctx, `UPDATE saved_reports SET name=$3,description=NULLIF($4,''),definition=$5::jsonb,date_range=$6,timezone=NULLIF($7,''),visible_to_roles=$8,updated_at=now() WHERE workspace_id=$1 AND id=$2`,
+		workspaceID, id, strings.TrimSpace(input.Name), strings.TrimSpace(input.Description), definition, input.DateRange, strings.TrimSpace(input.Timezone), visibleToRoles)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, pgx.ErrNoRows
+	}
+	return s.GetReport(ctx, workspaceID, id)
+}
+
+// DeleteReport removes a workspace-owned saved report and its schedules. The
+// caller must still provide an explicit UI confirmation before reaching this
+// route; the service keeps the tenant predicate as the final boundary.
+func (s *Service) DeleteReport(ctx context.Context, workspaceID, id string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM saved_reports WHERE workspace_id=$1 AND id=$2`, workspaceID, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }
 func scanReport(row interface{ Scan(...any) error }) (*Report, error) {
 	var item Report
