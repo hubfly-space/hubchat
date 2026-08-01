@@ -213,6 +213,11 @@ func (r *repository) retentionSweep(ctx context.Context) (eventsDeleted, session
 		USING workspaces w
 		WHERE ce.workspace_id = w.id
 		  AND coalesce((w.settings #>> '{privacy,retention_days,events}')::int, 0) > 0
+		  AND NOT EXISTS (
+				SELECT 1 FROM workspace_legal_holds lh
+				WHERE lh.workspace_id = w.id AND lh.released_at IS NULL
+				  AND lh.category IN ('all', 'events')
+			)
 		  AND ce.occurred_at < now() - make_interval(days => (w.settings #>> '{privacy,retention_days,events}')::int)
 	`)
 	if err != nil {
@@ -224,6 +229,11 @@ func (r *repository) retentionSweep(ctx context.Context) (eventsDeleted, session
 		USING workspaces w
 		WHERE cs.workspace_id = w.id
 		  AND coalesce((w.settings #>> '{privacy,retention_days,sessions}')::int, 0) > 0
+		  AND NOT EXISTS (
+				SELECT 1 FROM workspace_legal_holds lh
+				WHERE lh.workspace_id = w.id AND lh.released_at IS NULL
+				  AND lh.category IN ('all', 'sessions')
+			)
 		  AND cs.started_at < now() - make_interval(days => (w.settings #>> '{privacy,retention_days,sessions}')::int)
 	`)
 	if err != nil {
