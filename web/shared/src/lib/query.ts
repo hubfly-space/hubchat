@@ -437,5 +437,42 @@ export function useInfinite<T>(
   };
 }
 
+/**
+ * Loads every cursor page for a bounded lookup collection.
+ *
+ * This is for selectors and cross-reference filters (members, teams, tags,
+ * inboxes), not primary tables: those should keep their explicit Load more
+ * control. The helper preserves the same cancellation and error behavior as
+ * useInfinite while preventing a paginated endpoint from being mistaken for
+ * a single unbounded response by a lookup control.
+ */
+export function useAllPages<T>(
+  key: QueryKey | null,
+  fetchPage: (cursor: string | null, signal: AbortSignal) => Promise<Paginated<T>>,
+  options: UseQueryOptions = {},
+) {
+  const page = useInfinite(key, fetchPage, options);
+  const [additionalError, setAdditionalError] = useState<unknown>(null);
+  const pageFetchNext = page.fetchNext;
+
+  const fetchNext = useCallback(async () => {
+    try {
+      await pageFetchNext();
+    } catch (error) {
+      setAdditionalError(error);
+    }
+  }, [pageFetchNext]);
+
+  useEffect(() => {
+    if (page.error || additionalError || !page.hasMore || page.isFetching) return;
+    void fetchNext();
+  }, [additionalError, fetchNext, page.error, page.hasMore, page.isFetching]);
+
+  return {
+    ...page,
+    error: page.error ?? additionalError,
+  };
+}
+
 /** Re-exported so callers can narrow on it without importing the client too. */
 export { ApiError };
