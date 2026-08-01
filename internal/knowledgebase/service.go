@@ -94,6 +94,18 @@ type Article struct {
 	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
+type ArticleRevision struct {
+	ID        string    `json:"id"`
+	ArticleID string    `json:"article_id"`
+	Version   int       `json:"version"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	Excerpt   string    `json:"excerpt"`
+	EditedBy  *string   `json:"edited_by,omitempty"`
+	Note      *string   `json:"note,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type ChangelogEntry struct {
 	ID             string     `json:"id"`
 	WorkspaceID    string     `json:"workspace_id"`
@@ -355,6 +367,36 @@ func (s *Service) GetArticle(ctx context.Context, workspaceID, id string) (*Arti
 		return nil, ErrNotFound
 	}
 	return &items[0], nil
+}
+
+func (s *Service) ListArticleRevisionsPage(ctx context.Context, workspaceID, articleID string, before time.Time, beforeID string, limit int) ([]ArticleRevision, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := "a.workspace_id=$1 AND r.article_id=$2"
+	args := []any{workspaceID, articleID}
+	if !before.IsZero() {
+		where += " AND (r.created_at,r.id)<($3,$4)"
+		args = append(args, before, beforeID)
+	}
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, `
+		SELECT r.id, r.article_id, r.version, r.title, r.body, r.excerpt, r.edited_by, r.note, r.created_at
+		FROM article_revisions r JOIN articles a ON a.id=r.article_id
+		WHERE `+where+` ORDER BY r.created_at DESC, r.id DESC LIMIT $`+fmt.Sprint(len(args)), args...)
+	if err != nil {
+		return nil, fmt.Errorf("knowledgebase: list article revisions: %w", err)
+	}
+	defer rows.Close()
+	revisions := make([]ArticleRevision, 0)
+	for rows.Next() {
+		var revision ArticleRevision
+		if err := rows.Scan(&revision.ID, &revision.ArticleID, &revision.Version, &revision.Title, &revision.Body, &revision.Excerpt, &revision.EditedBy, &revision.Note, &revision.CreatedAt); err != nil {
+			return nil, err
+		}
+		revisions = append(revisions, revision)
+	}
+	return revisions, rows.Err()
 }
 
 // FindArticleBySlug resolves an article inside one workspace and knowledge

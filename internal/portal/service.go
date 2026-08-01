@@ -193,6 +193,45 @@ func (s *Service) List(ctx context.Context, workspaceID string) ([]Portal, error
 	return out, rows.Err()
 }
 
+// ListPage bounds the portal administration directory. Name and id are used
+// as the cursor because the Portal wire model intentionally does not expose
+// the internal creation timestamp.
+func (s *Service) ListPage(ctx context.Context, workspaceID, beforeName, beforeID string, limit int) ([]Portal, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := "workspace_id = $1"
+	args := []any{workspaceID}
+	if beforeName != "" {
+		where += " AND (name,id) > ($2,$3)"
+		args = append(args, beforeName, beforeID)
+	}
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, workspace_id, name, subdomain::text, theme, features,
+		       auth_methods, permissions, default_inbox_id, default_language, enabled
+		FROM portals WHERE `+where+` ORDER BY name ASC, id ASC LIMIT $`+fmt.Sprint(len(args)), args...)
+	if err != nil {
+		return nil, fmt.Errorf("portal: list page: %w", err)
+	}
+	defer rows.Close()
+	out := []Portal{}
+	for rows.Next() {
+		p, err := scanPortal(rows)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.loadNavigation(ctx, p); err != nil {
+			return nil, err
+		}
+		if err := s.loadDomains(ctx, p); err != nil {
+			return nil, err
+		}
+		out = append(out, *p)
+	}
+	return out, rows.Err()
+}
+
 func (s *Service) Get(ctx context.Context, workspaceID, id string) (*Portal, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, workspace_id, name, subdomain::text, theme, features,
@@ -445,6 +484,39 @@ func (s *Service) ListDomains(ctx context.Context, workspaceID, portalID string)
 		return nil, err
 	}
 	return p.Domains, nil
+}
+
+// ListDomainsPage bounds the portal domain administration directory. Domains
+// are normalized before insertion, so domain and id provide a stable,
+// workspace-scoped cursor without exposing the internal creation timestamp.
+func (s *Service) ListDomainsPage(ctx context.Context, workspaceID, portalID, beforeDomain, beforeID string, limit int) ([]Domain, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := "p.workspace_id = $1 AND d.portal_id = $2"
+	args := []any{workspaceID, portalID}
+	if beforeDomain != "" {
+		where += " AND (d.domain::text,d.id) > ($3,$4)"
+		args = append(args, beforeDomain, beforeID)
+	}
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, `
+		SELECT d.id, d.portal_id, d.domain::text, d.status, d.verification_token, d.verified_at, d.last_checked_at
+		FROM portal_domains d JOIN portals p ON p.id = d.portal_id
+		WHERE `+where+` ORDER BY d.domain ASC, d.id ASC LIMIT $`+fmt.Sprint(len(args)), args...)
+	if err != nil {
+		return nil, fmt.Errorf("portal: list domain page: %w", err)
+	}
+	defer rows.Close()
+	out := []Domain{}
+	for rows.Next() {
+		var item Domain
+		if err := rows.Scan(&item.ID, &item.PortalID, &item.Domain, &item.Status, &item.VerificationToken, &item.VerifiedAt, &item.LastCheckedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
 }
 
 func (s *Service) AddDomain(ctx context.Context, workspaceID, portalID, value string) (*Domain, error) {
@@ -857,7 +929,7 @@ func (s *Service) Tickets(ctx context.Context, session *Session, filter TicketFi
 		filter.Limit = 25
 	}
 	if filter.Before.IsZero() {
-		filter.Before = time.Now().Add(time.Hour)
+		filter.Before = time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
 	}
 	companyWide := permission(session.Portal, "view_company_tickets")
 	rows, err := s.pool.Query(ctx, `

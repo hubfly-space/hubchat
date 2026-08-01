@@ -157,7 +157,7 @@ func (s *Service) List(ctx context.Context, workspaceID, memberID string, filter
 		filter.Limit = 50
 	}
 	if filter.Before.IsZero() {
-		filter.Before = time.Now().Add(time.Hour)
+		filter.Before = time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
 	}
 	where := `workspace_id = $1 AND member_id = $2 AND (created_at, id) < ($3, $4)`
 	if filter.Unread {

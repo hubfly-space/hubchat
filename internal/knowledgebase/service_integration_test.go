@@ -122,3 +122,61 @@ func TestListChangelogPageIsWorkspaceScopedAndStable(t *testing.T) {
 		t.Fatalf("second changelog page = %+v", second)
 	}
 }
+
+func TestListArticleRevisionsPageIsStableAndWorkspaceScoped(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+
+	userID := ids.New(ids.PrefixUser)
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id,name,email,password_hash,email_verified_at) VALUES ($1,'KB revision owner',$2,'x',now())`, userID, userID+"@example.com"); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	workspaceService := workspace.New(pool, events.New(pool), audit.New(pool))
+	createdWorkspace, err := workspaceService.Bootstrap(ctx, userID, "Revision workspace", "revisions-"+userID[len(userID)-10:])
+	if err != nil {
+		t.Fatalf("bootstrap workspace: %v", err)
+	}
+	actor, err := workspaceService.ActorForUser(ctx, createdWorkspace.ID, userID)
+	if err != nil {
+		t.Fatalf("resolve actor: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id,name,slug) VALUES ('wrk_revision_other','Other revisions','other-revisions')`); err != nil {
+		t.Fatalf("seed other workspace: %v", err)
+	}
+
+	service := New(pool, Options{})
+	kb, err := service.CreateKnowledgeBase(ctx, createdWorkspace.ID, KnowledgeBaseInput{Name: "Help", Slug: "help"})
+	if err != nil {
+		t.Fatalf("create knowledge base: %v", err)
+	}
+	article, err := service.SaveArticle(ctx, createdWorkspace.ID, actor.MemberID, "", ArticleInput{KnowledgeBaseID: kb.ID, Title: "First title", Slug: "revision-article", Body: "First body", Language: "en"})
+	if err != nil {
+		t.Fatalf("create article: %v", err)
+	}
+	if _, err := service.SaveArticle(ctx, createdWorkspace.ID, actor.MemberID, article.ID, ArticleInput{KnowledgeBaseID: kb.ID, Title: "Second title", Slug: "revision-article", Body: "Second body", Language: "en"}); err != nil {
+		t.Fatalf("update article: %v", err)
+	}
+
+	first, err := service.ListArticleRevisionsPage(ctx, createdWorkspace.ID, article.ID, time.Time{}, "", 1)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first revision page = %d rows, err=%v", len(first), err)
+	}
+	if first[0].Version != 2 || first[0].Title != "Second title" {
+		t.Fatalf("first revision = %+v, want latest version", first[0])
+	}
+	second, err := service.ListArticleRevisionsPage(ctx, createdWorkspace.ID, article.ID, first[0].CreatedAt, first[0].ID, 1)
+	if err != nil || len(second) != 1 {
+		t.Fatalf("second revision page = %d rows, err=%v", len(second), err)
+	}
+	if second[0].Version != 1 || second[0].Title != "First title" {
+		t.Fatalf("second revision = %+v, want original version", second[0])
+	}
+	crossWorkspace, err := service.ListArticleRevisionsPage(ctx, "wrk_revision_other", article.ID, time.Time{}, "", 10)
+	if err != nil {
+		t.Fatalf("cross-workspace revision lookup: %v", err)
+	}
+	if len(crossWorkspace) != 0 {
+		t.Fatalf("cross-workspace revisions = %+v, want empty", crossWorkspace)
+	}
+}
