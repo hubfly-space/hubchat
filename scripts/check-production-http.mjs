@@ -11,6 +11,7 @@ const checks = [
   { path: "/app/", status: 200, body: "<html" },
   { path: "/portal/", status: 200, body: "<html" },
   { path: "/widget/app.js", status: 200, body: "Hubchat", contentType: "javascript" },
+  { path: "/widget/app.css", status: 200, body: "--hc-accent", contentType: "text/css" },
   { path: "/api/v1/meta", status: 200, body: '"surface":"api"' },
 ];
 

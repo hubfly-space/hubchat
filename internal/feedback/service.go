@@ -374,6 +374,37 @@ func (s *Service) ListItemsPage(ctx context.Context, workspaceID, boardID, statu
 	return scanItems(rows)
 }
 
+// ListItemsPageAll searches feedback across every board in a workspace. It is
+// intentionally staff-facing: agents need a single deterministic result set
+// when linking support conversations to customer feedback, without first
+// loading every board and issuing one query per board. linkState may be empty,
+// "available", or "linked"; the latter two require conversationID.
+func (s *Service) ListItemsPageAll(ctx context.Context, workspaceID, status, query, conversationID, linkState string, before time.Time, beforeID string, limit int) ([]Item, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := []string{"i.workspace_id=$1", "i.merged_into_id IS NULL", "($2='' OR i.status=$2)", "($3='' OR i.title ILIKE '%'||$3||'%' OR i.description ILIKE '%'||$3||'%')"}
+	args := []any{workspaceID, status, strings.TrimSpace(query)}
+	if conversationID != "" && linkState == "available" {
+		args = append(args, conversationID)
+		where = append(where, "NOT EXISTS (SELECT 1 FROM feedback_links fl WHERE fl.workspace_id=i.workspace_id AND fl.item_id=i.id AND fl.conversation_id=$4)")
+	} else if conversationID != "" && linkState == "linked" {
+		args = append(args, conversationID)
+		where = append(where, "EXISTS (SELECT 1 FROM feedback_links fl WHERE fl.workspace_id=i.workspace_id AND fl.item_id=i.id AND fl.conversation_id=$4)")
+	}
+	if !before.IsZero() {
+		where = append(where, fmt.Sprintf("(i.created_at,i.id) < ($%d,$%d)", len(args)+1, len(args)+2))
+		args = append(args, before, beforeID)
+	}
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, `SELECT i.id,i.workspace_id,i.board_id,i.title,i.description,i.type,i.status,i.visibility,i.submitter_id,i.company_id,i.product_area,i.priority,i.vote_count,i.comment_count,i.subscriber_count,i.merged_into_id,false,false,i.created_at,i.updated_at FROM feedback_items i WHERE `+strings.Join(where, " AND ")+` ORDER BY i.created_at DESC,i.id DESC LIMIT $`+fmt.Sprint(len(args)), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanItems(rows)
+}
+
 func (s *Service) ListRoadmapItems(ctx context.Context, workspaceID, status string, limit int) ([]Item, error) {
 	if limit <= 0 {
 		limit = 200

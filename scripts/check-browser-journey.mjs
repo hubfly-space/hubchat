@@ -192,13 +192,10 @@ async function launchChrome() {
 
 async function startHostPage({ baseURL, publicKey }) {
   const widgetScript = new URL("/widget/v1.js", baseURL).href;
+  const widgetOrigin = new URL(baseURL).origin;
   const encodedKey = JSON.stringify(publicKey);
   const html = `<!doctype html>
-<html><head><meta charset="utf-8"><style>
-  * { box-sizing: content-box }
-  body { margin: 0; font: 32px Georgia, serif; line-height: 2.4; background: #f4f1ea; color: #2a2622 }
-  button { background: hotpink !important; border: 8px solid red !important; font-size: 32px !important; color: black !important }
-</style></head><body>
+<html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' ${widgetOrigin}; style-src 'self' ${widgetOrigin}; connect-src *; img-src 'self' data: ${widgetOrigin}; font-src 'self' data: ${widgetOrigin}"><link rel="stylesheet" href="/host.css"></head><body>
   <main><h1>Host page</h1><button id="host-open" type="button">Open support</button></main>
   <script>
     window.__hubchatReady = false;
@@ -221,6 +218,11 @@ async function startHostPage({ baseURL, publicKey }) {
     if (request.url === "/" || request.url === "/journey-page") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       response.end(html);
+      return;
+    }
+    if (request.url === "/host.css") {
+      response.writeHead(200, { "content-type": "text/css; charset=utf-8" });
+      response.end("* { box-sizing: content-box } body { margin: 0; font: 32px Georgia, serif; line-height: 2.4; background: #f4f1ea; color: #2a2622 } button { background: hotpink !important; border: 8px solid red !important; font-size: 32px !important; color: black !important }");
       return;
     }
     response.writeHead(204);
@@ -284,6 +286,7 @@ export async function runBrowserJourney({
         widgetFontFamily: widgetStyle.fontFamily,
         widgetWidth: widgetStyle.width,
         hasStylesheet: Boolean(shadow.querySelector('style[data-hubchat-widget-styles]')),
+        hasExternalStylesheet: Boolean(shadow.querySelector('link[data-hubchat-widget-external-styles]')?.sheet),
         stylesheetRules: shadow.querySelector('style[data-hubchat-widget-styles]')?.sheet?.cssRules.length ?? 0,
         launcherLabel: launcher.getAttribute("aria-label"),
       };
@@ -295,6 +298,7 @@ export async function runBrowserJourney({
     assert(widgetState.widgetFontSize !== "32px", "widget CSS regression: host font leaked into shadow root");
     assert(widgetState.widgetFontFamily.includes("Inter"), "widget CSS regression: widget font reset did not load");
     assert(widgetState.hasStylesheet, "widget CSS was not installed in the shadow root");
+    assert(widgetState.hasExternalStylesheet, "widget external CSS fallback did not load under host CSP");
     assert(widgetState.stylesheetRules > 0 || widgetState.widgetFontFamily.includes("Inter"), "widget CSS regression: installed stylesheet contains no usable rules");
 
     const alreadyOpen = await browser.page.evaluate("Boolean(document.querySelector('#hubchat-widget')?.shadowRoot?.querySelector('[role=dialog]'))");

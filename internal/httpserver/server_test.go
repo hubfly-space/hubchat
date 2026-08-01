@@ -54,6 +54,7 @@ func TestProductionRouterServesHealthAndEmbeddedSurfaces(t *testing.T) {
 		{path: "/app/", status: http.StatusOK, bodyHas: "<html"},
 		{path: "/portal/", status: http.StatusOK, bodyHas: "<html"},
 		{path: "/widget/app.js", status: http.StatusOK, contentKey: "javascript"},
+		{path: "/widget/app.css", status: http.StatusOK, contentKey: "text/css"},
 		{path: "/api/v1/meta", status: http.StatusServiceUnavailable, bodyHas: "API is not available"},
 		{path: "/", status: http.StatusFound, location: "/app/"},
 	}
