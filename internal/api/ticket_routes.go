@@ -97,6 +97,7 @@ func handleListTickets(deps Deps) http.HandlerFunc {
 		}
 
 		filter := ticket.ListFilter{
+			Query:   query.Get("q"),
 			InboxID: query.Get("inbox_id"), AssigneeID: query.Get("assignee_id"),
 			TeamID: query.Get("team_id"), CustomerID: query.Get("customer_id"),
 			CompanyID: query.Get("company_id"), ParentID: query.Get("parent_id"),
@@ -518,12 +519,17 @@ func handleTicketActivity(deps Deps) http.HandlerFunc {
 func handleListTicketChildren(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
-		children, err := deps.Ticket.Children(r.Context(), actor.WorkspaceID, r.PathValue("id"))
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		children, err := deps.Ticket.ChildrenPage(r.Context(), actor.WorkspaceID, r.PathValue("id"), cursor.ID, limit+1)
 		if err != nil {
 			writeTicketError(w, r, err)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": orEmpty(children)})
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(children, limit, func(childID string) Cursor { return Cursor{ID: childID} }))
 	}
 }
 
@@ -595,7 +601,12 @@ func handleUnfollowTicket(deps Deps) http.HandlerFunc {
 func handleListTicketLinks(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
-		links, err := deps.Ticket.Links(r.Context(), actor.WorkspaceID, r.PathValue("id"))
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		links, err := deps.Ticket.LinksPage(r.Context(), actor.WorkspaceID, r.PathValue("id"), cursor.ID, limit+1)
 		if err != nil {
 			writeTicketError(w, r, err)
 			return
@@ -604,7 +615,7 @@ func handleListTicketLinks(deps Deps) http.HandlerFunc {
 		for i, l := range links {
 			out[i] = map[string]any{"id": l.ID, "source_id": l.SourceID, "target_id": l.TargetID, "relation": l.Relation}
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(out, limit, func(item map[string]any) Cursor { return Cursor{ID: item["id"].(string)} }))
 	}
 }
 

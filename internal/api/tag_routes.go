@@ -25,12 +25,18 @@ func handleListTags(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
 
-		tags, err := deps.Workspace.ListTags(r.Context(), actor.WorkspaceID)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed tag cursor.")
+			return
+		}
+		tags, err := deps.Workspace.ListTagsPage(r.Context(), actor.WorkspaceID, r.URL.Query().Get("q"), cursor.Value, cursor.ID, limit+1)
 		if err != nil {
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load tags.")
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": tagsWithUsageJSON(actor.WorkspaceID, tags)})
+		page := NewPage(tags, limit, func(tag workspace.Tag) Cursor { return Cursor{Value: tag.Name, ID: tag.ID} })
+		httpserver.WriteJSON(w, http.StatusOK, Page[tagWithUsageJSON]{Data: tagsWithUsageJSON(actor.WorkspaceID, page.Data), NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
 }
 

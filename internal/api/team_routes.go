@@ -27,23 +27,30 @@ func registerTeamRoutes(mux *http.ServeMux, deps Deps) {
 }
 
 type teamPayload struct {
-	Name            string   `json:"name"`
-	Description     *string  `json:"description"`
-	LeadID          *string  `json:"lead_id"`
-	RoutingStrategy string   `json:"routing_strategy"`
-	MemberIDs       []string `json:"member_ids"`
+	Name            string         `json:"name"`
+	Description     *string        `json:"description"`
+	LeadID          *string        `json:"lead_id"`
+	RoutingStrategy string         `json:"routing_strategy"`
+	MemberIDs       []string       `json:"member_ids"`
+	RoutingConfig   map[string]any `json:"routing_config"`
 }
 
 func handleListTeams(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
 
-		teams, err := deps.Workspace.ListTeams(r.Context(), actor.WorkspaceID)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed team cursor.")
+			return
+		}
+		teams, err := deps.Workspace.ListTeamsPage(r.Context(), actor.WorkspaceID, cursor.Value, cursor.ID, limit+1)
 		if err != nil {
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load teams.")
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": teamsJSON(actor.WorkspaceID, teams)})
+		page := NewPage(teams, limit, func(team workspace.Team) Cursor { return Cursor{Value: team.Name, ID: team.ID} })
+		httpserver.WriteJSON(w, http.StatusOK, Page[teamJSON]{Data: teamsJSON(actor.WorkspaceID, page.Data), NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
 }
 
@@ -57,9 +64,9 @@ func handleCreateTeam(deps Deps) http.HandlerFunc {
 			return
 		}
 
-		team, err := deps.Workspace.CreateTeam(
+		team, err := deps.Workspace.CreateTeamWithRouting(
 			r.Context(), actor.WorkspaceID, actor.MemberID, req.Name,
-			req.Description, req.LeadID, req.RoutingStrategy, req.MemberIDs,
+			req.Description, req.LeadID, req.RoutingStrategy, req.MemberIDs, req.RoutingConfig,
 		)
 		if err != nil {
 			writeTeamError(w, r, err)
@@ -70,6 +77,7 @@ func handleCreateTeam(deps Deps) http.HandlerFunc {
 			Description: team.Description, LeadID: team.LeadID,
 			MemberIDs: orEmpty(team.MemberIDs), InboxIDs: []string{},
 			RoutingStrategy: team.RoutingStrategy,
+			RoutingConfig:   team.RoutingConfig,
 			CreatedAt:       team.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
@@ -85,9 +93,9 @@ func handleUpdateTeam(deps Deps) http.HandlerFunc {
 			return
 		}
 
-		team, err := deps.Workspace.UpdateTeam(
+		team, err := deps.Workspace.UpdateTeamWithRouting(
 			r.Context(), actor.WorkspaceID, actor.MemberID, r.PathValue("id"),
-			req.Name, req.Description, req.LeadID, req.RoutingStrategy,
+			req.Name, req.Description, req.LeadID, req.RoutingStrategy, req.RoutingConfig,
 		)
 		if err != nil {
 			writeTeamError(w, r, err)
@@ -98,6 +106,7 @@ func handleUpdateTeam(deps Deps) http.HandlerFunc {
 			Description: team.Description, LeadID: team.LeadID,
 			MemberIDs: orEmpty(team.MemberIDs), InboxIDs: []string{},
 			RoutingStrategy: team.RoutingStrategy,
+			RoutingConfig:   team.RoutingConfig,
 			CreatedAt:       team.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
@@ -149,6 +158,7 @@ func teamsJSON(workspaceID string, teams []workspace.Team) []teamJSON {
 			Description: team.Description, LeadID: team.LeadID,
 			MemberIDs: orEmpty(team.MemberIDs), InboxIDs: []string{},
 			RoutingStrategy: team.RoutingStrategy,
+			RoutingConfig:   team.RoutingConfig,
 			CreatedAt:       team.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
