@@ -39,6 +39,12 @@ func registerConversationRoutes(mux *http.ServeMux, deps Deps) {
 
 	mux.HandleFunc("GET /v1/conversations/{id}",
 		requireCapability(deps, authorization.ConversationRead, handleGetConversation(deps)))
+	mux.HandleFunc("GET /v1/conversations/{id}/links",
+		requireCapability(deps, authorization.ConversationRead, handleListConversationLinks(deps)))
+	mux.HandleFunc("POST /v1/conversations/{id}/links",
+		requireCapability(deps, authorization.ConversationAssign, idempotent(handleLinkConversation(deps))))
+	mux.HandleFunc("DELETE /v1/conversations/{id}/links/{targetID}",
+		requireCapability(deps, authorization.ConversationAssign, idempotent(handleUnlinkConversation(deps))))
 
 	mux.HandleFunc("GET /v1/conversations/{id}/messages",
 		requireCapability(deps, authorization.ConversationRead, handleListMessages(deps)))
@@ -683,8 +689,12 @@ func writeConversationError(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, conversation.ErrInvalidInbox),
 		errors.Is(err, conversation.ErrTagNotFound),
 		errors.Is(err, conversation.ErrSnoozeInPast),
-		errors.Is(err, conversation.ErrCannotMergeIntoSelf):
+		errors.Is(err, conversation.ErrCannotMergeIntoSelf),
+		errors.Is(err, conversation.ErrInvalidLinkRelation),
+		errors.Is(err, conversation.ErrLinkToSelf):
 		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, err.Error())
+	case errors.Is(err, conversation.ErrLinkAlreadyExists):
+		httpserver.WriteError(w, r, http.StatusConflict, httpserver.CodeConflict, "That conversation link already exists.")
 	default:
 		httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Something went wrong.")
 	}
@@ -865,6 +875,70 @@ func handleMergeConversation(deps Deps) http.HandlerFunc {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func handleListConversationLinks(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		links, err := deps.Conversation.Links(r.Context(), actor.WorkspaceID, r.PathValue("id"))
+		if err != nil {
+			writeConversationError(w, r, err)
+			return
+		}
+		out := make([]map[string]any, 0, len(links))
+		for _, link := range links {
+			out = append(out, conversationLinkJSON(link))
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+	}
+}
+
+type conversationLinkRequest struct {
+	TargetID string `json:"target_id"`
+	Relation string `json:"relation"`
+}
+
+func handleLinkConversation(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		var req conversationLinkRequest
+		if err := httpserver.DecodeJSON(r, &req); err != nil || strings.TrimSpace(req.TargetID) == "" {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "A target conversation is required.")
+			return
+		}
+		if strings.TrimSpace(req.Relation) == "" {
+			req.Relation = "related"
+		}
+		link, err := deps.Conversation.Link(r.Context(), actor.WorkspaceID, actor.MemberID, r.PathValue("id"), req.TargetID, req.Relation)
+		if err != nil {
+			writeConversationError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, conversationLinkJSON(*link))
+	}
+}
+
+func handleUnlinkConversation(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		relation := r.URL.Query().Get("relation")
+		if relation == "" {
+			relation = "related"
+		}
+		if err := deps.Conversation.Unlink(r.Context(), actor.WorkspaceID, actor.MemberID, r.PathValue("id"), r.PathValue("targetID"), relation); err != nil {
+			writeConversationError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func conversationLinkJSON(link conversation.ConversationLink) map[string]any {
+	return map[string]any{
+		"id": link.ID, "workspace_id": link.WorkspaceID, "source_id": link.SourceID,
+		"target_id": link.TargetID, "relation": link.Relation, "created_by": link.CreatedBy,
+		"created_at": link.CreatedAt,
 	}
 }
 

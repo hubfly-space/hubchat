@@ -151,6 +151,16 @@ The existing `after` sequence parameter remains available for realtime HTTP
 fallback and resume; `before` is retained as a compatibility alias for older
 clients.
 
+Conversation relationships use the workspace-scoped
+`/api/v1/conversations/{id}/links` family. `POST` accepts a `target_id` and a
+relation of `related`, `duplicate_of`, or `follow_up`; `related` links are
+canonicalised so retries or reversed requests cannot create duplicates, while
+the directional relations preserve their source and target. `GET` returns
+every link touching the conversation, and `DELETE` accepts the target ID plus
+the relation query parameter. Link creation and removal are idempotent,
+audited, and published as conversation events; a target from another
+workspace is rejected.
+
 Conversation and ticket follower endpoints are also cursor-paginated. They
 return member IDs ordered by their opaque member identifier; pass the returned
 `next_cursor` unchanged to continue through a large follower set.
