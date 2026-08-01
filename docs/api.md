@@ -60,7 +60,15 @@ additional rollup rows.
 `GET /api/v1/analytics/searches/no-results` returns the exact query text and
 aggregated count for searches that returned no articles. It is also cursor
 paginated; pass `from` and `to` consistently across pages and return the
-opaque `next_cursor` unchanged.
+opaque `next_cursor` unchanged. Preserve `timezone` as well when it is
+provided.
+
+Analytics windows accept an optional IANA `timezone` query parameter, such as
+`Africa/Kigali` or `America/New_York`. When `from` and `to` are omitted, the
+default rolling window is calculated in that timezone before being converted
+to UTC for PostgreSQL. Responses expose the selected timezone in the summary
+and workload payloads and in the `X-Hubchat-Analytics-Timezone` response
+header. Dashboard reports always send the active workspace timezone.
 
 `GET /api/v1/search` returns workspace-scoped conversation and customer hits
 in the standard cursor page envelope. Preserve the query string and pass the

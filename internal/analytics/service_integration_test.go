@@ -287,7 +287,7 @@ func TestReportSchedulesAreWorkspaceScopedAndClaimedOnce(t *testing.T) {
 	}
 	service := New(pool)
 	report, err := service.CreateReport(ctx, "wrk_schedule_one", "", ReportInput{
-		Name: "Daily volume", Definition: map[string]any{"metrics": []string{"conversations.created"}}, DateRange: "last_30_days",
+		Name: "Daily volume", Definition: map[string]any{"metrics": []string{"conversations.created"}}, DateRange: "last_30_days", Timezone: "Africa/Kigali",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -297,6 +297,9 @@ func TestReportSchedulesAreWorkspaceScopedAndClaimedOnce(t *testing.T) {
 	}, time.Date(2026, time.July, 31, 8, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if schedule.Options["timezone"] != "Africa/Kigali" {
+		t.Fatalf("schedule timezone = %#v, want report timezone", schedule.Options["timezone"])
 	}
 	if _, err := service.GetSchedule(ctx, "wrk_schedule_two", schedule.ID); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("cross-workspace schedule lookup error = %v", err)

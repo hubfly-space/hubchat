@@ -23,6 +23,24 @@ func TestNextScheduleRunUsesDeterministicUTCBoundaries(t *testing.T) {
 	}
 }
 
+func TestScheduledReportWindowUsesSavedRangeAndTimezone(t *testing.T) {
+	now := time.Date(2026, time.March, 10, 12, 0, 0, 0, time.UTC)
+	from, to, err := scheduledReportWindow("last_7_days", "America/New_York", now)
+	if err != nil {
+		t.Fatalf("scheduled report window error = %v", err)
+	}
+	// March 10 is daylight time in New York, while March 3 is standard time.
+	// Computing the range as local calendar time therefore produces a 13:00 UTC
+	// start, not a naive seven-times-24-hours subtraction.
+	wantFrom := time.Date(2026, time.March, 3, 13, 0, 0, 0, time.UTC)
+	if !from.Equal(wantFrom) || !to.Equal(now) {
+		t.Fatalf("scheduled report window = %s..%s, want %s..%s", from, to, wantFrom, now)
+	}
+	if _, _, err := scheduledReportWindow("last_30_days", "Not/A_timezone", now); err != ErrInvalidScheduleOptions {
+		t.Fatalf("invalid timezone error = %v", err)
+	}
+}
+
 func TestMetricForEventUsesStableDefinitions(t *testing.T) {
 	data, _ := json.Marshal(map[string]string{"channel": "widget"})
 	metric, dimensions, ok := metricForEvent(events.Record{Type: events.ConversationCreated, Data: data})

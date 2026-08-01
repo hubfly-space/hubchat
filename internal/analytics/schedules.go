@@ -107,12 +107,14 @@ func (s *Service) CreateSchedule(ctx context.Context, workspaceID string, input 
 	if reportID == "" {
 		return nil, ErrInvalidScheduleReport
 	}
-	if _, err := s.GetReport(ctx, workspaceID, reportID); err != nil {
+	report, err := s.GetReport(ctx, workspaceID, reportID)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrInvalidScheduleReport
 		}
 		return nil, err
 	}
+	applyReportTimezone(options, report.Timezone)
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
@@ -147,12 +149,14 @@ func (s *Service) UpdateSchedule(ctx context.Context, workspaceID, id string, in
 	if reportID == "" {
 		return nil, ErrInvalidScheduleReport
 	}
-	if _, err := s.GetReport(ctx, workspaceID, reportID); err != nil {
+	report, err := s.GetReport(ctx, workspaceID, reportID)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrInvalidScheduleReport
 		}
 		return nil, err
 	}
+	applyReportTimezone(options, report.Timezone)
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
@@ -273,6 +277,16 @@ func numberOption(options map[string]any, key string, fallback int) int {
 	}
 }
 
+func applyReportTimezone(options map[string]any, reportTimezone string) {
+	if strings.TrimSpace(reportTimezone) == "" {
+		return
+	}
+	if raw, ok := options["timezone"].(string); ok && strings.TrimSpace(raw) != "" {
+		return
+	}
+	options["timezone"] = strings.TrimSpace(reportTimezone)
+}
+
 func nextScheduleRun(now time.Time, cadence string, options map[string]any) (*time.Time, error) {
 	if err := validateScheduleOptions(cadence, options); err != nil {
 		return nil, err
@@ -312,6 +326,41 @@ func nextScheduleRun(now time.Time, cadence string, options map[string]any) (*ti
 	}
 	result := candidate.UTC()
 	return &result, nil
+}
+
+// scheduledReportWindow converts a saved report's human-readable date range
+// into UTC query bounds while preserving calendar-day behavior in the report's
+// configured timezone. The bounds are deliberately computed at delivery time,
+// so a recurring schedule always represents the latest period rather than the
+// period that existed when the schedule was created.
+func scheduledReportWindow(dateRange, timezone string, now time.Time) (time.Time, time.Time, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	location := time.UTC
+	if strings.TrimSpace(timezone) != "" {
+		loaded, err := time.LoadLocation(strings.TrimSpace(timezone))
+		if err != nil {
+			return time.Time{}, time.Time{}, ErrInvalidScheduleOptions
+		}
+		location = loaded
+	}
+	days := 30
+	switch strings.ToLower(strings.TrimSpace(dateRange)) {
+	case "", "last_30_days":
+		days = 30
+	case "last_7_days":
+		days = 7
+	case "last_90_days":
+		days = 90
+	default:
+		// Older saved reports may have omitted the range. Keep delivery
+		// deterministic and backwards-compatible rather than dropping mail.
+		days = 30
+	}
+	localNow := now.In(location)
+	from := localNow.AddDate(0, 0, -days).UTC()
+	return from, now.UTC(), nil
 }
 
 func scanSchedule(row interface{ Scan(...any) error }) (*ReportSchedule, error) {
@@ -406,15 +455,15 @@ func (s *Service) RunScheduledReports(ctx context.Context, now time.Time, queue 
 	for {
 		var item ReportSchedule
 		var options []byte
-		var reportName string
+		var reportName, reportDateRange, reportTimezone string
 		tx, err := s.pool.Begin(ctx)
 		if err != nil {
 			return processed, err
 		}
-		err = tx.QueryRow(ctx, `SELECT schedules.id,schedules.workspace_id,schedules.report_id,schedules.cadence,schedules.options,schedules.recipients,schedules.format,schedules.enabled,schedules.last_sent_at,schedules.next_run_at,schedules.created_at,reports.name
+		err = tx.QueryRow(ctx, `SELECT schedules.id,schedules.workspace_id,schedules.report_id,schedules.cadence,schedules.options,schedules.recipients,schedules.format,schedules.enabled,schedules.last_sent_at,schedules.next_run_at,schedules.created_at,reports.name,reports.date_range,coalesce(reports.timezone,'')
 			FROM report_schedules schedules JOIN saved_reports reports ON reports.id=schedules.report_id AND reports.workspace_id=schedules.workspace_id
 			WHERE schedules.enabled AND schedules.next_run_at IS NOT NULL AND schedules.next_run_at <= $1
-			ORDER BY schedules.next_run_at,schedules.id LIMIT 1 FOR UPDATE OF schedules SKIP LOCKED`, now).Scan(&item.ID, &item.WorkspaceID, &item.ReportID, &item.Cadence, &options, &item.Recipients, &item.Format, &item.Enabled, &item.LastSentAt, &item.NextRunAt, &item.CreatedAt, &reportName)
+			ORDER BY schedules.next_run_at,schedules.id LIMIT 1 FOR UPDATE OF schedules SKIP LOCKED`, now).Scan(&item.ID, &item.WorkspaceID, &item.ReportID, &item.Cadence, &options, &item.Recipients, &item.Format, &item.Enabled, &item.LastSentAt, &item.NextRunAt, &item.CreatedAt, &reportName, &reportDateRange, &reportTimezone)
 		if errors.Is(err, pgx.ErrNoRows) {
 			_ = tx.Rollback(ctx)
 			break
@@ -437,7 +486,15 @@ func (s *Service) RunScheduledReports(ctx context.Context, now time.Time, queue 
 			return processed, err
 		}
 
-		body, err := s.ExportCSV(ctx, item.WorkspaceID, item.ReportID, nil, now.AddDate(0, 0, -30), now)
+		deliveryTimezone := reportTimezone
+		if raw, ok := item.Options["timezone"].(string); ok && strings.TrimSpace(raw) != "" {
+			deliveryTimezone = strings.TrimSpace(raw)
+		}
+		from, to, err := scheduledReportWindow(reportDateRange, deliveryTimezone, now)
+		if err != nil {
+			return processed, err
+		}
+		body, err := s.ExportCSV(ctx, item.WorkspaceID, item.ReportID, nil, from, to)
 		if err != nil {
 			return processed, err
 		}
