@@ -13,6 +13,17 @@ func registerAuthRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /v1/auth/login", handleLogin(deps))
 	mux.HandleFunc("POST /v1/auth/logout", handleLogout(deps))
 	mux.HandleFunc("GET /v1/auth/me", requireActor(deps, handleMe(deps)))
+	mux.HandleFunc("GET /v1/auth/oauth/providers", handleOAuthProviders(deps))
+}
+
+func handleOAuthProviders(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		providers := []auth.OAuthProviderInfo{}
+		if provider := deps.Auth.OAuthProvider(); provider != nil {
+			providers = append(providers, *provider)
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"providers": providers})
+	}
 }
 
 type signupRequest struct {
@@ -61,7 +72,7 @@ func handleLogin(deps Deps) http.HandlerFunc {
 			return
 		}
 
-		result, err := deps.Auth.SignIn(r.Context(), req.Email, req.Password, r.UserAgent(), clientIP(r))
+		result, err := deps.Auth.SignInWithTrustedDevice(r.Context(), req.Email, req.Password, r.UserAgent(), clientIP(r), httpserver.TrustedDeviceToken(r))
 		if err != nil {
 			writeAuthFlowError(w, r, err)
 			return

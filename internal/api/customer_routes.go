@@ -47,6 +47,8 @@ func registerCustomerRoutes(mux *http.ServeMux, deps Deps) {
 		requireCapability(deps, authorization.CustomerRead, handleCustomerTimeline(deps)))
 	mux.HandleFunc("GET /v1/customers/{id}/sessions",
 		requireCapability(deps, authorization.CustomerRead, handleCustomerSessions(deps)))
+	mux.HandleFunc("GET /v1/customers/{id}/360",
+		requireCapability(deps, authorization.CustomerRead, handleCustomer360(deps)))
 	mux.HandleFunc("GET /v1/customers/{id}/export",
 		requireCapability(deps, authorization.CustomerReadSensitive, handleExportCustomer(deps)))
 
@@ -73,6 +75,21 @@ func registerCustomerRoutes(mux *http.ServeMux, deps Deps) {
 		requireCapability(deps, authorization.WorkspaceManage, idempotent(handleUpdateAttributeDefinition(deps))))
 	mux.HandleFunc("DELETE /v1/attribute-definitions/{id}",
 		requireCapability(deps, authorization.WorkspaceManage, idempotent(handleArchiveAttributeDefinition(deps))))
+}
+
+func handleCustomer360(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		item, err := deps.Customer.Customer360(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"))
+		if err != nil {
+			if errors.Is(err, customer.ErrNotFound) {
+				httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Customer not found.")
+				return
+			}
+			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load customer context.")
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, item)
+	}
 }
 
 // handleExportCustomers returns a bounded, workspace-scoped CSV snapshot. It
@@ -461,7 +478,7 @@ func handleCustomerTimeline(deps Deps) http.HandlerFunc {
 		page := NewPage(evts, limit, func(e customer.CustomerEvent) Cursor { return Cursor{At: e.OccurredAt, ID: e.ID} })
 		out := make([]map[string]any, len(page.Data))
 		for i, e := range page.Data {
-			out[i] = customerEventJSON(e)
+			out[i] = customerEventJSON(e, !actor.Can(authorization.CustomerReadSensitive))
 		}
 		httpserver.WriteJSON(w, http.StatusOK, Page[map[string]any]{Data: out, NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
@@ -585,10 +602,65 @@ func contactSessionJSON(s customer.ContactSession) map[string]any {
 	}
 }
 
-func customerEventJSON(e customer.CustomerEvent) map[string]any {
+func customerEventJSON(e customer.CustomerEvent, redactPayload bool) map[string]any {
+	payload := e.Payload
+	if redactPayload {
+		payload = redactEventPayload(payload)
+	}
 	return map[string]any{
 		"id": e.ID, "workspace_id": e.WorkspaceID, "customer_id": e.CustomerID, "session_id": e.SessionID,
-		"type": e.Type, "source": e.Source, "url": e.URL, "payload": e.Payload, "occurred_at": e.OccurredAt,
+		"type": e.Type, "source": e.Source, "url": e.URL, "payload": payload, "occurred_at": e.OccurredAt,
+	}
+}
+
+// redactEventPayload protects the developer-facing event stream from common
+// identifiers and credentials accidentally included in an application event.
+// It is deliberately recursive: SDK payloads frequently nest checkout,
+// profile, or request objects. Unknown keys are preserved so the explorer
+// remains useful without requiring an allowlist for every customer event.
+func redactEventPayload(payload map[string]any) map[string]any {
+	return redactEventObject(payload)
+}
+
+func redactEventObject(input map[string]any) map[string]any {
+	output := make(map[string]any, len(input))
+	for key, value := range input {
+		if sensitiveEventKey(key) {
+			output[key] = "[REDACTED]"
+			continue
+		}
+		output[key] = redactEventValue(value)
+	}
+	return output
+}
+
+func redactEventValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return redactEventObject(typed)
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = redactEventValue(item)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func sensitiveEventKey(key string) bool {
+	normalized := strings.ToLower(strings.NewReplacer("-", "", "_", "", " ", "").Replace(key))
+	for _, marker := range []string{"email", "phone", "telephone", "mobile", "address", "password", "passcode", "secret", "token", "authorization", "cookie", "ssn", "socialsecurity"} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	switch normalized {
+	case "ip", "ipaddress", "clientip", "remoteip":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -628,7 +700,7 @@ func handleIngestEvents(deps Deps) http.HandlerFunc {
 				writeCustomerError(w, r, err)
 				return
 			}
-			out = append(out, customerEventJSON(*evt))
+			out = append(out, customerEventJSON(*evt, false))
 		}
 		httpserver.WriteJSON(w, http.StatusCreated, map[string]any{"data": out})
 	}
@@ -650,7 +722,7 @@ func handleListEvents(deps Deps) http.HandlerFunc {
 		page := NewPage(evts, limit, func(e customer.CustomerEvent) Cursor { return Cursor{At: e.OccurredAt, ID: e.ID} })
 		out := make([]map[string]any, len(page.Data))
 		for i, e := range page.Data {
-			out[i] = customerEventJSON(e)
+			out[i] = customerEventJSON(e, !actor.Can(authorization.CustomerReadSensitive))
 		}
 		httpserver.WriteJSON(w, http.StatusOK, Page[map[string]any]{Data: out, NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
