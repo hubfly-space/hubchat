@@ -2,15 +2,9 @@ package portal
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"strings"
 	"time"
@@ -18,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/hubchat/hubchat/internal/auth"
-	"github.com/hubchat/hubchat/internal/customer"
 	"github.com/hubchat/hubchat/internal/database"
 	"github.com/hubchat/hubchat/internal/ids"
 )
@@ -37,17 +30,11 @@ var (
 
 const magicLinkLifetime = 15 * time.Minute
 
-type Options struct {
-	SessionLifetime time.Duration
-	SecretKey       []byte
-	Customer        *customer.Service
-}
+type Options struct{ SessionLifetime time.Duration }
 
 type Service struct {
 	pool            *database.Pool
 	sessionLifetime time.Duration
-	secretKey       []byte
-	customer        *customer.Service
 }
 
 type NavigationItem struct {
@@ -134,19 +121,6 @@ type MagicLink struct {
 	Customer  Customer
 }
 
-type SSOConfiguration struct {
-	PortalID       string `json:"portal_id"`
-	Issuer         string `json:"issuer"`
-	Configured     bool   `json:"configured"`
-	SecretHint     string `json:"secret_hint,omitempty"`
-	TokenParameter string `json:"token_parameter"`
-}
-
-type CreatedSSOConfiguration struct {
-	Configuration SSOConfiguration `json:"configuration"`
-	Secret        string            `json:"secret"`
-}
-
 type Ticket struct {
 	ID             string    `json:"id"`
 	Number         int       `json:"number"`
@@ -189,7 +163,7 @@ func New(pool *database.Pool, opts Options) *Service {
 	if opts.SessionLifetime <= 0 {
 		opts.SessionLifetime = 30 * 24 * time.Hour
 	}
-	return &Service{pool: pool, sessionLifetime: opts.SessionLifetime, secretKey: opts.SecretKey, customer: opts.Customer}
+	return &Service{pool: pool, sessionLifetime: opts.SessionLifetime}
 }
 
 func (s *Service) List(ctx context.Context, workspaceID string) ([]Portal, error) {
@@ -712,220 +686,6 @@ func (s *Service) IssueMagicLink(ctx context.Context, portalID, email string) (*
 		return nil, fmt.Errorf("portal: issue magic link: %w", err)
 	}
 	return &MagicLink{Token: token, ExpiresAt: expiresAt, Customer: *customer}, nil
-}
-
-// SSOConfiguration returns only operational metadata. The signing secret is
-// never returned after ConfigureSSO/RotateSSOSecret has produced it once.
-func (s *Service) SSOConfiguration(ctx context.Context, workspaceID, portalID string) (*SSOConfiguration, error) {
-	var result SSOConfiguration
-	var encrypted []byte
-	err := s.pool.QueryRow(ctx, `
-		SELECT sso_issuer, sso_secret
-		FROM portals WHERE workspace_id=$1 AND id=$2
-	`, workspaceID, portalID).Scan(&result.Issuer, &encrypted)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("portal: load SSO configuration: %w", err)
-	}
-	result.PortalID = portalID
-	result.Configured = len(encrypted) > 0 && strings.TrimSpace(result.Issuer) != ""
-	result.TokenParameter = "sso_token"
-	if result.Configured {
-		secret, decryptErr := s.decryptSSOSecret(encrypted)
-		if decryptErr != nil {
-			return nil, decryptErr
-		}
-		result.SecretHint = secretHint(secret)
-	}
-	return &result, nil
-}
-
-// ConfigureSSO creates or rotates a portal-specific HS256 secret. The raw
-// value is returned exactly once so it can be installed in the customer's
-// backend; only an encrypted value remains in PostgreSQL.
-func (s *Service) ConfigureSSO(ctx context.Context, workspaceID, portalID, issuer string) (*CreatedSSOConfiguration, error) {
-	issuer = strings.TrimSpace(issuer)
-	if issuer == "" || len(issuer) > 200 || strings.ContainsAny(issuer, "\r\n") {
-		return nil, errors.New("portal: SSO issuer is required and must be a single short line")
-	}
-	secret, err := newSSOSecret()
-	if err != nil {
-		return nil, err
-	}
-	encrypted, err := s.encryptSSOSecret(secret)
-	if err != nil {
-		return nil, err
-	}
-	tag, err := s.pool.Exec(ctx, `
-		UPDATE portals
-		SET sso_secret=$3, sso_issuer=$4,
-			auth_methods=CASE WHEN 'sso_token'=ANY(auth_methods) THEN auth_methods ELSE array_append(auth_methods,'sso_token') END,
-			updated_at=now()
-		WHERE workspace_id=$1 AND id=$2
-	`, workspaceID, portalID, encrypted, issuer)
-	if err != nil {
-		return nil, fmt.Errorf("portal: configure SSO: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return nil, ErrNotFound
-	}
-	return &CreatedSSOConfiguration{
-		Configuration: SSOConfiguration{PortalID: portalID, Issuer: issuer, Configured: true, SecretHint: secretHint(secret), TokenParameter: "sso_token"},
-		Secret: secret,
-	}, nil
-}
-
-// DisableSSO removes the encrypted credential and the corresponding login
-// method. Existing portal sessions remain valid until logout/expiry; this
-// avoids surprising active customers while making new SSO assertions fail.
-func (s *Service) DisableSSO(ctx context.Context, workspaceID, portalID string) error {
-	tag, err := s.pool.Exec(ctx, `
-		UPDATE portals
-		SET sso_secret=NULL, sso_issuer=NULL,
-			auth_methods=array_remove(auth_methods,'sso_token'), updated_at=now()
-		WHERE workspace_id=$1 AND id=$2
-	`, workspaceID, portalID)
-	if err != nil {
-		return fmt.Errorf("portal: disable SSO: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
-// RedeemSSOToken verifies and consumes a customer-issued assertion, links the
-// verified external subject to a workspace customer, and creates the normal
-// portal session. Nonce consumption and session creation are one transaction.
-func (s *Service) RedeemSSOToken(ctx context.Context, portalID, rawToken, userAgent, ip string) (*Session, error) {
-	var workspaceID, issuer string
-	var methods []string
-	var encrypted []byte
-	err := s.pool.QueryRow(ctx, `
-		SELECT workspace_id, auth_methods, coalesce(sso_issuer,''), sso_secret
-		FROM portals WHERE id=$1 AND enabled=true
-	`, portalID).Scan(&workspaceID, &methods, &issuer, &encrypted)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("portal: load SSO portal: %w", err)
-	}
-	if !contains(methods, "sso_token") || issuer == "" || len(encrypted) == 0 {
-		return nil, ErrSSONotConfigured
-	}
-	secret, err := s.decryptSSOSecret(encrypted)
-	if err != nil {
-		return nil, err
-	}
-	claims, err := verifySSOToken(secret, strings.TrimSpace(rawToken), time.Now())
-	if err != nil {
-		return nil, err
-	}
-	if claims.Issuer != issuer || claims.Audience != portalID {
-		return nil, ErrSSOTokenInvalid
-	}
-	if s.customer == nil {
-		return nil, errors.New("portal: customer service is not configured")
-	}
-	var name, email *string
-	if claims.Name != "" {
-		name = &claims.Name
-	}
-	if claims.Email != "" {
-		email = &claims.Email
-	}
-	customerRecord, err := s.customer.Identify(ctx, workspaceID, nil, name, email, &claims.Subject, true)
-	if err != nil {
-		return nil, fmt.Errorf("portal: identify SSO customer: %w", err)
-	}
-	rawSession, err := auth.NewToken()
-	if err != nil {
-		return nil, err
-	}
-	sessionExpires := time.Now().Add(s.sessionLifetime)
-	err = database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
-		// Expired nonces are no longer useful and this keeps the replay table
-		// bounded without requiring a separate queue for this small cleanup.
-		if _, err := tx.Exec(ctx, `DELETE FROM portal_sso_nonces WHERE expires_at < now()`); err != nil {
-			return err
-		}
-		result, err := tx.Exec(ctx, `
-			INSERT INTO portal_sso_nonces (portal_id, workspace_id, nonce, expires_at)
-			VALUES ($1,$2,$3,to_timestamp($4)) ON CONFLICT (portal_id,nonce) DO NOTHING
-		`, portalID, workspaceID, claims.Nonce, claims.Expiry)
-		if err != nil {
-			return err
-		}
-		if result.RowsAffected() == 0 {
-			return ErrSSOTokenReplay
-		}
-		_, err = tx.Exec(ctx, `
-			INSERT INTO portal_sessions
-				(id, workspace_id, portal_id, customer_id, token_hash, auth_method, user_agent, ip, expires_at)
-			VALUES ($1,$2,$3,$4,$5,'sso_token',$6,NULLIF($7,'')::inet,$8)
-		`, ids.New(ids.PrefixPortalSession), workspaceID, portalID, customerRecord.ID,
-			auth.HashToken(rawSession), userAgent, ip, sessionExpires)
-		return err
-	})
-	if err != nil {
-		return nil, fmt.Errorf("portal: redeem SSO token: %w", err)
-	}
-	return s.session(ctx, rawSession, portalID)
-}
-
-func (s *Service) ssoKey() []byte {
-	hash := sha256.Sum256(append([]byte("hubchat/portal-sso-secrets:"), s.secretKey...))
-	return hash[:]
-}
-
-func (s *Service) encryptSSOSecret(plain string) ([]byte, error) {
-	block, err := aes.NewCipher(s.ssoKey())
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, err
-	}
-	return gcm.Seal(nonce, nonce, []byte(plain), nil), nil
-}
-
-func (s *Service) decryptSSOSecret(ciphertext []byte) (string, error) {
-	block, err := aes.NewCipher(s.ssoKey())
-	if err != nil {
-		return "", err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil || len(ciphertext) < gcm.NonceSize() {
-		return "", ErrSSONotConfigured
-	}
-	plain, err := gcm.Open(nil, ciphertext[:gcm.NonceSize()], ciphertext[gcm.NonceSize():], nil)
-	if err != nil {
-		return "", ErrSSONotConfigured
-	}
-	return string(plain), nil
-}
-
-func newSSOSecret() (string, error) {
-	raw := make([]byte, 32)
-	if _, err := io.ReadFull(rand.Reader, raw); err != nil {
-		return "", fmt.Errorf("portal: generate SSO secret: %w", err)
-	}
-	return "psso_" + base64.RawURLEncoding.EncodeToString(raw), nil
-}
-
-func secretHint(secret string) string {
-	if len(secret) <= 6 {
-		return secret
-	}
-	return secret[len(secret)-6:]
 }
 
 func (s *Service) RedeemMagicLink(ctx context.Context, token, userAgent, ip string) (*Session, error) {
