@@ -118,23 +118,38 @@ func handleDryRunAutomationRule(deps Deps) http.HandlerFunc {
 }
 func handleListAutomationExecutions(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		item, err := deps.Automation.ListExecutions(r.Context(), actorFromRequest(r).WorkspaceID, r.URL.Query().Get("rule_id"), 100)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		item, err := deps.Automation.ListExecutionsPage(r.Context(), actorFromRequest(r).WorkspaceID, r.URL.Query().Get("rule_id"), cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			writeAutomationInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": item})
+		page := NewPage(item, limit, func(execution automation.Execution) Cursor {
+			return Cursor{At: execution.OccurredAt, ID: execution.ID}
+		})
+		httpserver.WriteJSON(w, http.StatusOK, page)
 	}
 }
 
 func handleListMacros(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := deps.Automation.ListMacros(r.Context(), actorFromRequest(r).WorkspaceID, r.URL.Query().Get("q"))
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		items, err := deps.Automation.ListMacrosPage(r.Context(), actorFromRequest(r).WorkspaceID, r.URL.Query().Get("q"), cursor.Value, cursor.ID, limit+1)
 		if err != nil {
 			writeAutomationInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(items, limit, func(item automation.Macro) Cursor {
+			return Cursor{Value: item.Name, ID: item.ID}
+		}))
 	}
 }
 func handleCreateMacro(deps Deps) http.HandlerFunc {
@@ -165,12 +180,19 @@ func handleUseMacro(deps Deps) http.HandlerFunc {
 }
 func handleListSavedReplies(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := deps.Automation.ListSavedReplies(r.Context(), actorFromRequest(r).WorkspaceID, r.URL.Query().Get("q"))
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		items, err := deps.Automation.ListSavedRepliesPage(r.Context(), actorFromRequest(r).WorkspaceID, r.URL.Query().Get("q"), cursor.Value, cursor.ID, limit+1)
 		if err != nil {
 			writeAutomationInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(items, limit, func(item automation.SavedReply) Cursor {
+			return Cursor{Value: item.Name, ID: item.ID}
+		}))
 	}
 }
 func handleCreateSavedReply(deps Deps) http.HandlerFunc {

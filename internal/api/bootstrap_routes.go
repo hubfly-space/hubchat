@@ -74,15 +74,16 @@ type memberJSON struct {
 }
 
 type teamJSON struct {
-	ID              string   `json:"id"`
-	WorkspaceID     string   `json:"workspace_id"`
-	Name            string   `json:"name"`
-	Description     *string  `json:"description"`
-	LeadID          *string  `json:"lead_id"`
-	MemberIDs       []string `json:"member_ids"`
-	InboxIDs        []string `json:"inbox_ids"`
-	RoutingStrategy string   `json:"routing_strategy"`
-	CreatedAt       string   `json:"created_at"`
+	ID              string         `json:"id"`
+	WorkspaceID     string         `json:"workspace_id"`
+	Name            string         `json:"name"`
+	Description     *string        `json:"description"`
+	LeadID          *string        `json:"lead_id"`
+	MemberIDs       []string       `json:"member_ids"`
+	InboxIDs        []string       `json:"inbox_ids"`
+	RoutingStrategy string         `json:"routing_strategy"`
+	RoutingConfig   map[string]any `json:"routing_config"`
+	CreatedAt       string         `json:"created_at"`
 }
 
 type tagJSON struct {
@@ -190,6 +191,7 @@ func buildBootstrapResponse(data *workspace.Bootstrap) bootstrapResponse {
 			MemberIDs:       orEmpty(team.MemberIDs),
 			InboxIDs:        []string{},
 			RoutingStrategy: team.RoutingStrategy,
+			RoutingConfig:   team.RoutingConfig,
 			CreatedAt:       team.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
