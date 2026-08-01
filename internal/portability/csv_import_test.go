@@ -39,3 +39,16 @@ func TestParseTicketCSVNormalizesHeadersAndRequiresInbox(t *testing.T) {
 		t.Fatalf("expected missing inbox error, got %v", err)
 	}
 }
+
+func TestParseFeedbackCSVRequiresBoardAndTitle(t *testing.T) {
+	rows, err := parseCSVImport([]byte("External ID,Board ID,Title,Status\nfeedback-1,board-1,Export request,planned\n"), KindFeedbackCSV)
+	if err != nil {
+		t.Fatalf("parse feedback CSV returned error: %v", err)
+	}
+	if len(rows) != 1 || rows[0].values["board_id"] != "board-1" {
+		t.Fatalf("unexpected feedback row: %+v", rows)
+	}
+	if _, err := parseCSVImport([]byte("title\nMissing board\n"), KindFeedbackCSV); err == nil || !strings.Contains(err.Error(), "board_id") {
+		t.Fatalf("expected missing board error, got %v", err)
+	}
+}

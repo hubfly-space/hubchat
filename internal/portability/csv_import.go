@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hubchat/hubchat/internal/customer"
+	"github.com/hubchat/hubchat/internal/feedback"
 	filemodule "github.com/hubchat/hubchat/internal/file"
 	"github.com/hubchat/hubchat/internal/ticket"
 )
@@ -33,6 +34,8 @@ func normalizeImportKind(kind string) string {
 		return KindCompaniesCSV
 	case "ticket", "tickets", KindTicketsCSV:
 		return KindTicketsCSV
+	case "feedback", "feedback_items", KindFeedbackCSV:
+		return KindFeedbackCSV
 	case "knowledgebase", "knowledge_base", "markdown", KindKnowledgeBaseMarkdown:
 		return KindKnowledgeBaseMarkdown
 	default:
@@ -42,7 +45,7 @@ func normalizeImportKind(kind string) string {
 
 func validImportKind(kind string) bool {
 	switch normalizeImportKind(kind) {
-	case KindWorkspace, KindCustomersCSV, KindCompaniesCSV, KindTicketsCSV, KindKnowledgeBaseMarkdown:
+	case KindWorkspace, KindCustomersCSV, KindCompaniesCSV, KindTicketsCSV, KindFeedbackCSV, KindKnowledgeBaseMarkdown:
 		return true
 	default:
 		return false
@@ -172,6 +175,12 @@ func validateCSVColumns(kind string, columns map[string]struct{}) error {
 		}
 		return nil
 	}
+	if kind == KindFeedbackCSV {
+		if !hasColumn(columns, "board_id") || !hasColumn(columns, "title") {
+			return errors.New("feedback CSV requires board_id and title columns")
+		}
+		return nil
+	}
 	return fmt.Errorf("unsupported CSV import kind %q", kind)
 }
 
@@ -184,7 +193,26 @@ func (s *Service) previewCSVImport(ctx context.Context, workspaceID string, requ
 	if request.Kind == KindTicketsCSV && s.tickets == nil {
 		return nil, errors.New("portability: ticket import service is unavailable")
 	}
-	if request.Kind != KindTicketsCSV && s.customers == nil {
+	if request.Kind == KindFeedbackCSV && s.feedback == nil {
+		return nil, errors.New("portability: feedback import service is unavailable")
+	}
+	if request.Kind == KindFeedbackCSV {
+		rows, err := s.readCSVFile(ctx, workspaceID, request.FileID, request.Kind)
+		if err != nil {
+			return nil, err
+		}
+		existing := 0
+		for _, row := range rows {
+			key := importRowKey(request.ID, row)
+			if _, findErr := s.feedback.FindItemByImportKey(ctx, workspaceID, row.values["board_id"], key); findErr == nil {
+				existing++
+			} else if !errors.Is(findErr, feedback.ErrNotFound) {
+				return nil, findErr
+			}
+		}
+		return []TableSummary{{Name: request.Kind, Rows: len(rows), Existing: existing, New: len(rows) - existing}}, nil
+	}
+	if request.Kind != KindTicketsCSV && request.Kind != KindFeedbackCSV && s.customers == nil {
 		return nil, errors.New("portability: customer import service is unavailable")
 	}
 	rows, err := s.readCSVFile(ctx, workspaceID, request.FileID, request.Kind)
@@ -227,7 +255,10 @@ func (s *Service) runCSVImport(ctx context.Context, id string, request *Request)
 	if request.Kind == KindTicketsCSV && s.tickets == nil {
 		return s.failImport(ctx, id, errors.New("portability: ticket import service is unavailable"))
 	}
-	if request.Kind != KindTicketsCSV && s.customers == nil {
+	if request.Kind == KindFeedbackCSV && s.feedback == nil {
+		return s.failImport(ctx, id, errors.New("portability: feedback import service is unavailable"))
+	}
+	if request.Kind != KindTicketsCSV && request.Kind != KindFeedbackCSV && s.customers == nil {
 		return s.failImport(ctx, id, errors.New("portability: customer import service is unavailable"))
 	}
 	rows, err := s.readCSVFile(ctx, request.WorkspaceID, request.FileID, request.Kind)
@@ -274,18 +305,41 @@ func (s *Service) runCSVImport(ctx context.Context, id string, request *Request)
 	return err
 }
 
-func (s *Service) importCSVRow(ctx context.Context, workspaceID, actorID, kind, requestID string, row csvImportRow) error {
-	externalID := strings.TrimSpace(row.values["external_id"])
-	if externalID == "" {
-		externalID = "hubchat:" + requestID + ":" + strconv.Itoa(row.line)
+func (s *Service) importFeedbackRow(ctx context.Context, workspaceID, memberID, requestID string, row csvImportRow) error {
+	boardID := strings.TrimSpace(row.values["board_id"])
+	item, err := s.feedback.CreateItem(ctx, workspaceID, boardID, memberID, feedback.ItemInput{
+		Title: row.values["title"], Description: row.values["description"], Type: row.values["type"],
+		Visibility: row.values["visibility"], SubmitterID: row.values["submitter_id"], CompanyID: row.values["company_id"],
+		ProductArea: row.values["product_area"], Priority: row.values["priority"], ImportKey: importRowKey(requestID, row),
+	}, row.values["submitter_id"])
+	if err != nil {
+		return err
 	}
+	if status := strings.TrimSpace(row.values["status"]); status != "" && status != item.Status {
+		_, err = s.feedback.SetStatus(ctx, workspaceID, item.ID, memberID, status, "Imported from CSV")
+	}
+	return err
+}
+
+func (s *Service) importCSVRow(ctx context.Context, workspaceID, actorID, kind, requestID string, row csvImportRow) error {
+	externalID := importRowKey(requestID, row)
 	if kind == KindCustomersCSV {
 		return s.importCustomerRow(ctx, workspaceID, actorID, externalID, row.values)
 	}
 	if kind == KindCompaniesCSV {
 		return s.importCompanyRow(ctx, workspaceID, actorID, externalID, row.values)
 	}
+	if kind == KindFeedbackCSV {
+		return s.importFeedbackRow(ctx, workspaceID, actorID, requestID, row)
+	}
 	return s.importTicketRow(ctx, workspaceID, actorID, externalID, row.values)
+}
+
+func importRowKey(requestID string, row csvImportRow) string {
+	if externalID := strings.TrimSpace(row.values["external_id"]); externalID != "" {
+		return externalID
+	}
+	return "hubchat:" + requestID + ":" + strconv.Itoa(row.line)
 }
 
 func (s *Service) importTicketRow(ctx context.Context, workspaceID, actorID, importKey string, values map[string]string) error {

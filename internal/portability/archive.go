@@ -39,8 +39,10 @@ var tableSpecs = []struct {
 	direct bool
 }{
 	{name: "inboxes", where: "workspace_id=$1", direct: true},
+	{name: "teams", where: "workspace_id=$1", direct: true},
 	{name: "companies", where: "workspace_id=$1", direct: true},
 	{name: "customers", where: "workspace_id=$1", direct: true},
+	{name: "customer_notification_preferences", where: "workspace_id=$1", direct: true},
 	{name: "customer_emails", where: "workspace_id=$1", direct: true},
 	{name: "customer_phones", where: "workspace_id=$1", direct: true},
 	{name: "contact_sessions", where: "workspace_id=$1", direct: true},
@@ -94,6 +96,8 @@ var tableSpecs = []struct {
 	{name: "integration_connections", where: "workspace_id=$1", direct: true},
 	{name: "email_mailboxes", where: "workspace_id=$1", direct: true},
 	{name: "email_messages", where: "workspace_id=$1", direct: true},
+	{name: "email_delivery_events", where: "workspace_id=$1", direct: true},
+	{name: "email_suppressions", where: "workspace_id=$1", direct: true},
 	{name: "files", where: "workspace_id=$1", direct: true},
 	{name: "workspace_events", where: "workspace_id=$1", direct: true},
 	{name: "audit_logs", where: "workspace_id=$1", direct: true},
@@ -102,6 +106,7 @@ var tableSpecs = []struct {
 	{name: "report_rollups", where: "workspace_id=$1", direct: true},
 	{name: "report_rollup_state", where: "workspace_id=$1", direct: true},
 	{name: "feature_flags", where: "workspace_id=$1", direct: true},
+	{name: "team_routing_cursors", where: "team_id IN (SELECT id FROM teams WHERE workspace_id=$1)"},
 	{name: "inbox_teams", where: "inbox_id IN (SELECT id FROM inboxes WHERE workspace_id=$1)"},
 	{name: "widget_config_versions", where: "widget_id IN (SELECT id FROM widgets WHERE workspace_id=$1)"},
 	{name: "widget_domains", where: "widget_id IN (SELECT id FROM widgets WHERE workspace_id=$1)"},
@@ -141,6 +146,53 @@ var tableSpecs = []struct {
 	{name: "article_tags", where: "article_id IN (SELECT id FROM articles WHERE workspace_id=$1)"},
 	{name: "article_relations", where: "article_id IN (SELECT id FROM articles WHERE workspace_id=$1)"},
 	{name: "message_attachments", where: "message_id IN (SELECT m.id FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE c.workspace_id=$1)"},
+}
+
+// nullableMemberFields are foreign keys to workspace_members that may be
+// cleared when an archive is restored into a workspace with a different
+// membership roster. The member itself is intentionally not part of a
+// workspace archive because users and credentials belong to the installation,
+// not to portable customer data.
+var nullableMemberFields = map[string][]string{
+	"teams":                    {"lead_id"},
+	"companies":                {"owner_id"},
+	"customers":                {"owner_id"},
+	"conversations":            {"assignee_id"},
+	"tickets":                  {"assignee_id"},
+	"ticket_links":             {"created_by"},
+	"saved_views":              {"owner_id"},
+	"macros":                   {"owner_id"},
+	"saved_replies":            {"owner_id"},
+	"customer_notes":           {"author_id"},
+	"identity_merge_history":   {"merged_by", "reversed_by"},
+	"blocked_contacts":         {"blocked_by"},
+	"widget_config_versions":   {"changed_by"},
+	"announcements":            {"created_by"},
+	"feedback_items":           {"created_by_member_id"},
+	"feedback_status_history":  {"actor_id"},
+	"articles":                 {"author_id"},
+	"article_revisions":        {"edited_by"},
+	"changelog_entries":        {"created_by"},
+	"survey_responses":         {"agent_id"},
+	"automation_rules":         {"created_by"},
+	"automation_rule_versions": {"changed_by"},
+	"scheduled_actions":        {"created_by"},
+	"api_keys":                 {"created_by"},
+	"webhook_endpoints":        {"created_by"},
+	"integration_connections":  {"created_by"},
+	"saved_reports":            {"owner_id"},
+	"tasks":                    {"assignee_id", "created_by"},
+}
+
+// requiredMemberRows are member-owned relation rows that cannot be restored
+// without a matching target member. Skipping them is deterministic and safe;
+// the main support records remain importable and the operator can recreate
+// followers/preferences after inviting the target members.
+var requiredMemberRows = map[string]string{
+	"conversation_followers":   "member_id",
+	"ticket_followers":         "member_id",
+	"composer_drafts":          "member_id",
+	"notification_preferences": "member_id",
 }
 
 func Export(ctx context.Context, pool *database.Pool, workspaceID string, now time.Time) (*Archive, []TableSummary, error) {
@@ -326,12 +378,38 @@ func insertArchiveRow(ctx context.Context, tx pgx.Tx, spec struct {
 	where  string
 	direct bool
 }, raw json.RawMessage, targetWorkspaceID string) error {
-	if spec.direct {
+	if spec.direct || len(nullableMemberFields[spec.name]) > 0 || requiredMemberRows[spec.name] != "" {
 		var object map[string]any
 		if err := json.Unmarshal(raw, &object); err != nil {
 			return err
 		}
-		object["workspace_id"] = targetWorkspaceID
+		if spec.direct {
+			object["workspace_id"] = targetWorkspaceID
+		}
+		if field := requiredMemberRows[spec.name]; field != "" {
+			if rawMember, ok := object[field].(string); ok && rawMember != "" {
+				var memberExists bool
+				if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workspace_members WHERE workspace_id=$1 AND id=$2)`, targetWorkspaceID, rawMember).Scan(&memberExists); err != nil {
+					return err
+				}
+				if !memberExists {
+					return nil
+				}
+			}
+		}
+		for _, field := range nullableMemberFields[spec.name] {
+			rawMember, ok := object[field].(string)
+			if !ok || rawMember == "" {
+				continue
+			}
+			var memberExists bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workspace_members WHERE workspace_id=$1 AND id=$2)`, targetWorkspaceID, rawMember).Scan(&memberExists); err != nil {
+				return err
+			}
+			if !memberExists {
+				object[field] = nil
+			}
+		}
 		var err error
 		raw, err = json.Marshal(object)
 		if err != nil {

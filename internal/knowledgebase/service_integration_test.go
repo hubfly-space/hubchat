@@ -74,3 +74,51 @@ func TestPublishScheduledPromotesDueArticlesAndAppendsEvent(t *testing.T) {
 		t.Fatalf("repeat published count = %d, want 0", count)
 	}
 }
+
+func TestListChangelogPageIsWorkspaceScopedAndStable(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	for _, workspace := range []struct{ id, name, slug string }{
+		{"wrk_changelog_page_a", "Changelog A", "changelog-page-a"},
+		{"wrk_changelog_page_b", "Changelog B", "changelog-page-b"},
+	} {
+		if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id,name,slug) VALUES ($1,$2,$3)`, workspace.id, workspace.name, workspace.slug); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, entry := range []struct {
+		id, workspace, title string
+		published            bool
+	}{
+		{"clg_page_a1", "wrk_changelog_page_a", "First", true},
+		{"clg_page_a2", "wrk_changelog_page_a", "Second", false},
+		{"clg_page_a3", "wrk_changelog_page_a", "Third", true},
+		{"clg_page_b1", "wrk_changelog_page_b", "Other workspace", true},
+	} {
+		var published any
+		if entry.published {
+			published = time.Now().UTC()
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO changelog_entries (id,workspace_id,title,published_at) VALUES ($1,$2,$3,$4)`, entry.id, entry.workspace, entry.title, published); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	service := New(pool, Options{})
+	first, err := service.ListChangelogPage(ctx, "wrk_changelog_page_a", time.Time{}, "", 2)
+	if err != nil || len(first) != 2 {
+		t.Fatalf("first changelog page = %d rows, err=%v", len(first), err)
+	}
+	before := first[1].CreatedAt
+	if first[1].PublishedAt != nil {
+		before = *first[1].PublishedAt
+	}
+	second, err := service.ListChangelogPage(ctx, "wrk_changelog_page_a", before, first[1].ID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 1 || second[0].WorkspaceID != "wrk_changelog_page_a" || second[0].ID == first[1].ID {
+		t.Fatalf("second changelog page = %+v", second)
+	}
+}
