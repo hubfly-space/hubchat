@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/hubchat/hubchat/internal/audit"
 	"github.com/hubchat/hubchat/internal/database"
@@ -115,6 +116,19 @@ func TestLinksMergeIntoTargetAndRemainWorkspaceScoped(t *testing.T) {
 	if _, err := service.AddLink(ctx, workspace.id, source.ID, workspace.memberID, LinkInput{TicketID: ticketID}); err != nil {
 		t.Fatalf("link ticket: %v", err)
 	}
+	firstPage, err := service.ListLinksPage(ctx, workspace.id, source.ID, time.Time{}, "", 1)
+	if err != nil || len(firstPage) != 1 || firstPage[0].ConversationID == nil {
+		t.Fatalf("first link page = %#v, err=%v", firstPage, err)
+	}
+	secondPage, err := service.ListLinksPage(ctx, workspace.id, source.ID, firstPage[0].CreatedAt, firstPage[0].ID, 1)
+	if err != nil || len(secondPage) != 1 || secondPage[0].TicketID == nil {
+		t.Fatalf("second link page = %#v, err=%v", secondPage, err)
+	}
+	otherWorkspace := seedFeedbackWorkspace(t, ctx, pool)
+	otherPage, err := service.ListLinksPage(ctx, otherWorkspace.id, source.ID, time.Time{}, "", 10)
+	if err != nil || len(otherPage) != 0 {
+		t.Fatalf("cross-workspace link page = %#v, err=%v", otherPage, err)
+	}
 
 	merged, err := service.MergeItems(ctx, workspace.id, source.ID, target.ID, workspace.memberID)
 	if err != nil {
@@ -138,7 +152,6 @@ func TestLinksMergeIntoTargetAndRemainWorkspaceScoped(t *testing.T) {
 		t.Fatalf("second merge error = %v, want ErrInvalidMerge", err)
 	}
 
-	otherWorkspace := seedFeedbackWorkspace(t, ctx, pool)
 	if _, err := service.AddLink(ctx, otherWorkspace.id, source.ID, otherWorkspace.memberID, LinkInput{ConversationID: conversationID}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-workspace item link error = %v, want ErrNotFound", err)
 	}

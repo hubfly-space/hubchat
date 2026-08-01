@@ -417,6 +417,33 @@ func (s *Service) List(ctx context.Context, workspaceID string) ([]Mailbox, erro
 	return items, rows.Err()
 }
 
+func (s *Service) ListPage(ctx context.Context, workspaceID, beforeAddress, beforeID string, limit int) ([]Mailbox, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := "workspace_id=$1"
+	args := []any{workspaceID}
+	if beforeAddress != "" {
+		where += " AND (address::text,id) > ($2,$3)"
+		args = append(args, beforeAddress, beforeID)
+	}
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, mailboxSelect+` WHERE `+where+` ORDER BY address, id LIMIT $`+fmt.Sprint(len(args)), args...)
+	if err != nil {
+		return nil, fmt.Errorf("emailchannel: list page: %w", err)
+	}
+	defer rows.Close()
+	items := make([]Mailbox, 0)
+	for rows.Next() {
+		item, err := scanMailbox(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
+}
+
 func (s *Service) Get(ctx context.Context, workspaceID, id string) (*Mailbox, error) {
 	item, err := scanMailbox(s.pool.QueryRow(ctx, mailboxSelect+` WHERE workspace_id=$1 AND id=$2`, workspaceID, id))
 	if errors.Is(err, pgx.ErrNoRows) {

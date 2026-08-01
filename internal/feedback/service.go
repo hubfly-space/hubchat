@@ -447,6 +447,35 @@ func (s *Service) ListLinks(ctx context.Context, workspaceID, itemID string) ([]
 	return links, rows.Err()
 }
 
+func (s *Service) ListLinksPage(ctx context.Context, workspaceID, itemID string, before time.Time, beforeID string, limit int) ([]Link, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := "workspace_id=$1 AND item_id=$2"
+	args := []any{workspaceID, itemID}
+	if !before.IsZero() {
+		where += " AND (created_at,id)>($3,$4)"
+		args = append(args, before, beforeID)
+	}
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, workspace_id, item_id, conversation_id, ticket_id, created_at
+		FROM feedback_links WHERE `+where+` ORDER BY created_at ASC, id ASC LIMIT $`+fmt.Sprint(len(args)), args...)
+	if err != nil {
+		return nil, fmt.Errorf("feedback: list links page: %w", err)
+	}
+	defer rows.Close()
+	links := make([]Link, 0)
+	for rows.Next() {
+		var link Link
+		if err := rows.Scan(&link.ID, &link.WorkspaceID, &link.ItemID, &link.ConversationID, &link.TicketID, &link.CreatedAt); err != nil {
+			return nil, err
+		}
+		links = append(links, link)
+	}
+	return links, rows.Err()
+}
+
 // AddLink associates exactly one conversation or ticket with an item. The
 // unique migration makes retries idempotent even when two dashboard tabs
 // submit the same link concurrently.
