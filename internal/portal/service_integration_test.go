@@ -106,3 +106,40 @@ func TestUpdateReplacesNavigationWithinWorkspace(t *testing.T) {
 		t.Fatalf("cross-workspace update error = %v, want ErrNotFound", err)
 	}
 }
+
+func TestCustomDomainLifecycleIsWorkspaceScoped(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id, name, slug) VALUES ('wrk_domain_a', 'Domain A', 'domain-a'), ('wrk_domain_b', 'Domain B', 'domain-b')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO portals (id,workspace_id,name,subdomain) VALUES ('prl_domain_a','wrk_domain_a','A','domain-a'), ('prl_domain_b','wrk_domain_b','B','domain-b')`); err != nil {
+		t.Fatal(err)
+	}
+
+	service := portal.New(pool, portal.Options{})
+	domain, err := service.AddDomain(ctx, "wrk_domain_a", "prl_domain_a", "Support.Example.com.")
+	if err != nil {
+		t.Fatalf("add domain: %v", err)
+	}
+	if domain.Domain != "support.example.com" || domain.Status != "pending" || domain.VerificationToken == "" {
+		t.Fatalf("unexpected domain: %+v", domain)
+	}
+	if _, err := service.Get(ctx, "wrk_domain_b", "prl_domain_a"); !errors.Is(err, portal.ErrNotFound) {
+		t.Fatalf("cross-workspace portal lookup = %v, want ErrNotFound", err)
+	}
+	if err := service.DeleteDomain(ctx, "wrk_domain_b", "prl_domain_a", domain.ID); !errors.Is(err, portal.ErrNotFound) {
+		t.Fatalf("cross-workspace domain delete = %v, want ErrNotFound", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE portal_domains SET status='verified' WHERE id=$1`, domain.ID); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := service.Resolve(ctx, "support.example.com")
+	if err != nil {
+		t.Fatalf("resolve verified domain: %v", err)
+	}
+	if resolved.ID != "prl_domain_a" {
+		t.Fatalf("resolved portal = %q, want prl_domain_a", resolved.ID)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -57,6 +58,17 @@ type Portal struct {
 	DefaultLanguage string
 	Enabled         bool
 	Navigation      []NavigationItem
+	Domains         []Domain
+}
+
+type Domain struct {
+	ID                string     `json:"id"`
+	PortalID          string     `json:"portal_id"`
+	Domain            string     `json:"domain"`
+	Status            string     `json:"status"`
+	VerificationToken string     `json:"verification_token,omitempty"`
+	VerifiedAt        *time.Time `json:"verified_at,omitempty"`
+	LastCheckedAt     *time.Time `json:"last_checked_at,omitempty"`
 }
 
 type Customer struct {
@@ -173,6 +185,9 @@ func (s *Service) List(ctx context.Context, workspaceID string) ([]Portal, error
 		if err := s.loadNavigation(ctx, p); err != nil {
 			return nil, err
 		}
+		if err := s.loadDomains(ctx, p); err != nil {
+			return nil, err
+		}
 		out = append(out, *p)
 	}
 	return out, rows.Err()
@@ -192,6 +207,9 @@ func (s *Service) Get(ctx context.Context, workspaceID, id string) (*Portal, err
 		return nil, fmt.Errorf("portal: get: %w", err)
 	}
 	if err := s.loadNavigation(ctx, p); err != nil {
+		return nil, err
+	}
+	if err := s.loadDomains(ctx, p); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -320,7 +338,12 @@ func (s *Service) Resolve(ctx context.Context, identifier string) (*Portal, erro
 		SELECT id, workspace_id, name, subdomain::text, theme, features,
 		       auth_methods, permissions, default_inbox_id, default_language, enabled
 		FROM portals
-		WHERE enabled = true AND (id = $1 OR subdomain::text = $1)
+		WHERE enabled = true AND (
+			id = $1 OR subdomain::text = $1 OR EXISTS (
+				SELECT 1 FROM portal_domains d
+				WHERE d.portal_id = portals.id AND d.domain::text = $1 AND d.status = 'verified'
+			)
+		)
 	`, identifier)
 	portal, err := scanPortal(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -330,6 +353,9 @@ func (s *Service) Resolve(ctx context.Context, identifier string) (*Portal, erro
 		return nil, fmt.Errorf("portal: resolve: %w", err)
 	}
 	if err := s.loadNavigation(ctx, portal); err != nil {
+		return nil, err
+	}
+	if err := s.loadDomains(ctx, portal); err != nil {
 		return nil, err
 	}
 	return portal, nil
@@ -365,7 +391,154 @@ func (s *Service) resolveDefault(ctx context.Context) (*Portal, error) {
 	if err := s.loadNavigation(ctx, portals[0]); err != nil {
 		return nil, err
 	}
+	if err := s.loadDomains(ctx, portals[0]); err != nil {
+		return nil, err
+	}
 	return portals[0], nil
+}
+
+func (s *Service) loadDomains(ctx context.Context, p *Portal) error {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, portal_id, domain::text, status, verification_token, verified_at, last_checked_at
+		FROM portal_domains WHERE portal_id = $1 ORDER BY created_at ASC
+	`, p.ID)
+	if err != nil {
+		return fmt.Errorf("portal: load domains: %w", err)
+	}
+	defer rows.Close()
+	p.Domains = make([]Domain, 0)
+	for rows.Next() {
+		var item Domain
+		if err := rows.Scan(&item.ID, &item.PortalID, &item.Domain, &item.Status, &item.VerificationToken, &item.VerifiedAt, &item.LastCheckedAt); err != nil {
+			return err
+		}
+		p.Domains = append(p.Domains, item)
+	}
+	return rows.Err()
+}
+
+func normalizeDomain(value string) (string, error) {
+	domain := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(value)), ".")
+	if domain == "" || len(domain) > 253 || strings.Contains(domain, "/") || strings.Contains(domain, ":") || net.ParseIP(domain) != nil {
+		return "", errors.New("portal: enter a valid hostname")
+	}
+	labels := strings.Split(domain, ".")
+	if len(labels) < 2 {
+		return "", errors.New("portal: custom domain must include a registrable suffix")
+	}
+	for _, label := range labels {
+		if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return "", errors.New("portal: enter a valid hostname")
+		}
+		for _, r := range label {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+				return "", errors.New("portal: enter a valid hostname")
+			}
+		}
+	}
+	return domain, nil
+}
+
+func (s *Service) ListDomains(ctx context.Context, workspaceID, portalID string) ([]Domain, error) {
+	p, err := s.Get(ctx, workspaceID, portalID)
+	if err != nil {
+		return nil, err
+	}
+	return p.Domains, nil
+}
+
+func (s *Service) AddDomain(ctx context.Context, workspaceID, portalID, value string) (*Domain, error) {
+	domain, err := normalizeDomain(value)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.Get(ctx, workspaceID, portalID); err != nil {
+		return nil, err
+	}
+	token, err := auth.NewToken()
+	if err != nil {
+		return nil, err
+	}
+	var item Domain
+	err = s.pool.QueryRow(ctx, `
+		INSERT INTO portal_domains (id, portal_id, domain, verification_token)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, portal_id, domain::text, status, verification_token, verified_at, last_checked_at
+	`, ids.New(ids.PrefixPortalDomain), portalID, domain, token).Scan(&item.ID, &item.PortalID, &item.Domain, &item.Status, &item.VerificationToken, &item.VerifiedAt, &item.LastCheckedAt)
+	if err != nil {
+		return nil, fmt.Errorf("portal: add domain: %w", err)
+	}
+	return &item, nil
+}
+
+// VerifyDomain checks the TXT record at _hubchat-verification.<domain>.
+// Failed checks are persisted for operator visibility and can be retried after
+// DNS propagation without creating another domain row.
+func (s *Service) VerifyDomain(ctx context.Context, workspaceID, portalID, domainID string) (*Domain, error) {
+	var item Domain
+	err := s.pool.QueryRow(ctx, `
+		SELECT d.id, d.portal_id, d.domain::text, d.status, d.verification_token, d.verified_at, d.last_checked_at
+		FROM portal_domains d JOIN portals p ON p.id = d.portal_id
+		WHERE p.workspace_id = $1 AND d.portal_id = $2 AND d.id = $3
+	`, workspaceID, portalID, domainID).Scan(&item.ID, &item.PortalID, &item.Domain, &item.Status, &item.VerificationToken, &item.VerifiedAt, &item.LastCheckedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	records, lookupErr := net.LookupTXT("_hubchat-verification." + item.Domain)
+	verified := false
+	for _, record := range records {
+		if strings.TrimSpace(record) == item.VerificationToken {
+			verified = true
+			break
+		}
+	}
+	if lookupErr != nil {
+		item.Status = "failed"
+	} else if verified {
+		item.Status = "verified"
+	} else {
+		item.Status = "failed"
+	}
+	if _, err := s.pool.Exec(ctx, `
+		UPDATE portal_domains SET status=$4, verified_at=CASE WHEN $4='verified' THEN now() ELSE verified_at END, last_checked_at=now()
+		WHERE id=$1 AND portal_id=$2 AND EXISTS (SELECT 1 FROM portals WHERE id=$2 AND workspace_id=$3)
+	`, item.ID, portalID, workspaceID, item.Status); err != nil {
+		return nil, err
+	}
+	return s.domain(ctx, workspaceID, portalID, domainID)
+}
+
+func (s *Service) domain(ctx context.Context, workspaceID, portalID, domainID string) (*Domain, error) {
+	var item Domain
+	err := s.pool.QueryRow(ctx, `
+		SELECT d.id, d.portal_id, d.domain::text, d.status, d.verification_token, d.verified_at, d.last_checked_at
+		FROM portal_domains d JOIN portals p ON p.id=d.portal_id
+		WHERE p.workspace_id=$1 AND d.portal_id=$2 AND d.id=$3
+	`, workspaceID, portalID, domainID).Scan(&item.ID, &item.PortalID, &item.Domain, &item.Status, &item.VerificationToken, &item.VerifiedAt, &item.LastCheckedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (s *Service) DeleteDomain(ctx context.Context, workspaceID, portalID, domainID string) error {
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM portal_domains d USING portals p
+		WHERE d.id=$1 AND d.portal_id=$2 AND p.id=d.portal_id AND p.workspace_id=$3
+	`, domainID, portalID, workspaceID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func scanPortal(row interface{ Scan(...any) error }) (*Portal, error) {

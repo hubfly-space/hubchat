@@ -129,7 +129,24 @@ func (s *Service) CreateCalendar(ctx context.Context, workspaceID string, input 
 }
 
 func (s *Service) ListCalendars(ctx context.Context, workspaceID string) ([]CalendarRecord, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id,workspace_id,name,timezone,weekly,is_default,created_at,updated_at FROM business_hour_calendars WHERE workspace_id=$1 ORDER BY is_default DESC,name`, workspaceID)
+	return s.ListCalendarsPage(ctx, workspaceID, nil, "", "", 0)
+}
+
+// ListCalendarsPage orders the default calendar first, then by name and id.
+// The boolean/name pair is encoded by the API in the cursor Value field.
+func (s *Service) ListCalendarsPage(ctx context.Context, workspaceID string, beforeDefault *bool, beforeName, beforeID string, limit int) ([]CalendarRecord, error) {
+	query := `SELECT id,workspace_id,name,timezone,weekly,is_default,created_at,updated_at FROM business_hour_calendars WHERE workspace_id=$1`
+	args := []any{workspaceID}
+	if beforeDefault != nil {
+		query += ` AND (is_default,name,id) < ($2,$3,$4)`
+		args = append(args, *beforeDefault, beforeName, beforeID)
+	}
+	query += ` ORDER BY is_default DESC,name,id`
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		args = append(args, limit)
+	}
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +280,23 @@ func (s *Service) CreatePolicy(ctx context.Context, workspaceID string, input Po
 }
 
 func (s *Service) ListPolicies(ctx context.Context, workspaceID string) ([]Policy, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id,workspace_id,name,coalesce(description,''),calendar_id,pause_states,warning_threshold_percent,escalation_actions,applies_to,enabled,created_at,updated_at FROM sla_policies WHERE workspace_id=$1 ORDER BY name`, workspaceID)
+	return s.ListPoliciesPage(ctx, workspaceID, "", "", 0)
+}
+
+// ListPoliciesPage uses name and id as a stable cursor pair.
+func (s *Service) ListPoliciesPage(ctx context.Context, workspaceID, beforeName, beforeID string, limit int) ([]Policy, error) {
+	query := `SELECT id,workspace_id,name,coalesce(description,''),calendar_id,pause_states,warning_threshold_percent,escalation_actions,applies_to,enabled,created_at,updated_at FROM sla_policies WHERE workspace_id=$1`
+	args := []any{workspaceID}
+	if beforeName != "" || beforeID != "" {
+		query += ` AND (name,id) > ($2,$3)`
+		args = append(args, beforeName, beforeID)
+	}
+	query += ` ORDER BY name,id`
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		args = append(args, limit)
+	}
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
