@@ -1,4 +1,4 @@
-import { ApiError, Badge, Button, EmptyState, cn, formatDate, api, useQuery, type BadgeTone } from "@hubchat/shared";
+import { ApiError, Badge, Button, EmptyState, Pagination, cn, formatDate, api, useInfinite, type BadgeTone, type Paginated } from "@hubchat/shared";
 import { Rss } from "lucide-react";
 import { Link } from "react-router-dom";
 import { usePortal } from "../portal-context";
@@ -11,12 +11,16 @@ const TAG_TONE: Record<string, BadgeTone> = {
 
 export default function Changelog() {
   const { data: portalData } = usePortal();
-  const query = useQuery<{ data: Array<{ id: string; title: string; body: string; kind: string; published_at: string }> }>(
+  const query = useInfinite<{ id: string; title: string; body: string; kind: string; published_at: string }>(
     ["portal-changelog", portalData?.portal.workspace_id ?? ""],
-    (signal) => api.get(`/public/changelog/${encodeURIComponent(portalData?.portal.workspace_id ?? "")}`, { signal }),
+    (cursor, signal) => {
+      const params = new URLSearchParams({ limit: "25" });
+      if (cursor) params.set("cursor", cursor);
+      return api.get<Paginated<{ id: string; title: string; body: string; kind: string; published_at: string }>>(`/public/changelog/${encodeURIComponent(portalData?.portal.workspace_id ?? "")}?${params.toString()}`, { signal });
+    },
     { enabled: Boolean(portalData?.portal.workspace_id) },
   );
-  const changelog = query.data?.data ?? [];
+  const changelog = query.items;
   return (
     <div className="mx-auto max-w-2xl">
       <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
@@ -34,7 +38,7 @@ export default function Changelog() {
       <ol className="relative">
         <span aria-hidden="true" className="absolute bottom-2 left-[5px] top-2 w-px bg-line" />
 
-        {query.isLoading ? <p className="pl-7 text-sm text-fg-muted">Loading updates…</p> : query.isError ? <EmptyState icon={Rss} title="Changelog unavailable" description={query.error instanceof ApiError ? query.error.message : "Try again in a moment."} /> : changelog.length === 0 ? <EmptyState icon={Rss} title="No published updates yet" description="Check back here for product updates." /> : changelog.map((entry) => (
+        {query.isLoading ? <p className="pl-7 text-sm text-fg-muted">Loading updates…</p> : query.error ? <EmptyState icon={Rss} title="Changelog unavailable" description={query.error instanceof ApiError ? query.error.message : "Try again in a moment."} /> : changelog.length === 0 ? <EmptyState icon={Rss} title="No published updates yet" description="Check back here for product updates." /> : changelog.map((entry) => (
           <li id={entry.id} key={entry.id} className="relative scroll-mt-20 pb-10 pl-7 last:pb-0">
             <span
               aria-hidden="true"
@@ -56,6 +60,7 @@ export default function Changelog() {
           </li>
         ))}
       </ol>
+      <Pagination hasPrevious={false} hasNext={query.hasMore} onPrevious={() => undefined} onNext={() => void query.fetchNext()} summary={changelog.length + " update" + (changelog.length === 1 ? "" : "s") + " loaded"} />
     </div>
   );
 }

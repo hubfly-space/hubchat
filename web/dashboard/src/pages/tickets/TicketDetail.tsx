@@ -35,6 +35,7 @@ import {
   formatDateTime,
   formatRelativeShort,
   invalidate,
+  useInfinite,
   useMutation,
   useQuery,
   type Customer,
@@ -42,6 +43,7 @@ import {
   type Member,
   type Tag,
   type Ticket,
+  type Paginated,
 } from "@hubchat/shared";
 import {
   ArrowLeft,
@@ -634,15 +636,12 @@ function TimestampsCard({ ticket }: { ticket: Ticket }) {
 }
 
 function LinksSection({ ticket }: { ticket: Ticket }) {
-  const links = useQuery<{ data: { id: string; source_id: string; target_id: string; relation: string }[] }>(
-    ["ticket-links", ticket.id],
-    (signal) => api.get(`/tickets/${ticket.id}/links`, { signal }),
-  );
+  const links = useInfinite<{ id: string; source_id: string; target_id: string; relation: string }>(["ticket-links", ticket.id], (cursor, signal) => api.get<Paginated<{ id: string; source_id: string; target_id: string; relation: string }>>(`/tickets/${ticket.id}/links?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
   const unlink = useMutation<{ targetId: string; relation: string }, unknown>(
     ({ targetId, relation }) => api.delete(`/tickets/${ticket.id}/links/${targetId}?relation=${relation}`),
     { invalidates: [["ticket-links", ticket.id]] },
   );
-  const entries = links.data?.data ?? [];
+  const entries = links.items;
   if (entries.length === 0) return null;
 
   return (
@@ -665,21 +664,19 @@ function LinksSection({ ticket }: { ticket: Ticket }) {
                 >
                   Remove
                 </button>
+                </div>
               </div>
-            </div>
-          );
+            );
         })}
+        {links.hasMore && <Button variant="ghost" size="sm" loading={links.isFetching} onClick={() => void links.fetchNext()}>Load more links</Button>}
       </CardBody>
     </Card>
   );
 }
 
 function ChildrenSection({ ticketId }: { ticketId: string }) {
-  const children = useQuery<{ data: string[] }>(
-    ["ticket-children", ticketId],
-    (signal) => api.get(`/tickets/${ticketId}/children`, { signal }),
-  );
-  const ids = children.data?.data ?? [];
+  const children = useInfinite<string>(["ticket-children", ticketId], (cursor, signal) => api.get<Paginated<string>>(`/tickets/${ticketId}/children?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
+  const ids = children.items;
   if (ids.length === 0) return null;
 
   return (
@@ -691,6 +688,7 @@ function ChildrenSection({ ticketId }: { ticketId: string }) {
             {id}
           </Link>
         ))}
+        {children.hasMore && <Button variant="ghost" size="sm" loading={children.isFetching} onClick={() => void children.fetchNext()}>Load more child tickets</Button>}
       </CardBody>
     </Card>
   );
@@ -700,13 +698,12 @@ function LinkTicketDialog({ ticket, onClose }: { ticket: Ticket; onClose: () => 
   const [query, setQuery] = useState("");
   const [relation, setRelation] = useState("related");
 
-  const results = useQuery<{ data: Ticket[] }>(
+  const results = useInfinite<Ticket>(
     query.trim().length > 1 ? ["tickets", "link-search", query] : null,
-    (signal) => api.get(`/tickets?status=new,open,pending,on_hold`, { signal }),
+    (cursor, signal) => api.get<Paginated<Ticket>>(`/tickets?status=new,open,pending,on_hold&q=${encodeURIComponent(query.trim())}&limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }),
+    { enabled: query.trim().length > 1 },
   );
-  const candidates = (results.data?.data ?? []).filter(
-    (t) => t.id !== ticket.id && t.title.toLowerCase().includes(query.toLowerCase()),
-  );
+  const candidates = results.items.filter((t) => t.id !== ticket.id);
 
   const link = useMutation<string, unknown>(
     (targetId) => api.post(`/tickets/${ticket.id}/links`, { target_id: targetId, relation }),
@@ -749,6 +746,7 @@ function LinkTicketDialog({ ticket, onClose }: { ticket: Ticket; onClose: () => 
             <EmptyState size="sm" title="No matching tickets" />
           )}
         </ul>
+        {query.trim().length > 1 && results.hasMore && <Button variant="ghost" size="sm" loading={results.isFetching} onClick={() => void results.fetchNext()}>Load more tickets</Button>}
       </DialogContent>
     </Dialog>
   );
