@@ -9,6 +9,26 @@ Hubchat session cookie; server integrations use a workspace-scoped API key in
 the `Authorization: Bearer ...` header and may select the workspace explicitly
 with `Hubchat-Workspace-Id`.
 
+## SCIM member provisioning
+
+Directory providers use a workspace API key whose scopes include
+`member.manage` with the SCIM 2.0 resource family:
+
+```text
+/api/v1/scim/v2.0/{workspaceID}/Users
+/api/v1/scim/v2.0/{workspaceID}/Users/{memberID}
+```
+
+The implementation supports list, create, replace, patch, and delete. List
+requests accept SCIM `startIndex`, `count`, and exact `userName`/`externalId`
+filters. `externalId` is the idempotency key; retries reconcile the existing
+workspace membership instead of creating a second user. `DELETE` and
+`active:false` deprovision without deleting the membership row, preserve the
+audit/event history, reject deactivation of the workspace owner, and revoke
+the member's sessions, trusted devices, and workspace API keys issued by that
+member. A SCIM key is rejected when its workspace path does not match the key's
+workspace, even if the caller knows another workspace ID.
+
 All errors use the standard envelope described in
 [`api-conventions.md`](api-conventions.md), including a request ID. List
 endpoints use opaque cursor pagination. Retryable creates, updates, and actions

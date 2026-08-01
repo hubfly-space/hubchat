@@ -24,11 +24,11 @@ search, widget identity, audit logging, jobs, files, portals, forms, feedback,
 knowledge base, surveys, API keys, signed webhooks, email channel threading,
 SLA runtime evaluation, automation execution, analytics rollups, workload
 reporting, legal-hold retention overrides, all declared privacy retention
-sweeps, and workspace archive operations have live service/API slices. Provider
-Google and Microsoft Entra member adapters, plus several enterprise/management
-screens, are live; SAML/SCIM, additional provider adapters, and some advanced
-deployment controls remain under active delivery. Production pages do not
-silently fall back to fixtures.
+sweeps, workspace archive operations, and workspace-scoped SCIM member
+provisioning have live service/API slices. Provider Google and Microsoft Entra
+member adapters, plus several enterprise/management screens, are live; SAML,
+additional provider adapters, and some advanced deployment controls remain
+under active delivery. Production pages do not silently fall back to fixtures.
 
 ### Optional member OAuth/OIDC sign-in
 
@@ -59,8 +59,12 @@ requests `User.Read` and reads the directory's `mail` or
 Register the callback at `${HUBCHAT_PUBLIC_URL}/api/v1/auth/oauth/acme/callback`.
 State values are short-lived and single-use, provider URLs are fixed at boot,
 and linked identities still pass through Hubchat sessions and TOTP. Per-workspace
-Workspace SSO policy is live for the configured provider. SAML/SCIM and
-additional provider adapters remain enterprise follow-up work.
+Workspace SSO policy is live for the configured provider. SAML and additional
+provider adapters remain enterprise follow-up work. SCIM provisioning is
+available through workspace-scoped API keys with the `member.manage` scope.
+Provisioning is idempotent by `externalId`/email, deactivation preserves the
+membership record for audit history, and deactivation revokes sessions, trusted
+devices, and API keys issued by that member.
 
 After a successful TOTP challenge, members may optionally trust the current
 browser for 30 days. The credential is hashed in PostgreSQL, stored in an
