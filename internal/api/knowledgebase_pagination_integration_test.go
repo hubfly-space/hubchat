@@ -10,9 +10,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hubchat/hubchat/internal/audit"
 	"github.com/hubchat/hubchat/internal/authorization"
+	"github.com/hubchat/hubchat/internal/config"
+	"github.com/hubchat/hubchat/internal/conversation"
+	"github.com/hubchat/hubchat/internal/customer"
 	"github.com/hubchat/hubchat/internal/database/dbtest"
+	"github.com/hubchat/hubchat/internal/events"
+	"github.com/hubchat/hubchat/internal/ids"
+	"github.com/hubchat/hubchat/internal/inbox"
 	"github.com/hubchat/hubchat/internal/knowledgebase"
+	"github.com/hubchat/hubchat/internal/widget"
+	"github.com/hubchat/hubchat/internal/workspace"
 )
 
 func TestArticleListUsesDeterministicWorkspaceCursor(t *testing.T) {
@@ -112,6 +121,84 @@ func TestPublicArticleSearchScopesCollection(t *testing.T) {
 	secondArticle, ok := second.Data[0]["article"].(map[string]any)
 	if !ok || secondArticle["id"] != "art_release_old" {
 		t.Fatalf("second public article = %#v", second.Data[0])
+	}
+}
+
+func TestWidgetArticleSearchUsesDeterministicCursor(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+
+	userID := ids.New(ids.PrefixUser)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users (id,name,email,password_hash,email_verified_at)
+		VALUES ($1,'Widget Search Owner',$2,'x',now())
+	`, userID, userID+"@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	eventLog := events.New(pool)
+	auditLog := audit.New(pool)
+	wsService := workspace.New(pool, eventLog, auditLog)
+	ws, err := wsService.Bootstrap(ctx, userID, "Widget Search", "widget-search")
+	if err != nil {
+		t.Fatalf("bootstrap workspace: %v", err)
+	}
+	actor, err := wsService.ActorForUser(ctx, ws.ID, userID)
+	if err != nil {
+		t.Fatalf("resolve owner: %v", err)
+	}
+	var inboxID string
+	if err := pool.QueryRow(ctx, `SELECT id FROM inboxes WHERE workspace_id=$1`, ws.ID).Scan(&inboxID); err != nil {
+		t.Fatalf("find default inbox: %v", err)
+	}
+	inboxService := inbox.New(pool, eventLog, auditLog)
+	conversationService := conversation.New(pool, eventLog, auditLog)
+	customerService := customer.New(pool, eventLog, auditLog, config.Limits{MaxEventBytes: 32 << 10, MaxAttributesPerCustomer: 100})
+	widgetService := widget.New(pool, eventLog, auditLog, inboxService, conversationService, customerService, []byte("integration-widget-secret-key"))
+	widgetRecord, err := widgetService.Create(ctx, ws.ID, actor.MemberID, "Support widget", &inboxID)
+	if err != nil {
+		t.Fatalf("create widget: %v", err)
+	}
+	if _, err := widgetService.AddDomain(ctx, ws.ID, actor.MemberID, widgetRecord.ID, "help.example.com"); err != nil {
+		t.Fatalf("allowlist widget domain: %v", err)
+	}
+
+	if _, err := pool.Exec(ctx, `INSERT INTO knowledge_bases (id,workspace_id,name,slug) VALUES ('kb_widget_search',$1,'Widget Help','widget-help')`, ws.ID); err != nil {
+		t.Fatalf("seed widget knowledge base: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO articles (id,workspace_id,knowledge_base_id,title,slug,excerpt,body,state,language,published_at) VALUES
+			('art_widget_new',$1,'kb_widget_search','Newest article','newest-article','Newest','Newest body','published','en','2026-07-31T12:00:00Z'),
+			('art_widget_old',$1,'kb_widget_search','Older article','older-article','Older','Older body','published','en','2026-07-30T12:00:00Z'),
+			('art_widget_other',$1,'kb_widget_search','Other article','other-article','Other','Other body','published','en','2026-07-29T12:00:00Z')
+	`, ws.ID); err != nil {
+		t.Fatalf("seed widget articles: %v", err)
+	}
+
+	deps := Deps{Widget: widgetService, Knowledgebase: knowledgebase.New(pool)}
+	request := func(path string) (Page[map[string]any], *httptest.ResponseRecorder) {
+		req := httptest.NewRequest(http.MethodGet, path, nil).WithContext(ctx)
+		response := httptest.NewRecorder()
+		handleWidgetArticleSearch(deps)(response, req)
+		var page Page[map[string]any]
+		if err := json.NewDecoder(response.Body).Decode(&page); err != nil {
+			t.Fatal(err)
+		}
+		return page, response
+	}
+
+	base := "/api/v1/widget/articles?key=" + widgetRecord.PublicKey + "&url=https%3A%2F%2Fhelp.example.com%2F"
+	first, firstResponse := request(base + "&limit=1")
+	if firstResponse.Code != http.StatusOK || !first.HasMore || first.NextCursor == nil || len(first.Data) != 1 || first.Data[0]["slug"] != "newest-article" {
+		t.Fatalf("first widget article page = %d %+v", firstResponse.Code, first)
+	}
+	second, secondResponse := request(base + "&limit=1&cursor=" + *first.NextCursor)
+	if secondResponse.Code != http.StatusOK || !second.HasMore || second.NextCursor == nil || len(second.Data) != 1 || second.Data[0]["slug"] != "older-article" {
+		t.Fatalf("second widget article page = %d %+v", secondResponse.Code, second)
+	}
+	third, thirdResponse := request(base + "&limit=1&cursor=" + *second.NextCursor)
+	if thirdResponse.Code != http.StatusOK || third.HasMore || third.NextCursor != nil || len(third.Data) != 1 || third.Data[0]["slug"] != "other-article" {
+		t.Fatalf("third widget article page = %d %+v", thirdResponse.Code, third)
 	}
 }
 

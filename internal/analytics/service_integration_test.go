@@ -64,6 +64,72 @@ func TestFoldWorkspacePromotesWidgetSurfaceEvents(t *testing.T) {
 	}
 }
 
+func TestRollupsPageUsesDimensionTieBreaker(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id,name,slug) VALUES ('wrk_analytics_page','Analytics page','analytics-page')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO report_rollups (id,workspace_id,metric,grain,bucket,dimensions,value,count)
+		VALUES
+			('rup_email','wrk_analytics_page','conversations.created','day','2026-08-01T00:00:00Z','{"channel":"email"}',1,1),
+			('rup_widget','wrk_analytics_page','conversations.created','day','2026-08-01T00:00:00Z','{"channel":"widget"}',2,2),
+			('rup_next_day','wrk_analytics_page','conversations.created','day','2026-08-02T00:00:00Z','{"channel":"email"}',3,3)
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	service := New(pool)
+	first, err := service.RollupsPage(ctx, "wrk_analytics_page", "conversations.created", "day", time.Time{}, time.Time{}, time.Time{}, "", 2)
+	if err != nil || len(first) != 2 || first[0].CursorKey == "" || first[1].CursorKey == "" {
+		t.Fatalf("first rollup page = %+v, err=%v", first, err)
+	}
+	second, err := service.RollupsPage(ctx, "wrk_analytics_page", "conversations.created", "day", time.Time{}, time.Time{}, first[1].Bucket, first[1].CursorKey, 2)
+	if err != nil || len(second) != 1 || !second[0].Bucket.After(first[1].Bucket) {
+		t.Fatalf("second rollup page = %+v, err=%v", second, err)
+	}
+
+	all, err := service.Rollups(ctx, "wrk_analytics_page", "conversations.created", "day", time.Time{}, time.Time{})
+	if err != nil || len(all) != 3 {
+		t.Fatalf("full rollups = %+v, err=%v", all, err)
+	}
+}
+
+func TestNoResultSearchesPageUsesStableCursor(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspaces (id,name,slug)
+		VALUES ('wrk_analytics_search_page','Analytics search page','analytics-search-page')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO article_searches (id,workspace_id,query,result_count,surface,occurred_at)
+		VALUES
+			('ase_billing_1','wrk_analytics_search_page','billing',0,'portal','2026-08-01T10:00:00Z'),
+			('ase_billing_2','wrk_analytics_search_page','billing',0,'widget','2026-08-02T10:00:00Z'),
+			('ase_password','wrk_analytics_search_page','password reset',0,'portal','2026-08-03T10:00:00Z'),
+			('ase_found','wrk_analytics_search_page','billing',2,'portal','2026-08-04T10:00:00Z')
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	service := New(pool)
+	from, to := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, time.August, 5, 0, 0, 0, 0, time.UTC)
+	first, err := service.NoResultSearchesPage(ctx, "wrk_analytics_search_page", from, to, 0, time.Time{}, "", 1)
+	if err != nil || len(first) != 1 || first[0].Query != "billing" || first[0].Count != 2 {
+		t.Fatalf("first no-result search page = %+v, err=%v", first, err)
+	}
+	second, err := service.NoResultSearchesPage(ctx, "wrk_analytics_search_page", from, to, first[0].Count, first[0].LastOccurredAt, first[0].Query, 1)
+	if err != nil || len(second) != 1 || second[0].Query != "password reset" || second[0].Count != 1 {
+		t.Fatalf("second no-result search page = %+v, err=%v", second, err)
+	}
+}
+
 func TestFoldWorkspacePromotesKnowledgeBaseAndFeedbackEvents(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.Reset(t, pool)

@@ -17,6 +17,7 @@ func registerAnalyticsRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/analytics/metrics", requireCapability(deps, authorization.ReportRead, handleListAnalyticsMetrics(deps)))
 	mux.HandleFunc("GET /v1/analytics/summary", requireCapability(deps, authorization.ReportRead, handleAnalyticsSummary(deps)))
 	mux.HandleFunc("GET /v1/analytics/rollups", requireCapability(deps, authorization.ReportRead, handleListAnalyticsRollups(deps)))
+	mux.HandleFunc("GET /v1/analytics/searches/no-results", requireCapability(deps, authorization.ReportRead, handleListNoResultSearches(deps)))
 	mux.HandleFunc("GET /v1/analytics/workload", requireCapability(deps, authorization.ReportRead, handleAnalyticsWorkload(deps)))
 	mux.HandleFunc("GET /v1/reports", requireCapability(deps, authorization.ReportRead, handleListReports(deps)))
 	mux.HandleFunc("POST /v1/reports", requireCapability(deps, authorization.ReportRead, Idempotency(deps)(handleCreateReport(deps))))
@@ -32,6 +33,36 @@ func registerAnalyticsRoutes(mux *http.ServeMux, deps Deps) {
 func handleListAnalyticsMetrics(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": deps.Analytics.MetricDefinitions()})
+	}
+}
+func handleListNoResultSearches(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		afterCount := 0
+		if !cursor.IsZero() {
+			afterCount, err = strconv.Atoi(cursor.Value)
+			if err != nil || afterCount <= 0 || cursor.ID == "" || cursor.At.IsZero() {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+				return
+			}
+		}
+		from, to, err := analyticsWindow(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, err.Error())
+			return
+		}
+		items, err := deps.Analytics.NoResultSearchesPage(r.Context(), actorFromRequest(r).WorkspaceID, from, to, afterCount, cursor.At, cursor.ID, limit+1)
+		if err != nil {
+			writeAnalyticsInternal(w, r)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(items, limit, func(item analytics.SearchTerm) Cursor {
+			return Cursor{Value: strconv.Itoa(item.Count), At: item.LastOccurredAt, ID: item.Query}
+		}))
 	}
 }
 func handleAnalyticsSummary(deps Deps) http.HandlerFunc {
@@ -74,17 +105,24 @@ func analyticsWindow(r *http.Request) (time.Time, time.Time, error) {
 }
 func handleListAnalyticsRollups(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
 		from, to, err := analyticsWindow(r)
 		if err != nil {
 			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, err.Error())
 			return
 		}
-		items, err := deps.Analytics.Rollups(r.Context(), actorFromRequest(r).WorkspaceID, r.URL.Query().Get("metric"), r.URL.Query().Get("grain"), from, to)
+		items, err := deps.Analytics.RollupsPage(r.Context(), actorFromRequest(r).WorkspaceID, r.URL.Query().Get("metric"), r.URL.Query().Get("grain"), from, to, cursor.At, cursor.Value, limit+1)
 		if err != nil {
 			writeAnalyticsInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(items, limit, func(item analytics.Rollup) Cursor {
+			return Cursor{At: item.Bucket, Value: item.CursorKey}
+		}))
 	}
 }
 
