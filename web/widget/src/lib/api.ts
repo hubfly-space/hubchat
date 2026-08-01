@@ -100,11 +100,13 @@ export function postMessage(
   return post(host, `/conversations/${conversationId}/messages`, { public_key: publicKey, url: location.href, token, body, file_ids: fileIDs });
 }
 
-export async function listForms(host: string, publicKey: string): Promise<WidgetForm[]> {
-  const params = new URLSearchParams({ key: publicKey, url: location.href });
+export type WidgetFormsPage = { data: WidgetForm[]; next_cursor: string | null; has_more: boolean };
+
+export async function listForms(host: string, publicKey: string, cursor?: string | null): Promise<WidgetFormsPage> {
+  const params = new URLSearchParams({ key: publicKey, url: location.href, limit: "25" });
+  if (cursor) params.set("cursor", cursor);
   const response = await fetch(`${endpoint(host, "/forms")}?${params.toString()}`, { credentials: "omit" });
-  const parsed = await parse<{ data: WidgetForm[] }>(response);
-  return parsed.data;
+  return parse<WidgetFormsPage>(response);
 }
 
 export function submitForm(
@@ -139,16 +141,22 @@ export async function uploadFormFile(
   return parse(response);
 }
 
-export async function listFeedbackBoards(host: string, publicKey: string): Promise<WidgetFeedbackBoard[]> {
-  const params = new URLSearchParams({ key: publicKey, url: location.href });
+export type WidgetFeedbackBoardsPage = { data: WidgetFeedbackBoard[]; next_cursor: string | null; has_more: boolean };
+
+export async function listFeedbackBoards(host: string, publicKey: string, cursor?: string | null): Promise<WidgetFeedbackBoardsPage> {
+  const params = new URLSearchParams({ key: publicKey, url: location.href, limit: "25" });
+  if (cursor) params.set("cursor", cursor);
   const response = await fetch(`${endpoint(host, "/feedback/boards")}?${params.toString()}`, { credentials: "omit" });
-  return (await parse<{ data: WidgetFeedbackBoard[] }>(response)).data;
+  return parse<WidgetFeedbackBoardsPage>(response);
 }
 
-export async function listFeedbackItems(host: string, publicKey: string, token: string | null, slug: string): Promise<WidgetFeedbackItem[]> {
-  const params = new URLSearchParams({ key: publicKey, url: location.href, token: token ?? "" });
+export type WidgetFeedbackItemsPage = { data: WidgetFeedbackItem[]; next_cursor: string | null; has_more: boolean };
+
+export async function listFeedbackItems(host: string, publicKey: string, token: string | null, slug: string, cursor?: string | null): Promise<WidgetFeedbackItemsPage> {
+  const params = new URLSearchParams({ key: publicKey, url: location.href, token: token ?? "", limit: "25" });
+  if (cursor) params.set("cursor", cursor);
   const response = await fetch(`${endpoint(host, `/feedback/boards/${encodeURIComponent(slug)}/items`)}?${params.toString()}`, { credentials: "omit" });
-  return (await parse<{ data: WidgetFeedbackItem[] }>(response)).data;
+  return parse<WidgetFeedbackItemsPage>(response);
 }
 
 export function createFeedbackItem(host: string, publicKey: string, token: string | null, slug: string, title: string, description: string): Promise<{ item: WidgetFeedbackItem; token?: string }> {

@@ -985,24 +985,69 @@ function FeedbackScreen({ host, publicKey, token, initialSlug, onToken, onDone }
 }) {
   const [boards, setBoards] = useState<WidgetFeedbackBoard[]>([]);
   const [board, setBoard] = useState<WidgetFeedbackBoard | null>(null);
+  const [nextBoardCursor, setNextBoardCursor] = useState<string | null>(null);
+  const [hasMoreBoards, setHasMoreBoards] = useState(false);
+  const [loadingBoards, setLoadingBoards] = useState(false);
   const [items, setItems] = useState<WidgetFeedbackItem[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMoreItems, setHasMoreItems] = useState(false);
+  const [loadingItems, setLoadingItems] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    void listFeedbackBoards(host, publicKey).then((next) => {
+    setLoadingBoards(true);
+    void listFeedbackBoards(host, publicKey).then((page) => {
       if (cancelled) return;
-      setBoards(next);
-      setBoard(next.find((item) => item.slug === initialSlug) ?? next[0] ?? null);
-    }).catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : "Feedback is unavailable."); });
+      setBoards(page.data);
+      setNextBoardCursor(page.next_cursor);
+      setHasMoreBoards(page.has_more);
+      setBoard(page.data.find((item) => item.slug === initialSlug) ?? page.data[0] ?? null);
+    }).catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : "Feedback is unavailable."); }).finally(() => { if (!cancelled) setLoadingBoards(false); });
     return () => { cancelled = true; };
   }, [host, publicKey, initialSlug]);
+  const loadMoreBoards = async () => {
+    if (!nextBoardCursor || loadingBoards) return;
+    setLoadingBoards(true);
+    try {
+      const page = await listFeedbackBoards(host, publicKey, nextBoardCursor);
+      setBoards((current) => [...current, ...page.data]);
+      setNextBoardCursor(page.next_cursor);
+      setHasMoreBoards(page.has_more);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load more feedback boards.");
+    } finally {
+      setLoadingBoards(false);
+    }
+  };
   useEffect(() => {
     if (!board) return;
-    void listFeedbackItems(host, publicKey, token, board.slug).then(setItems).catch(() => setError("Could not load feedback items."));
+    setItems([]);
+    setNextCursor(null);
+    setHasMoreItems(false);
+    setLoadingItems(true);
+    void listFeedbackItems(host, publicKey, token, board.slug).then((page) => {
+      setItems(page.data);
+      setNextCursor(page.next_cursor);
+      setHasMoreItems(page.has_more);
+    }).catch(() => setError("Could not load feedback items.")).finally(() => setLoadingItems(false));
   }, [host, publicKey, token, board]);
+  const loadMoreItems = async () => {
+    if (!board || !nextCursor || loadingItems) return;
+    setLoadingItems(true);
+    try {
+      const page = await listFeedbackItems(host, publicKey, token, board.slug, nextCursor);
+      setItems((current) => [...current, ...page.data]);
+      setNextCursor(page.next_cursor);
+      setHasMoreItems(page.has_more);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load more feedback.");
+    } finally {
+      setLoadingItems(false);
+    }
+  };
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!board || !title.trim() || !description.trim()) return;
@@ -1027,8 +1072,9 @@ function FeedbackScreen({ host, publicKey, token, initialSlug, onToken, onDone }
       setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, viewer_subscribed: !item.viewer_subscribed } : entry));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not update feedback subscription."); }
   };
+  if (loadingBoards && !board) return <p className="p-6 text-center text-xs text-fg-muted">Loading feedback boards…</p>;
   if (!board) return <div className="p-6 text-center"><p className="text-sm font-medium text-fg">No public feedback boards</p>{error && <p className="mt-2 text-xs text-danger">{error}</p>}<button type="button" onClick={onDone} className="mt-4 rounded-md border border-line px-3 py-1.5 text-xs text-fg-secondary">Back</button></div>;
-  return <div className="p-3"><div className="mb-3 flex items-center gap-2">{boards.length > 1 ? <select value={board.slug} onChange={(event) => setBoard(boards.find((item) => item.slug === event.target.value) ?? board)} className="min-w-0 flex-1 rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg">{boards.map((item) => <option key={item.id} value={item.slug}>{item.name}</option>)}</select> : <p className="text-sm font-medium text-fg">{board.name}</p>}</div>{board.description && <p className="mb-3 text-xs text-fg-muted">{board.description}</p>}<form className="space-y-2 border-b border-line pb-3" onSubmit={(event) => void submit(event)}><input required value={title} onChange={(event) => setTitle(event.target.value)} placeholder="What should we improve?" className="w-full rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" /><textarea required rows={3} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Tell us why this matters…" className="w-full resize-none rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" /><button type="submit" disabled={sending} className="w-full rounded-md bg-accent px-3 py-2 text-sm font-medium text-accent-fg disabled:opacity-50">{sending ? "Sending…" : "Submit feedback"}</button></form>{error && <p className="mt-2 text-xs text-danger">{error}</p>}<div className="mt-3 space-y-2">{items.length === 0 ? <p className="py-4 text-center text-xs text-fg-muted">No feedback here yet.</p> : items.map((item) => <div key={item.id} className="rounded-md border border-line bg-inset p-2.5"><p className="text-xs font-medium text-fg">{item.title}</p><p className="mt-1 line-clamp-2 text-[11px] text-fg-muted">{item.description}</p><div className="mt-2 flex items-center justify-between gap-2"><span className="text-[11px] text-fg-disabled">{item.status.replaceAll("_", " ")}</span><div className="flex items-center gap-1.5"><button type="button" disabled={item.viewer_has_voted} onClick={() => void vote(item)} className="rounded border border-line px-2 py-1 text-[11px] text-fg-secondary disabled:opacity-50">{item.viewer_has_voted ? "Voted" : `Vote · ${item.vote_count}`}</button><button type="button" onClick={() => void follow(item)} className="rounded border border-line px-2 py-1 text-[11px] text-fg-secondary">{item.viewer_subscribed ? "Following" : "Follow"}</button></div></div></div>)}</div></div>;
+  return <div className="p-3"><div className="mb-3 flex items-center gap-2">{boards.length > 1 ? <select value={board.slug} onChange={(event) => setBoard(boards.find((item) => item.slug === event.target.value) ?? board)} className="min-w-0 flex-1 rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg">{boards.map((item) => <option key={item.id} value={item.slug}>{item.name}</option>)}</select> : <p className="text-sm font-medium text-fg">{board.name}</p>}</div>{board.description && <p className="mb-3 text-xs text-fg-muted">{board.description}</p>}<form className="space-y-2 border-b border-line pb-3" onSubmit={(event) => void submit(event)}><input required value={title} onChange={(event) => setTitle(event.target.value)} placeholder="What should we improve?" className="w-full rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" /><textarea required rows={3} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Tell us why this matters…" className="w-full resize-none rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" /><button type="submit" disabled={sending} className="w-full rounded-md bg-accent px-3 py-2 text-sm font-medium text-accent-fg disabled:opacity-50">{sending ? "Sending…" : "Submit feedback"}</button></form>{error && <p className="mt-2 text-xs text-danger">{error}</p>}<div className="mt-3 space-y-2">{items.length === 0 ? <p className="py-4 text-center text-xs text-fg-muted">No feedback here yet.</p> : items.map((item) => <div key={item.id} className="rounded-md border border-line bg-inset p-2.5"><p className="text-xs font-medium text-fg">{item.title}</p><p className="mt-1 line-clamp-2 text-[11px] text-fg-muted">{item.description}</p><div className="mt-2 flex items-center justify-between gap-2"><span className="text-[11px] text-fg-disabled">{item.status.replaceAll("_", " ")}</span><div className="flex items-center gap-1.5"><button type="button" disabled={item.viewer_has_voted} onClick={() => void vote(item)} className="rounded border border-line px-2 py-1 text-[11px] text-fg-secondary disabled:opacity-50">{item.viewer_has_voted ? "Voted" : `Vote · ${item.vote_count}`}</button><button type="button" onClick={() => void follow(item)} className="rounded border border-line px-2 py-1 text-[11px] text-fg-secondary">{item.viewer_subscribed ? "Following" : "Follow"}</button></div></div></div>)}</div>{hasMoreBoards && <button type="button" disabled={loadingBoards} onClick={() => void loadMoreBoards()} className="mt-3 w-full rounded-md border border-line px-3 py-2 text-xs text-fg-secondary disabled:opacity-50">{loadingBoards ? "Loading boards…" : "Load more boards"}</button>}{hasMoreItems && <button type="button" disabled={loadingItems} onClick={() => void loadMoreItems()} className="mt-3 w-full rounded-md border border-line px-3 py-2 text-xs text-fg-secondary disabled:opacity-50">{loadingItems ? "Loading…" : "Load more feedback"}</button>}</div>;
 }
 
 function FormScreen({ host, publicKey, token, initialSlug, onToken, onDone }: {
@@ -1041,6 +1087,8 @@ function FormScreen({ host, publicKey, token, initialSlug, onToken, onDone }: {
 }) {
   const [forms, setForms] = useState<WidgetForm[]>([]);
   const [form, setForm] = useState<WidgetForm | null>(null);
+  const [nextFormCursor, setNextFormCursor] = useState<string | null>(null);
+  const [hasMoreForms, setHasMoreForms] = useState(false);
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [fileIDs, setFileIDs] = useState<Record<string, string>>({});
   const [uploadingField, setUploadingField] = useState<string | null>(null);
@@ -1052,15 +1100,32 @@ function FormScreen({ host, publicKey, token, initialSlug, onToken, onDone }: {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    void listForms(host, publicKey).then((items) => {
+    void listForms(host, publicKey).then((page) => {
       if (cancelled) return;
-      setForms(items);
-      setForm(items.find((item) => item.slug === initialSlug) ?? items[0] ?? null);
+      setForms(page.data);
+      setNextFormCursor(page.next_cursor);
+      setHasMoreForms(page.has_more);
+      setForm(page.data.find((item) => item.slug === initialSlug) ?? page.data[0] ?? null);
     }).catch((reason: unknown) => {
       if (!cancelled) setError(reason instanceof Error ? reason.message : "Forms are unavailable.");
     }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [host, publicKey, initialSlug]);
+
+  const loadMoreForms = async () => {
+    if (!nextFormCursor || loading) return;
+    setLoading(true);
+    try {
+      const page = await listForms(host, publicKey, nextFormCursor);
+      setForms((current) => [...current, ...page.data]);
+      setNextFormCursor(page.next_cursor);
+      setHasMoreForms(page.has_more);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load more request forms.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const visible = (field: WidgetForm["fields"][number]) => {
     const condition = field.condition ?? {};
@@ -1100,7 +1165,7 @@ function FormScreen({ host, publicKey, token, initialSlug, onToken, onDone }: {
     } finally { setUploadingField(null); }
   };
 
-  return <div className="p-3"><div className="mb-3 flex items-center gap-2">{forms.length > 1 && <select value={form.slug} onChange={(event) => { setForm(forms.find((item) => item.slug === event.target.value) ?? form); setValues({}); setFileIDs({}); }} className="min-w-0 flex-1 rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg"><option value={form.slug}>{form.name}</option>{forms.filter((item) => item.slug !== form.slug).map((item) => <option key={item.slug} value={item.slug}>{item.name}</option>)}</select>}{forms.length === 1 && <p className="text-sm font-medium text-fg">{form.name}</p>}</div>{form.description && <p className="mb-3 text-xs leading-normal text-fg-muted">{form.description}</p>}<form className="flex flex-col gap-3" onSubmit={(event) => void submit(event)}>{form.fields.filter(visible).map((field) => <label key={field.key} className="flex flex-col gap-1"><span className="text-xs font-medium text-fg-secondary">{field.label}{field.required && <span className="text-danger"> *</span>}</span>{field.description && <span className="text-[11px] text-fg-muted">{field.description}</span>}{field.type === "file" ? <><input required={field.required} type="file" onChange={(event) => void chooseFile(field.key, event.target.files?.[0])} className="text-xs text-fg-muted" />{uploadingField === field.key ? <span className="text-[11px] text-fg-muted">Uploading…</span> : fileIDs[field.key] ? <span className="text-[11px] text-success-text">File ready</span> : null}</> : field.type === "text" ? <textarea required={field.required} rows={4} value={String(values[field.key] ?? "")} placeholder={field.placeholder ?? ""} onChange={(event) => setValue(field.key, event.target.value)} className="resize-none rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" /> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(values[field.key])} onChange={(event) => setValue(field.key, event.target.checked)} className="size-4 accent-accent" /> : field.type === "enum" ? <select required={field.required} value={String(values[field.key] ?? "")} onChange={(event) => setValue(field.key, event.target.value)} className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent"><option value="">Choose…</option>{(field.options ?? []).map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input required={field.required} type={field.type === "email" ? "email" : field.type === "integer" || field.type === "decimal" ? "number" : "text"} value={String(values[field.key] ?? "")} placeholder={field.placeholder ?? ""} onChange={(event) => setValue(field.key, field.type === "integer" || field.type === "decimal" ? Number(event.target.value) : event.target.value)} className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" />}</label>)}{error && <p className="text-xs text-danger">{error}</p>}<button type="submit" disabled={sending || uploadingField !== null} className="rounded-md bg-accent px-3 py-2 text-sm font-medium text-accent-fg disabled:opacity-50">{sending || uploadingField ? "Sending…" : "Send request"}</button></form></div>;
+  return <div className="p-3"><div className="mb-3 flex items-center gap-2">{forms.length > 1 && <select value={form.slug} onChange={(event) => { setForm(forms.find((item) => item.slug === event.target.value) ?? form); setValues({}); setFileIDs({}); }} className="min-w-0 flex-1 rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg"><option value={form.slug}>{form.name}</option>{forms.filter((item) => item.slug !== form.slug).map((item) => <option key={item.slug} value={item.slug}>{item.name}</option>)}</select>}{forms.length === 1 && <p className="text-sm font-medium text-fg">{form.name}</p>}</div>{form.description && <p className="mb-3 text-xs leading-normal text-fg-muted">{form.description}</p>}<form className="flex flex-col gap-3" onSubmit={(event) => void submit(event)}>{form.fields.filter(visible).map((field) => <label key={field.key} className="flex flex-col gap-1"><span className="text-xs font-medium text-fg-secondary">{field.label}{field.required && <span className="text-danger"> *</span>}</span>{field.description && <span className="text-[11px] text-fg-muted">{field.description}</span>}{field.type === "file" ? <><input required={field.required} type="file" onChange={(event) => void chooseFile(field.key, event.target.files?.[0])} className="text-xs text-fg-muted" />{uploadingField === field.key ? <span className="text-[11px] text-fg-muted">Uploading…</span> : fileIDs[field.key] ? <span className="text-[11px] text-success-text">File ready</span> : null}</> : field.type === "text" ? <textarea required={field.required} rows={4} value={String(values[field.key] ?? "")} placeholder={field.placeholder ?? ""} onChange={(event) => setValue(field.key, event.target.value)} className="resize-none rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" /> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(values[field.key])} onChange={(event) => setValue(field.key, event.target.checked)} className="size-4 accent-accent" /> : field.type === "enum" ? <select required={field.required} value={String(values[field.key] ?? "")} onChange={(event) => setValue(field.key, event.target.value)} className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent"><option value="">Choose…</option>{(field.options ?? []).map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input required={field.required} type={field.type === "email" ? "email" : field.type === "integer" || field.type === "decimal" ? "number" : "text"} value={String(values[field.key] ?? "")} placeholder={field.placeholder ?? ""} onChange={(event) => setValue(field.key, field.type === "integer" || field.type === "decimal" ? Number(event.target.value) : event.target.value)} className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" />}</label>)}{error && <p className="text-xs text-danger">{error}</p>}{hasMoreForms && <button type="button" disabled={loading} onClick={() => void loadMoreForms()} className="rounded-md border border-line px-3 py-2 text-xs text-fg-secondary disabled:opacity-50">{loading ? "Loading forms…" : "Load more forms"}</button>}<button type="submit" disabled={sending || uploadingField !== null} className="rounded-md bg-accent px-3 py-2 text-sm font-medium text-accent-fg disabled:opacity-50">{sending || uploadingField ? "Sending…" : "Send request"}</button></form></div>;
 }
 
 /** React 19 passes `ref` as an ordinary prop, so no forwardRef wrapper. */
