@@ -76,6 +76,38 @@ func TestCompanyCRUDTagsAndRoster(t *testing.T) {
 	}
 }
 
+func TestCompanyRosterUsesStableCursorPages(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	svc := newTestService(t, pool)
+	wsID, memberID := seedWorkspace(t, ctx, pool)
+	company, err := svc.CreateCompany(ctx, wsID, memberID, "Acme", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstID := seedCustomer(t, ctx, pool, wsID, "First")
+	secondID := seedCustomer(t, ctx, pool, wsID, "Second")
+	if err := svc.LinkCustomer(ctx, wsID, company.ID, firstID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.LinkCustomer(ctx, wsID, company.ID, secondID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE customers SET last_seen_at = CASE id WHEN $1 THEN '2026-08-01T12:00:00Z'::timestamptz ELSE '2026-08-01T11:00:00Z'::timestamptz END WHERE id IN ($1,$2)`, firstID, secondID); err != nil {
+		t.Fatal(err)
+	}
+
+	firstPage, err := svc.CompanyCustomersPage(ctx, wsID, company.ID, time.Time{}, "", 1)
+	if err != nil || len(firstPage) != 1 || firstPage[0].ID != firstID {
+		t.Fatalf("first company roster page = %+v, err=%v", firstPage, err)
+	}
+	secondPage, err := svc.CompanyCustomersPage(ctx, wsID, company.ID, *firstPage[0].LastSeenAt, firstPage[0].ID, 1)
+	if err != nil || len(secondPage) != 1 || secondPage[0].ID != secondID {
+		t.Fatalf("second company roster page = %+v, err=%v", secondPage, err)
+	}
+}
+
 func TestCompanyExternalIDMustBeUniquePerWorkspace(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.Reset(t, pool)
@@ -197,6 +229,14 @@ func TestIngestEventValidatesSourceAndSizeAndPowersTheTimeline(t *testing.T) {
 	if timeline[0].Type != "checkout.started" {
 		t.Fatalf("expected the timeline newest-first, got %s first", timeline[0].Type)
 	}
+	firstPage, err := svc.Timeline(ctx, wsID, cust, time.Time{}, "", 1)
+	if err != nil || len(firstPage) != 1 {
+		t.Fatalf("first timeline page = %+v, err=%v", firstPage, err)
+	}
+	secondPage, err := svc.Timeline(ctx, wsID, cust, firstPage[0].OccurredAt, firstPage[0].ID, 1)
+	if err != nil || len(secondPage) != 1 || secondPage[0].Type != "page.viewed" {
+		t.Fatalf("second timeline page = %+v, err=%v", secondPage, err)
+	}
 
 	stream, err := svc.ListEvents(ctx, wsID, "page.viewed", time.Time{}, "", 50)
 	if err != nil {
@@ -225,6 +265,34 @@ func TestIngestEventRejectsAnOversizedPayload(t *testing.T) {
 
 	if _, err := svc.IngestEvent(ctx, wsID, cust, "big.event", "rest_api", nil, huge); !errors.Is(err, customer.ErrEventTooLarge) {
 		t.Fatalf("expected ErrEventTooLarge, got %v", err)
+	}
+}
+
+func TestSessionsPageIsWorkspaceScopedAndStable(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	svc := newTestService(t, pool)
+	wsID, _ := seedWorkspace(t, ctx, pool)
+	cust := seedCustomer(t, ctx, pool, wsID, "Ada")
+	for _, session := range []struct {
+		id      string
+		started time.Time
+	}{
+		{"ses_page_1", time.Now().UTC().Add(-2 * time.Hour)},
+		{"ses_page_2", time.Now().UTC().Add(-time.Hour)},
+	} {
+		if _, err := pool.Exec(ctx, `INSERT INTO contact_sessions (id,workspace_id,customer_id,started_at,last_seen_at,current_url) VALUES ($1,$2,$3,$4,$4,$5)`, session.id, wsID, cust, session.started, "/pricing"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, err := svc.SessionsPage(ctx, wsID, cust, time.Time{}, "", 1)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first session page = %+v, err=%v", first, err)
+	}
+	second, err := svc.SessionsPage(ctx, wsID, cust, first[0].StartedAt, first[0].ID, 1)
+	if err != nil || len(second) != 1 || second[0].ID == first[0].ID || second[0].WorkspaceID != wsID {
+		t.Fatalf("second session page = %+v, err=%v", second, err)
 	}
 }
 

@@ -114,6 +114,9 @@ type ItemInput struct {
 	CompanyID   string `json:"company_id"`
 	ProductArea string `json:"product_area"`
 	Priority    string `json:"priority"`
+	// ImportKey is an internal, workspace-scoped idempotency key used by
+	// resumable portability jobs. It is never accepted from public JSON.
+	ImportKey string `json:"-"`
 }
 
 type Link struct {
@@ -173,7 +176,20 @@ func (s *Service) ListBoards(ctx context.Context, workspaceID string) ([]Board, 
 // the id as a deterministic tie-breaker. A position cursor is kept in the
 // opaque API cursor's Value field because position is not a timestamp.
 func (s *Service) ListBoardsPage(ctx context.Context, workspaceID string, beforePosition *int, beforeID string, limit int) ([]Board, error) {
+	return s.listBoardsPage(ctx, workspaceID, beforePosition, beforeID, limit, false)
+}
+
+// ListPublicBoardsPage returns only boards that can be exposed through the
+// public feedback surface.
+func (s *Service) ListPublicBoardsPage(ctx context.Context, workspaceID string, beforePosition *int, beforeID string, limit int) ([]Board, error) {
+	return s.listBoardsPage(ctx, workspaceID, beforePosition, beforeID, limit, true)
+}
+
+func (s *Service) listBoardsPage(ctx context.Context, workspaceID string, beforePosition *int, beforeID string, limit int, publicOnly bool) ([]Board, error) {
 	query := `SELECT id,workspace_id,name,slug,coalesce(description,''),visibility,allow_comments,allow_voting,votes_per_customer,CASE WHEN moderation THEN 'pre' ELSE 'none' END,item_count,position,created_at,updated_at FROM feedback_boards WHERE workspace_id=$1`
+	if publicOnly {
+		query += ` AND visibility='public'`
+	}
 	args := []any{workspaceID}
 	if beforePosition != nil {
 		query += " AND (position,id) > ($2,$3)"
@@ -242,8 +258,45 @@ func (s *Service) CreateItem(ctx context.Context, workspaceID, boardID, memberID
 	}
 	id := ids.New(ids.PrefixFeedbackItem)
 	err = database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `INSERT INTO feedback_items(id,workspace_id,board_id,title,description,type,status,visibility,submitter_id,created_by_member_id,company_id,product_area,priority) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),NULLIF($10,''),NULLIF($11,''),NULLIF($12,''),NULLIF($13,''))`, id, workspaceID, boardID, title, strings.TrimSpace(input.Description), typ, status, visibility, customerID, memberID, input.CompanyID, input.ProductArea, input.Priority); err != nil {
+		if customerID != "" {
+			var exists bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM customers WHERE workspace_id=$1 AND id=$2)`, workspaceID, customerID).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				return ErrNotFound
+			}
+		}
+		if input.CompanyID != "" {
+			var exists bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM companies WHERE workspace_id=$1 AND id=$2)`, workspaceID, input.CompanyID).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				return ErrNotFound
+			}
+		}
+		if input.ImportKey != "" {
+			if err := tx.QueryRow(ctx, `INSERT INTO feedback_items(id,workspace_id,board_id,title,description,type,status,visibility,submitter_id,created_by_member_id,company_id,product_area,priority,import_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),NULLIF($10,''),NULLIF($11,''),NULLIF($12,''),NULLIF($13,''),NULLIF($14,'')) ON CONFLICT (workspace_id,board_id,import_key) WHERE import_key IS NOT NULL DO NOTHING RETURNING id`, id, workspaceID, boardID, title, strings.TrimSpace(input.Description), typ, status, visibility, customerID, memberID, input.CompanyID, input.ProductArea, input.Priority, input.ImportKey).Scan(&id); errors.Is(err, pgx.ErrNoRows) {
+				return tx.QueryRow(ctx, `SELECT id FROM feedback_items WHERE workspace_id=$1 AND board_id=$2 AND import_key=$3`, workspaceID, boardID, input.ImportKey).Scan(&id)
+			} else if err != nil {
+				return err
+			}
+		} else if _, err := tx.Exec(ctx, `INSERT INTO feedback_items(id,workspace_id,board_id,title,description,type,status,visibility,submitter_id,created_by_member_id,company_id,product_area,priority) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),NULLIF($10,''),NULLIF($11,''),NULLIF($12,''),NULLIF($13,''))`, id, workspaceID, boardID, title, strings.TrimSpace(input.Description), typ, status, visibility, customerID, memberID, input.CompanyID, input.ProductArea, input.Priority); err != nil {
 			return err
+		}
+		var created bool
+		if input.ImportKey != "" {
+			var insertedID string
+			if err := tx.QueryRow(ctx, `SELECT id FROM feedback_items WHERE workspace_id=$1 AND board_id=$2 AND import_key=$3`, workspaceID, boardID, input.ImportKey).Scan(&insertedID); err != nil {
+				return err
+			}
+			created = insertedID == id
+		} else {
+			created = true
+		}
+		if !created {
+			return nil
 		}
 		if _, err := tx.Exec(ctx, `UPDATE feedback_boards SET item_count=item_count+1,updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, boardID); err != nil {
 			return err
@@ -260,6 +313,20 @@ func (s *Service) CreateItem(ctx context.Context, workspaceID, boardID, memberID
 		return nil, fmt.Errorf("feedback: create item: %w", err)
 	}
 	return s.GetItem(ctx, workspaceID, id, customerID)
+}
+
+// FindItemByImportKey resolves an item created by a resumable import without
+// exposing the import key through the public feedback API.
+func (s *Service) FindItemByImportKey(ctx context.Context, workspaceID, boardID, importKey string) (*Item, error) {
+	var id string
+	err := s.pool.QueryRow(ctx, `SELECT id FROM feedback_items WHERE workspace_id=$1 AND board_id=$2 AND import_key=$3`, workspaceID, boardID, importKey).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.GetItem(ctx, workspaceID, id, "")
 }
 
 func (s *Service) ListItems(ctx context.Context, workspaceID, boardID, status, sort, query, customerID string, limit int) ([]Item, error) {
@@ -308,10 +375,27 @@ func (s *Service) ListItemsPage(ctx context.Context, workspaceID, boardID, statu
 }
 
 func (s *Service) ListRoadmapItems(ctx context.Context, workspaceID, status string, limit int) ([]Item, error) {
-	if limit <= 0 || limit > 500 {
+	if limit <= 0 {
 		limit = 200
 	}
-	rows, err := s.pool.Query(ctx, `SELECT i.id,i.workspace_id,i.board_id,i.title,i.description,i.type,i.status,i.visibility,i.submitter_id,i.company_id,i.product_area,i.priority,i.vote_count,i.comment_count,i.subscriber_count,i.merged_into_id,false,false,i.created_at,i.updated_at FROM feedback_items i JOIN feedback_boards b ON b.id=i.board_id AND b.workspace_id=i.workspace_id WHERE i.workspace_id=$1 AND b.visibility='public' AND i.merged_into_id IS NULL AND ($2='' OR i.status=$2) ORDER BY CASE i.status WHEN 'in_progress' THEN 1 WHEN 'planned' THEN 2 WHEN 'completed' THEN 3 ELSE 4 END,i.vote_count DESC,i.created_at DESC LIMIT $3`, workspaceID, status, limit)
+	return s.ListRoadmapItemsPage(ctx, workspaceID, status, 0, 0, time.Time{}, "", limit)
+}
+
+// ListRoadmapItemsPage returns public roadmap items in a stable status, vote,
+// creation-time order. The status rank and vote count are carried together in
+// the opaque API cursor because they are both part of the sort key.
+func (s *Service) ListRoadmapItemsPage(ctx context.Context, workspaceID, status string, beforeRank int, beforeVote int64, before time.Time, beforeID string, limit int) ([]Item, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := `i.workspace_id=$1 AND b.visibility='public' AND i.merged_into_id IS NULL AND ($2='' OR i.status=$2)`
+	args := []any{workspaceID, status}
+	if !before.IsZero() {
+		where += ` AND (CASE i.status WHEN 'in_progress' THEN 1 WHEN 'planned' THEN 2 WHEN 'completed' THEN 3 ELSE 4 END > $3 OR (CASE i.status WHEN 'in_progress' THEN 1 WHEN 'planned' THEN 2 WHEN 'completed' THEN 3 ELSE 4 END = $3 AND (i.vote_count < $4 OR (i.vote_count = $4 AND (i.created_at,i.id) < ($5,$6)))))`
+		args = append(args, beforeRank, beforeVote, before, beforeID)
+	}
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, `SELECT i.id,i.workspace_id,i.board_id,i.title,i.description,i.type,i.status,i.visibility,i.submitter_id,i.company_id,i.product_area,i.priority,i.vote_count,i.comment_count,i.subscriber_count,i.merged_into_id,false,false,i.created_at,i.updated_at FROM feedback_items i JOIN feedback_boards b ON b.id=i.board_id AND b.workspace_id=i.workspace_id WHERE `+where+` ORDER BY CASE i.status WHEN 'in_progress' THEN 1 WHEN 'planned' THEN 2 WHEN 'completed' THEN 3 ELSE 4 END,i.vote_count DESC,i.created_at DESC,i.id DESC LIMIT $`+fmt.Sprint(len(args)), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -737,10 +821,25 @@ func (s *Service) AddComment(ctx context.Context, workspaceID, itemID, authorTyp
 }
 
 func (s *Service) ListComments(ctx context.Context, workspaceID, itemID string, limit int) ([]Comment, error) {
+	return s.ListCommentsPage(ctx, workspaceID, itemID, time.Time{}, "", limit)
+}
+
+// ListCommentsPage returns comments in chronological order after the supplied
+// cursor. Forward pagination keeps older discussion pages appendable in both
+// the portal and dashboard without reversing the conversation for the reader.
+func (s *Service) ListCommentsPage(ctx context.Context, workspaceID, itemID string, after time.Time, afterID string, limit int) ([]Comment, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	rows, err := s.pool.Query(ctx, `SELECT c.id,c.workspace_id,c.item_id,c.author_type,c.author_id,c.author_name,c.body,c.is_official_update,c.created_at FROM feedback_comments c JOIN feedback_items i ON i.id=c.item_id AND i.workspace_id=c.workspace_id WHERE c.workspace_id=$1 AND c.item_id=$2 ORDER BY c.created_at ASC,c.id ASC LIMIT $3`, workspaceID, itemID, limit)
+	query := `SELECT c.id,c.workspace_id,c.item_id,c.author_type,c.author_id,c.author_name,c.body,c.is_official_update,c.created_at FROM feedback_comments c JOIN feedback_items i ON i.id=c.item_id AND i.workspace_id=c.workspace_id WHERE c.workspace_id=$1 AND c.item_id=$2`
+	args := []any{workspaceID, itemID}
+	if !after.IsZero() {
+		query += " AND (c.created_at,c.id) > ($3,$4)"
+		args = append(args, after, afterID)
+	}
+	args = append(args, limit)
+	query += fmt.Sprintf(" ORDER BY c.created_at ASC,c.id ASC LIMIT $%d", len(args))
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

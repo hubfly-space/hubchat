@@ -69,13 +69,22 @@ func scanContactSession(row interface{ Scan(dest ...any) error }) (*ContactSessi
 }
 
 func (r *repository) sessionsByCustomer(ctx context.Context, workspaceID, customerID string, limit int) ([]ContactSession, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT `+contactSessionColumns+`
+	return r.sessionsByCustomerPage(ctx, workspaceID, customerID, time.Time{}, "", limit)
+}
+
+func (r *repository) sessionsByCustomerPage(ctx context.Context, workspaceID, customerID string, before time.Time, beforeID string, limit int) ([]ContactSession, error) {
+	query := `
+		SELECT ` + contactSessionColumns + `
 		FROM contact_sessions
-		WHERE workspace_id = $1 AND customer_id = $2
-		ORDER BY started_at DESC
-		LIMIT $3
-	`, workspaceID, customerID, limit)
+		WHERE workspace_id = $1 AND customer_id = $2`
+	args := []any{workspaceID, customerID}
+	if !before.IsZero() {
+		query += ` AND (started_at,id) < ($3,$4)`
+		args = append(args, before, beforeID)
+	}
+	query += fmt.Sprintf(" ORDER BY started_at DESC,id DESC LIMIT $%d", len(args)+1)
+	args = append(args, limit)
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("customer: sessions by customer: %w", err)
 	}
@@ -233,6 +242,15 @@ func (s *Service) Sessions(ctx context.Context, workspaceID, customerID string, 
 		limit = 20
 	}
 	return s.repo.sessionsByCustomer(ctx, workspaceID, customerID, limit)
+}
+
+// SessionsPage returns a customer's contact sessions newest first with a
+// started_at/id cursor, preserving tenant scoping for every page.
+func (s *Service) SessionsPage(ctx context.Context, workspaceID, customerID string, before time.Time, beforeID string, limit int) ([]ContactSession, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 100
+	}
+	return s.repo.sessionsByCustomerPage(ctx, workspaceID, customerID, before, beforeID, limit)
 }
 
 // IngestEvent validates and records one application event (§6.10, §26.4).

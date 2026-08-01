@@ -786,13 +786,27 @@ func (s *Service) ListDeliveryEvents(ctx context.Context, workspaceID, mailboxID
 }
 
 func (s *Service) ListSuppressions(ctx context.Context, workspaceID string, limit int) ([]Suppression, error) {
-	if limit <= 0 || limit > 500 {
+	return s.ListSuppressionsPage(ctx, workspaceID, time.Time{}, "", limit)
+}
+
+// ListSuppressionsPage returns a workspace-scoped page ordered by the latest
+// suppression update. The address is the deterministic tie-breaker because
+// updated_at alone is not unique.
+func (s *Service) ListSuppressionsPage(ctx context.Context, workspaceID string, before time.Time, beforeAddress string, limit int) ([]Suppression, error) {
+	if limit <= 0 || limit > 201 {
 		limit = 200
 	}
-	rows, err := s.pool.Query(ctx, `
+	query := `
 		SELECT workspace_id,address::text,reason,source,created_at,updated_at
-		FROM email_suppressions WHERE workspace_id=$1 ORDER BY updated_at DESC,address LIMIT $2
-	`, workspaceID, limit)
+		FROM email_suppressions WHERE workspace_id=$1`
+	args := []any{workspaceID}
+	if !before.IsZero() {
+		query += ` AND (updated_at < $2 OR (updated_at = $2 AND address > $3))`
+		args = append(args, before, beforeAddress)
+	}
+	query += ` ORDER BY updated_at DESC,address ASC LIMIT $` + fmt.Sprint(len(args)+1)
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("emailchannel: list suppressions: %w", err)
 	}
