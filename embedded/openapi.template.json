@@ -29,6 +29,12 @@
     "/v1/meta": {
       "get": { "operationId": "getMeta", "security": [], "tags": ["Integrations"], "responses": { "200": { "$ref": "#/components/responses/Json" } } }
     },
+    "/v1/audit-logs": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listAuditLogs", "tags": ["Integrations"] }
+    },
+    "/v1/audit-logs/export.csv": {
+      "get": { "summary": "Export audit logs as CSV", "operationId": "exportAuditLogs", "tags": ["Integrations"], "responses": { "200": { "description": "Workspace-scoped audit CSV", "content": { "text/csv": { "schema": { "type": "string" } } } }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
     "/v1/workspace/usage": {
       "get": { "$ref": "#/components/operations/get", "operationId": "getWorkspaceUsage", "tags": ["Analytics"] }
     },
@@ -241,6 +247,9 @@
     "/v1/jobs/summary": {
       "get": { "$ref": "#/components/operations/get", "operationId": "getJobSummary", "tags": ["Integrations"] }
     },
+    "/v1/ops/summary": {
+      "get": { "$ref": "#/components/operations/get", "operationId": "getOperationalSummary", "tags": ["Integrations"] }
+    },
     "/v1/sla/calendars/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/Id" }],
       "get": { "$ref": "#/components/operations/get", "operationId": "getSLACalendar", "tags": ["SLA"] },
@@ -332,6 +341,9 @@
       "get": { "$ref": "#/components/operations/list", "operationId": "listExports", "tags": ["Portability"] },
       "post": { "$ref": "#/components/operations/create", "operationId": "createExport", "tags": ["Portability"] }
     },
+    "/v1/portability/exports/preview": {
+      "post": { "summary": "Preview a workspace export", "operationId": "previewWorkspaceExport", "tags": ["Portability"], "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "200": { "$ref": "#/components/responses/Json" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
     "/v1/portability/exports/{id}": {
       "parameters": [{ "$ref": "#/components/parameters/Id" }],
       "get": { "$ref": "#/components/operations/get", "operationId": "getExport", "tags": ["Portability"] }
@@ -342,7 +354,7 @@
     },
     "/v1/portability/imports": {
       "get": { "$ref": "#/components/operations/list", "operationId": "listImports", "tags": ["Portability"] },
-      "post": { "$ref": "#/components/operations/create", "operationId": "createImport", "tags": ["Portability"], "description": "Create a resumable import. Kinds are workspace, customers_csv, companies_csv, tickets_csv, or knowledgebase_markdown." }
+      "post": { "$ref": "#/components/operations/create", "operationId": "createImport", "tags": ["Portability"], "description": "Create a resumable import. Kinds are workspace, customers_csv, companies_csv, tickets_csv, feedback_csv, or knowledgebase_markdown." }
     },
     "/v1/portability/import-files": {
       "post": {
@@ -372,6 +384,19 @@
     },
     "/v1/portal/me/delete": {
       "post": { "operationId": "deletePortalCustomerData", "security": [{ "portalCookie": [] }], "tags": ["Portal"], "requestBody": { "$ref": "#/components/requestBodies/Json" }, "responses": { "204": { "description": "Account anonymised and portal sessions revoked" }, "default": { "$ref": "#/components/responses/Error" } } }
+    },
+    "/v1/portals/{id}/domains": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }],
+      "get": { "$ref": "#/components/operations/list", "operationId": "listPortalDomains", "tags": ["Portal"] },
+      "post": { "$ref": "#/components/operations/create", "operationId": "addPortalDomain", "tags": ["Portal"] }
+    },
+    "/v1/portals/{id}/domains/{domainID}/verify": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }, { "name": "domainID", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Id" } }],
+      "post": { "$ref": "#/components/operations/create", "operationId": "verifyPortalDomain", "tags": ["Portal"] }
+    },
+    "/v1/portals/{id}/domains/{domainID}": {
+      "parameters": [{ "$ref": "#/components/parameters/Id" }, { "name": "domainID", "in": "path", "required": true, "schema": { "$ref": "#/components/schemas/Id" } }],
+      "delete": { "$ref": "#/components/operations/delete", "operationId": "deletePortalDomain", "tags": ["Portal"] }
     }
   },
   "components": {

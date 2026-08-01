@@ -94,6 +94,55 @@
         }
       }
     },
+    "/v1/audit-logs": {
+      "get": {
+        "summary": "List resources",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "listAuditLogs",
+        "tags": [
+          "Integrations"
+        ]
+      }
+    },
+    "/v1/audit-logs/export.csv": {
+      "get": {
+        "summary": "Export audit logs as CSV",
+        "operationId": "exportAuditLogs",
+        "tags": [
+          "Integrations"
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace-scoped audit CSV",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/v1/workspace/usage": {
       "get": {
         "summary": "Get a resource",
@@ -2100,6 +2149,23 @@
         ]
       }
     },
+    "/v1/ops/summary": {
+      "get": {
+        "summary": "Get a resource",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "getOperationalSummary",
+        "tags": [
+          "Integrations"
+        ]
+      }
+    },
     "/v1/sla/calendars/{id}": {
       "parameters": [
         {
@@ -2929,6 +2995,26 @@
         ]
       }
     },
+    "/v1/portability/exports/preview": {
+      "post": {
+        "summary": "Preview a workspace export",
+        "operationId": "previewWorkspaceExport",
+        "tags": [
+          "Portability"
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/Json"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/v1/portability/exports/{id}": {
       "parameters": [
         {
@@ -3022,7 +3108,7 @@
         "tags": [
           "Portability"
         ],
-        "description": "Create a resumable import. Kinds are workspace, customers_csv, companies_csv, tickets_csv, or knowledgebase_markdown."
+        "description": "Create a resumable import. Kinds are workspace, customers_csv, companies_csv, tickets_csv, feedback_csv, or knowledgebase_markdown."
       }
     },
     "/v1/portability/import-files": {
@@ -3235,6 +3321,133 @@
             "$ref": "#/components/responses/Error"
           }
         }
+      }
+    },
+    "/v1/portals/{id}/domains": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        }
+      ],
+      "get": {
+        "summary": "List resources",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "listPortalDomains",
+        "tags": [
+          "Portal"
+        ]
+      },
+      "post": {
+        "summary": "Create a resource",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/Json"
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/Json"
+          },
+          "202": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "addPortalDomain",
+        "tags": [
+          "Portal"
+        ]
+      }
+    },
+    "/v1/portals/{id}/domains/{domainID}/verify": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        },
+        {
+          "name": "domainID",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Id"
+          }
+        }
+      ],
+      "post": {
+        "summary": "Create a resource",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/Json"
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/Json"
+          },
+          "202": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "verifyPortalDomain",
+        "tags": [
+          "Portal"
+        ]
+      }
+    },
+    "/v1/portals/{id}/domains/{domainID}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        },
+        {
+          "name": "domainID",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/Id"
+          }
+        }
+      ],
+      "delete": {
+        "summary": "Delete a resource",
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "deletePortalDomain",
+        "tags": [
+          "Portal"
+        ]
       }
     }
   },

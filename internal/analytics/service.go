@@ -40,6 +40,8 @@ type Summary struct {
 	SLAInstances          int64     `json:"sla_instances"`
 	SLAMet                int64     `json:"sla_met"`
 	SLABreached           int64     `json:"sla_breached"`
+	ActiveSLAInstances    int64     `json:"active_sla_instances"`
+	OpenSLABreached       int64     `json:"open_sla_breached"`
 	SurveyResponses       int64     `json:"survey_responses"`
 	CSATAverage           *float64  `json:"csat_average,omitempty"`
 	CESAverage            *float64  `json:"ces_average,omitempty"`
@@ -166,6 +168,12 @@ func (s *Service) Summary(ctx context.Context, workspaceID string, from, to time
 		FROM sla_instances WHERE workspace_id=$1 AND COALESCE(satisfied_at, breached_at) >= $2 AND COALESCE(satisfied_at, breached_at) < $3
 	`, workspaceID, from, to).Scan(&result.SLAMet, &result.SLABreached); err != nil {
 		return nil, fmt.Errorf("analytics: sla: %w", err)
+	}
+	if err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE state='active'), count(*) FILTER (WHERE state='breached')
+		FROM sla_instances WHERE workspace_id=$1
+	`, workspaceID).Scan(&result.ActiveSLAInstances, &result.OpenSLABreached); err != nil {
+		return nil, fmt.Errorf("analytics: current sla: %w", err)
 	}
 	if err := s.pool.QueryRow(ctx, `
 		SELECT
@@ -418,7 +426,24 @@ func (s *Service) Rollups(ctx context.Context, workspaceID, metric, grain string
 	return result, rows.Err()
 }
 func (s *Service) ListReports(ctx context.Context, workspaceID string) ([]Report, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id,workspace_id,name,coalesce(description,''),definition,date_range,coalesce(timezone,''),visible_to_roles,owner_id,created_at,updated_at FROM saved_reports WHERE workspace_id=$1 ORDER BY name`, workspaceID)
+	return s.ListReportsPage(ctx, workspaceID, "", "", 200)
+}
+
+// ListReportsPage returns saved reports in stable name/id order. The cursor
+// uses the same two fields so reports with identical names are not skipped.
+func (s *Service) ListReportsPage(ctx context.Context, workspaceID, beforeName, beforeID string, limit int) ([]Report, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 200
+	}
+	query := `SELECT id,workspace_id,name,coalesce(description,''),definition,date_range,coalesce(timezone,''),visible_to_roles,owner_id,created_at,updated_at FROM saved_reports WHERE workspace_id=$1`
+	args := []any{workspaceID}
+	if beforeName != "" || beforeID != "" {
+		query += ` AND (name,id) > ($2,$3)`
+		args = append(args, beforeName, beforeID)
+	}
+	query += ` ORDER BY name ASC,id ASC LIMIT $` + fmt.Sprint(len(args)+1)
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
