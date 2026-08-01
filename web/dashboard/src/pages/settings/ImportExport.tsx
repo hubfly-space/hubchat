@@ -28,6 +28,7 @@ import { useWorkspace } from "../../app/workspace-context";
 type ExportRequest = {
   id: string;
   kind: string;
+  format?: string;
   state: "pending" | "running" | "completed" | "failed" | "expired";
   file_id?: string;
   row_count?: number;
@@ -64,6 +65,25 @@ type ExportManifest = {
   tables: Array<{ name: string; rows: number }>;
 };
 
+type ExportKind = "workspace" | "customers_csv" | "companies_csv" | "tickets_csv" | "feedback_csv" | "audit_csv" | "survey_csv";
+
+function exportKindLabel(kind: ExportKind): string {
+  return {
+    workspace: "Full workspace archive",
+    customers_csv: "Customers CSV",
+    companies_csv: "Companies CSV",
+    tickets_csv: "Tickets CSV",
+    feedback_csv: "Feedback CSV",
+    audit_csv: "Audit log CSV",
+    survey_csv: "Survey responses CSV",
+  }[kind];
+}
+
+function exportKindDescription(kind: ExportKind): string {
+  if (kind === "workspace") return "Customers, conversations, tickets, settings, integrations, audit records, and attachment metadata in a versioned JSON archive.";
+  return `Download a workspace-scoped ${exportKindLabel(kind).toLowerCase()} with deterministic columns and a verifiable checksum.`;
+}
+
 const statusTone = (state: string): "neutral" | "info" | "success" | "warning" | "danger" => {
   if (state === "completed") return "success";
   if (state === "failed" || state === "expired" || state === "cancelled") return "danger";
@@ -87,6 +107,7 @@ function errorMessage(error: unknown, fallback: string): string {
 /** Import, export, and portability (§6.20). */
 export default function ImportExport() {
   const [tab, setTab] = useState("export");
+  const [exportKind, setExportKind] = useState<ExportKind>("workspace");
   const [importKind, setImportKind] = useState<"workspace" | "customers_csv" | "companies_csv" | "tickets_csv" | "feedback_csv" | "knowledgebase_markdown">("workspace");
   const [downloadError, setDownloadError] = useState("");
   const [exportPreview, setExportPreview] = useState<ExportPreview | null>(null);
@@ -121,11 +142,11 @@ export default function ImportExport() {
   );
 
   const startExport = useMutation<void, ExportRequest>(
-    () => api.post("/portability/exports", { kind: "workspace" }, { workspaceId, idempotencyKey: idempotencyKey() }),
+    () => api.post("/portability/exports", { kind: exportKind }, { workspaceId, idempotencyKey: idempotencyKey() }),
     { invalidates: [["portability-exports", workspaceId]] },
   );
   const previewExport = useMutation<void, ExportPreview>(
-    () => api.post("/portability/exports/preview", { kind: "workspace" }, { workspaceId }),
+    () => api.post("/portability/exports/preview", { kind: exportKind }, { workspaceId }),
   );
   const createImport = useMutation<{ file_id: string; kind: string }, ImportRequest>(
     (input) => api.post("/portability/imports", { ...input, auto_start: false }, { workspaceId, idempotencyKey: idempotencyKey() }),
@@ -141,16 +162,17 @@ export default function ImportExport() {
     const uploaded = await api.post<{ id: string }>("/portability/import-files", form, { workspaceId, idempotencyKey: idempotencyKey() });
     await createImport.mutate({ file_id: uploaded.id, kind: importKind });
   };
-  const downloadExport = async (fileID: string) => {
+  const downloadExport = async (request: ExportRequest) => {
     setDownloadError("");
     try {
-      const response = await fetch(`/api/v1/files/${encodeURIComponent(fileID)}`, { headers: { "Hubchat-Workspace-Id": workspaceId } });
-      if (!response.ok) throw new Error("The archive download failed.");
+      if (!request.file_id) throw new Error("The export file is no longer available.");
+      const response = await fetch(`/api/v1/files/${encodeURIComponent(request.file_id)}`, { headers: { "Hubchat-Workspace-Id": workspaceId } });
+      if (!response.ok) throw new Error("The export download failed.");
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `hubchat-${workspaceId}.json.gz`;
+      anchor.download = `hubchat-${workspaceId}-${request.kind === "workspace" ? "workspace.json.gz" : `${request.kind}.csv`}`;
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (error) {
@@ -170,7 +192,7 @@ export default function ImportExport() {
     <Page>
       <PageHeader
         title="Import & export"
-        description="Move a complete workspace between Hubchat installations with a versioned, inspectable archive."
+        description="Create verifiable workspace archives or scoped CSV exports without exposing another tenant’s data."
         tabs={
           <Tabs value={tab} onValueChange={setTab}>
             <TabsList items={[{ value: "export", label: "Export" }, { value: "import", label: "Import" }, { value: "backups", label: "Backups" }]} />
@@ -197,7 +219,8 @@ export default function ImportExport() {
               <Card>
                 <CardBody className="flex items-center gap-4">
                   <FileArchive className="size-5 shrink-0 text-fg-muted" />
-                  <div className="min-w-0 flex-1"><p className="text-sm text-fg">Full workspace archive</p><p className="mt-0.5 text-xs text-fg-muted">Customers, conversations, tickets, settings, integrations, audit records, and attachment metadata in a versioned JSON archive.</p></div>
+                  <div className="min-w-0 flex-1"><p className="text-sm text-fg">{exportKindLabel(exportKind)}</p><p className="mt-0.5 text-xs text-fg-muted">{exportKindDescription(exportKind)}</p></div>
+                  <select aria-label="Export type" value={exportKind} onChange={(event) => { setExportKind(event.target.value as ExportKind); setExportPreview(null); }} className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg"><option value="workspace">Workspace archive</option><option value="customers_csv">Customers CSV</option><option value="companies_csv">Companies CSV</option><option value="tickets_csv">Tickets CSV</option><option value="feedback_csv">Feedback CSV</option><option value="audit_csv">Audit log CSV</option><option value="survey_csv">Survey responses CSV</option></select>
                   <div className="flex shrink-0 gap-2"><Button variant="secondary" size="sm" loading={previewExport.isPending} onClick={() => void previewExport.mutate(undefined).then((result) => setExportPreview(result)).catch(() => {})}>Preview</Button><Button variant="secondary" size="sm" leading={<Download />} loading={startExport.isPending} disabled={!exportPreview} onClick={() => void startExport.mutate(undefined).catch(() => {})}>Export</Button></div>
                 </CardBody>
               </Card>
@@ -209,12 +232,12 @@ export default function ImportExport() {
             <Section title="Export history">
               <Card>
                 <CardBody className="p-0">
-                  {exportRows.length === 0 && !exportsQuery.isLoading ? <p className="px-4 py-6 text-sm text-fg-muted">Completed archives will appear here.</p> : <ul className="divide-y divide-line-subtle">{exportRows.map((item) => <li key={item.id} className="flex items-center gap-3 px-4 py-3"><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate font-mono text-xs text-fg">{item.id}</span><Badge tone={statusTone(item.state)}>{statusLabel(item.state)}</Badge></div><p className="mt-1 text-xs text-fg-muted">{item.row_count === undefined ? "Rows pending" : `${item.row_count.toLocaleString()} rows`} · created {displayDate(item.created_at)}{item.expires_at ? ` · expires ${displayDate(item.expires_at)}` : ""}</p>{item.error && <p className="mt-1 text-xs text-danger">{item.error}</p>}</div>{item.file_id && item.state === "completed" && <div className="flex shrink-0 gap-1"><Button variant="ghost" size="sm" onClick={() => setManifestID(item.id)}>Manifest</Button><Button variant="ghost" size="sm" onClick={() => void downloadExport(item.file_id ?? "")}>Download</Button></div>}</li>)}</ul>}
+                  {exportRows.length === 0 && !exportsQuery.isLoading ? <p className="px-4 py-6 text-sm text-fg-muted">Completed exports will appear here.</p> : <ul className="divide-y divide-line-subtle">{exportRows.map((item) => <li key={item.id} className="flex items-center gap-3 px-4 py-3"><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate font-mono text-xs text-fg">{item.id}</span><Badge tone={statusTone(item.state)}>{statusLabel(item.state)}</Badge></div><p className="mt-1 text-xs text-fg-muted">{exportKindLabel((item.kind || "workspace") as ExportKind)} · {item.row_count === undefined ? "Rows pending" : `${item.row_count.toLocaleString()} rows`} · created {displayDate(item.created_at)}{item.expires_at ? ` · expires ${displayDate(item.expires_at)}` : ""}</p>{item.error && <p className="mt-1 text-xs text-danger">{item.error}</p>}</div>{item.file_id && item.state === "completed" && <div className="flex shrink-0 gap-1"><Button variant="ghost" size="sm" onClick={() => setManifestID(item.id)}>Manifest</Button><Button variant="ghost" size="sm" onClick={() => void downloadExport(item)}>Download</Button></div>}</li>)}</ul>}
                 </CardBody>
               </Card>
               <Pagination hasPrevious={false} hasNext={exportsQuery.hasMore} onPrevious={() => undefined} onNext={() => void exportsQuery.fetchNext()} summary={`${exportRows.length} export${exportRows.length === 1 ? "" : "s"} loaded`} />
               {downloadError && <p className="mt-2 text-sm text-danger">{downloadError}</p>}
-              {manifestID && <Card className="mt-3"><CardBody>{manifestQuery.isLoading ? <p className="text-sm text-fg-muted">Loading archive manifest…</p> : manifestQuery.error ? <div className="space-y-2"><p className="text-sm text-danger">Could not load the archive manifest.</p><Button variant="secondary" size="sm" onClick={manifestQuery.refetch}>Retry</Button></div> : manifestQuery.data && <><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-medium text-fg">Archive manifest</p><p className="mt-1 text-xs text-fg-muted">{manifestQuery.data.file_name} · {manifestQuery.data.size_bytes.toLocaleString()} bytes · expires {displayDate(manifestQuery.data.expires_at)}</p></div><Button variant="ghost" size="sm" onClick={() => setManifestID(null)}>Dismiss</Button></div><dl className="mt-3 grid gap-3 text-xs sm:grid-cols-3"><div><dt className="text-fg-muted">Rows</dt><dd className="mt-0.5 tabular text-fg">{manifestQuery.data.row_count.toLocaleString()}</dd></div><div><dt className="text-fg-muted">Attachments</dt><dd className="mt-0.5 tabular text-fg">{manifestQuery.data.attachment_count.toLocaleString()} · {manifestQuery.data.attachment_bytes.toLocaleString()} bytes</dd></div><div><dt className="text-fg-muted">SHA-256</dt><dd className="mt-0.5 break-all font-mono text-2xs text-fg-secondary">{manifestQuery.data.checksum || "Not recorded"}</dd></div></dl><div className="mt-3 max-h-48 overflow-auto rounded-md border border-line"><table className="w-full text-left text-xs"><thead className="border-b border-line bg-inset text-fg-muted"><tr><th className="px-3 py-2 font-medium">Table</th><th className="px-3 py-2 text-right font-medium">Rows</th></tr></thead><tbody className="divide-y divide-line-subtle">{manifestQuery.data.tables.filter((table) => table.rows > 0).map((table) => <tr key={table.name}><td className="px-3 py-2 font-mono text-fg-secondary">{table.name}</td><td className="px-3 py-2 text-right tabular text-fg-secondary">{table.rows.toLocaleString()}</td></tr>)}</tbody></table></div></>}</CardBody></Card>}
+              {manifestID && <Card className="mt-3"><CardBody>{manifestQuery.isLoading ? <p className="text-sm text-fg-muted">Loading export manifest…</p> : manifestQuery.error ? <div className="space-y-2"><p className="text-sm text-danger">Could not load the export manifest.</p><Button variant="secondary" size="sm" onClick={manifestQuery.refetch}>Retry</Button></div> : manifestQuery.data && <><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-medium text-fg">Export manifest</p><p className="mt-1 text-xs text-fg-muted">{manifestQuery.data.file_name} · {manifestQuery.data.size_bytes.toLocaleString()} bytes · expires {displayDate(manifestQuery.data.expires_at)}</p></div><Button variant="ghost" size="sm" onClick={() => setManifestID(null)}>Dismiss</Button></div><dl className="mt-3 grid gap-3 text-xs sm:grid-cols-3"><div><dt className="text-fg-muted">Rows</dt><dd className="mt-0.5 tabular text-fg">{manifestQuery.data.row_count.toLocaleString()}</dd></div><div><dt className="text-fg-muted">Attachments</dt><dd className="mt-0.5 tabular text-fg">{manifestQuery.data.attachment_count.toLocaleString()} · {manifestQuery.data.attachment_bytes.toLocaleString()} bytes</dd></div><div><dt className="text-fg-muted">SHA-256</dt><dd className="mt-0.5 break-all font-mono text-2xs text-fg-secondary">{manifestQuery.data.checksum || "Not recorded"}</dd></div></dl><div className="mt-3 max-h-48 overflow-auto rounded-md border border-line"><table className="w-full text-left text-xs"><thead className="border-b border-line bg-inset text-fg-muted"><tr><th className="px-3 py-2 font-medium">Table</th><th className="px-3 py-2 text-right font-medium">Rows</th></tr></thead><tbody className="divide-y divide-line-subtle">{manifestQuery.data.tables.filter((table) => table.rows > 0).map((table) => <tr key={table.name}><td className="px-3 py-2 font-mono text-fg-secondary">{table.name}</td><td className="px-3 py-2 text-right tabular text-fg-secondary">{table.rows.toLocaleString()}</td></tr>)}</tbody></table></div></>}</CardBody></Card>}
             </Section>
 
             <Section title="From the command line">

@@ -17,6 +17,7 @@ import {
   Section,
   Toolbar,
   Tooltip,
+  idempotencyKey,
   formatRelativeShort,
   api,
   useMutation,
@@ -27,7 +28,7 @@ import {
   type Job,
   type Paginated,
 } from "@hubchat/shared";
-import { Activity, Ban, RotateCcw, Webhook } from "lucide-react";
+import { Activity, Ban, CheckCircle2, Mail, RotateCcw, Webhook } from "lucide-react";
 import { useState } from "react";
 
 const STATE: Record<Job["state"], { label: string; tone: BadgeTone }> = {
@@ -52,6 +53,7 @@ type OpsSummary = {
   email: { mailboxes: number; delivery_errors_24h: number; bounces_24h: number; suppressions: number };
   storage: { backend: string; committed_files: number; bytes: number; pending_uploads: number };
   realtime: { connections: number };
+  checks: Array<{ id: string; status: "pass" | "warn" | "fail"; detail: string }>;
   computed_at: string;
 };
 
@@ -69,6 +71,11 @@ export default function Jobs() {
   );
   const summary = useQuery<JobSummary>(["jobs-summary"], (signal) => api.get("/jobs/summary", { signal }));
   const ops = useQuery<OpsSummary>(["ops-summary"], (signal) => api.get("/ops/summary", { signal }));
+  const [testEmailResult, setTestEmailResult] = useState<{ job_id: string; recipient: string } | null>(null);
+  const testEmail = useMutation<void, { job_id: string; recipient: string }>(
+    () => api.post("/ops/test-email", undefined, { idempotencyKey: idempotencyKey() }),
+    { invalidates: [["jobs"], ["jobs-summary"], ["ops-summary"]], onSuccess: (result) => setTestEmailResult(result) },
+  );
   const retry = useMutation<string, unknown>((id) => api.post(`/jobs/${encodeURIComponent(id)}/retry`), { invalidates: [["jobs"], ["jobs-summary"], ["ops-summary"]] });
   const cancel = useMutation<string, unknown>((id) => api.post(`/jobs/${encodeURIComponent(id)}/cancel`), { invalidates: [["jobs"], ["jobs-summary"], ["ops-summary"]] });
   const [cancelling, setCancelling] = useState<Job | null>(null);
@@ -160,7 +167,7 @@ export default function Jobs() {
           </Callout>
         )}
 
-        {ops.data && <Section title="Operational health" description={"Workspace services as of " + new Date(ops.data.computed_at).toLocaleString() + ". Counts are scoped to this workspace."}>
+        {ops.data && <Section title="Operational health" description={"Workspace services as of " + new Date(ops.data.computed_at).toLocaleString() + ". Counts are scoped to this workspace."} actions={<Button variant="secondary" size="sm" leading={<Mail />} loading={testEmail.isPending} onClick={() => void testEmail.mutate(undefined).catch(() => {})}>Send test email</Button>}>
           <Card>
             <CardBody className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
               <Metric label="Realtime connections" value={ops.data.realtime.connections} definition="Currently connected dashboard, portal, and widget sessions on this process." />
@@ -174,6 +181,11 @@ export default function Jobs() {
               {ops.data.storage.pending_uploads > 0 && <span>{ops.data.storage.pending_uploads} pending upload{ops.data.storage.pending_uploads === 1 ? "" : "s"}</span>}
             </div>}
           </Card>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            {ops.data.checks.map((check) => <div key={check.id} className="rounded-md border border-line bg-surface px-3 py-2.5"><div className="flex items-center gap-2"><CheckCircle2 className={check.status === "pass" ? "size-3.5 text-success-text" : check.status === "fail" ? "size-3.5 text-danger-text" : "size-3.5 text-warning-text"} aria-hidden="true" /><span className="text-xs font-medium capitalize text-fg">{check.id.replaceAll("_", " ")}</span><Badge tone={check.status === "pass" ? "success" : check.status === "fail" ? "danger" : "warning"}>{check.status}</Badge></div><p className="mt-1 text-2xs leading-normal text-fg-muted">{check.detail}</p></div>)}
+          </div>
+          {Boolean(testEmail.error) && <p className="mt-2 text-sm text-danger">{testEmail.error instanceof ApiError ? String(testEmail.error.message) : "Could not queue the test email."}</p>}
+          {testEmailResult && <p className="mt-2 text-sm text-success-text">Test email queued for {testEmailResult.recipient}. Track job {testEmailResult.job_id} below.</p>}
         </Section>}
 
         {jobs.error ? <EmptyState icon={Activity} title="Job queue unavailable" description={jobs.error instanceof ApiError ? jobs.error.message : "Try again in a moment."} action={<Button variant="secondary" size="sm" onClick={jobs.refetch}>Try again</Button>} /> : <Section>
