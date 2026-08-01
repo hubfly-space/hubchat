@@ -21,6 +21,7 @@ import { useState } from "react";
 type Settings = {
   security: {
     require_two_factor: boolean;
+    require_sso: boolean;
     restrict_signup: boolean;
     allowed_email_domains: string[];
     ip_allowlist: string[];
@@ -49,6 +50,7 @@ export default function Security() {
 
 function SecurityForm({ initial }: { initial: Settings["security"] }) {
   const [requireTwoFactor, setRequireTwoFactor] = useState(initial.require_two_factor);
+  const [requireSSO, setRequireSSO] = useState(initial.require_sso);
   const [restrictSignup, setRestrictSignup] = useState(initial.restrict_signup);
   const [domains, setDomains] = useState(initial.allowed_email_domains.join(", "));
   const [ipAllowlist, setIpAllowlist] = useState(initial.ip_allowlist.join(", "));
@@ -69,6 +71,7 @@ function SecurityForm({ initial }: { initial: Settings["security"] }) {
 
   const dirty =
     requireTwoFactor !== initial.require_two_factor ||
+    requireSSO !== initial.require_sso ||
     restrictSignup !== initial.restrict_signup ||
     parsedDomains.join(",") !== initial.allowed_email_domains.join(",") ||
     parsedIps.join(",") !== initial.ip_allowlist.join(",");
@@ -84,6 +87,7 @@ function SecurityForm({ initial }: { initial: Settings["security"] }) {
           onClick={() =>
             void save.mutate({
               require_two_factor: requireTwoFactor,
+              require_sso: requireSSO,
               restrict_signup: restrictSignup,
               allowed_email_domains: parsedDomains,
               ip_allowlist: parsedIps,
@@ -117,6 +121,19 @@ function SecurityForm({ initial }: { initial: Settings["security"] }) {
                 onCheckedChange={setRequireTwoFactor}
                 aria-label="Require two-factor for everyone"
               />
+            </SettingsRow>
+          </CardBody>
+        </Card>
+      </Section>
+
+      <Section title="Organization sign-in">
+        <Card>
+          <CardBody className="pt-0">
+            <SettingsRow
+              label="Require organization SSO"
+              description="Members must sign in through the deployment's configured OAuth/OIDC provider before accessing this workspace. Existing password sessions are rejected at the workspace boundary."
+            >
+              <Switch checked={requireSSO} onCheckedChange={setRequireSSO} aria-label="Require organization SSO" />
             </SettingsRow>
           </CardBody>
         </Card>

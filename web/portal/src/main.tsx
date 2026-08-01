@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 import { PortalShell } from "./components/PortalShell";
 import { RouteFallback } from "./components/RouteFallback";
+import { PortalFeatureGate, type PortalFeature } from "./portal-context";
 import { PortalProvider } from "./portal-context";
 import Home from "./pages/Home";
 import "./styles.css";
@@ -25,6 +26,10 @@ function page(loader: () => Promise<{ default: ComponentType }>) {
   );
 }
 
+function featurePage(feature: PortalFeature, loader: () => Promise<{ default: ComponentType }>) {
+  return <PortalFeatureGate feature={feature}>{page(loader)}</PortalFeatureGate>;
+}
+
 const router = createBrowserRouter(
   [
     { path: "/sign-in", element: page(() => import("./pages/SignIn")) },
@@ -33,15 +38,15 @@ const router = createBrowserRouter(
       element: <PortalShell />,
       children: [
         { index: true, element: <Home /> },
-        { path: "kb", element: page(() => import("./pages/Knowledge")) },
-        { path: "kb/:collectionSlug", element: page(() => import("./pages/Knowledge")) },
-        { path: "kb/article/:slug", element: page(() => import("./pages/Article")) },
-        { path: "tickets", element: page(() => import("./pages/Tickets")) },
-        { path: "tickets/new", element: page(() => import("./pages/NewTicket")) },
-        { path: "tickets/:number", element: page(() => import("./pages/TicketDetail")) },
-        { path: "feedback", element: page(() => import("./pages/Feedback")) },
-        { path: "feedback/:itemId", element: page(() => import("./pages/FeedbackItem")) },
-        { path: "changelog", element: page(() => import("./pages/Changelog")) },
+        { path: "kb", element: featurePage("knowledge_base", () => import("./pages/Knowledge")) },
+        { path: "kb/:collectionSlug", element: featurePage("knowledge_base", () => import("./pages/Knowledge")) },
+        { path: "kb/article/:slug", element: featurePage("knowledge_base", () => import("./pages/Article")) },
+        { path: "tickets", element: featurePage("tickets", () => import("./pages/Tickets")) },
+        { path: "tickets/new", element: featurePage("tickets", () => import("./pages/NewTicket")) },
+        { path: "tickets/:number", element: featurePage("tickets", () => import("./pages/TicketDetail")) },
+        { path: "feedback", element: featurePage("feedback", () => import("./pages/Feedback")) },
+        { path: "feedback/:itemId", element: featurePage("feedback", () => import("./pages/FeedbackItem")) },
+        { path: "changelog", element: featurePage("changelog", () => import("./pages/Changelog")) },
         { path: "survey/:workspaceID/:surveyID", element: page(() => import("./pages/Survey")) },
         { path: "account", element: page(() => import("./pages/Account")) },
         { path: "*", element: <Navigate to="/" replace /> },

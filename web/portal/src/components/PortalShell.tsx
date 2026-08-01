@@ -16,8 +16,14 @@ import {
 } from "@hubchat/shared";
 import { LogOut, Monitor, Moon, Sun, TicketCheck, UserRound } from "lucide-react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
-import { portalAccent, usePortal } from "../portal-context";
-import { portalErrorMessage } from "../portal-context";
+import {
+  portalAccent,
+  portalAssetURL,
+  portalErrorMessage,
+  portalFeatureEnabled,
+  portalNavigationItems,
+  usePortal,
+} from "../portal-context";
 
 /**
  * Portal chrome.
@@ -41,6 +47,8 @@ export function PortalShell() {
   const { portal, viewer } = data;
   const accent = portalAccent(portal);
   const portalMark = portal.name.trim().charAt(0).toUpperCase() || "H";
+  const logoURL = portalAssetURL(portal.theme.logo_url);
+  const navigation = portalNavigationItems(portal);
   const currentYear = new Date().getFullYear();
 
   return (
@@ -59,33 +67,20 @@ export function PortalShell() {
       <header className="sticky top-0 z-[var(--z-nav)] border-b border-line bg-surface/85 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-5xl items-center gap-6 px-4 sm:px-6">
           <NavLink to="/" className="flex shrink-0 items-center gap-2">
-            <span
-              aria-hidden="true"
-              className="grid size-6 place-items-center rounded-md text-[11px] font-bold text-white"
-                style={{ backgroundColor: accent }}
-            >
-              {portalMark}
-            </span>
+            {logoURL ? <img src={logoURL} alt="" className="size-6 rounded-md object-contain" /> : <span aria-hidden="true" className="grid size-6 place-items-center rounded-md text-[11px] font-bold text-white" style={{ backgroundColor: accent }}>{portalMark}</span>}
             <span className="text-sm font-semibold tracking-tight">{portal.name}</span>
           </NavLink>
 
           <nav aria-label="Portal" className="hc-no-scrollbar hidden flex-1 gap-1 overflow-x-auto sm:flex">
-            {portal.navigation.map((item) => (
-              <NavLink
-                key={item.href}
-                to={item.href}
-                className={({ isActive }) =>
-                  cn(
-                    "rounded-md px-2.5 py-1.5 text-sm transition-colors",
-                    isActive
-                      ? "bg-accent-subtle font-medium text-accent-text"
-                      : "text-fg-secondary hover:bg-fill hover:text-fg",
-                  )
-                }
-              >
-                {item.label}
-              </NavLink>
-            ))}
+            {navigation.map((item) => {
+              const external = item.external || /^https?:\/\//i.test(item.href);
+              const className = "rounded-md px-2.5 py-1.5 text-sm text-fg-secondary transition-colors hover:bg-fill hover:text-fg";
+              if (external) {
+                const href = portalAssetURL(item.href);
+                return href ? <a key={`${item.href}-${item.label}`} href={href} target="_blank" rel="noopener noreferrer" className={className}>{item.label}</a> : null;
+              }
+              return <NavLink key={`${item.href}-${item.label}`} to={item.href} className={({ isActive }) => cn(className, isActive && "bg-accent-subtle font-medium text-accent-text")}>{item.label}</NavLink>;
+            })}
           </nav>
 
           <div className="ml-auto flex shrink-0 items-center gap-2">
@@ -125,9 +120,7 @@ export function PortalShell() {
                     <p className="truncate text-xs text-fg-muted">{viewer.email}</p>
                   </div>
                   <MenuSeparator />
-                  <MenuItem icon={<TicketCheck />}>
-                    <NavLink to="/tickets">My requests</NavLink>
-                  </MenuItem>
+                  {portalFeatureEnabled(portal, "tickets") && <MenuItem icon={<TicketCheck />}><NavLink to="/tickets">My requests</NavLink></MenuItem>}
                   <MenuItem icon={<UserRound />}>
                     <NavLink to="/account">Profile & preferences</NavLink>
                   </MenuItem>
@@ -154,12 +147,15 @@ export function PortalShell() {
         <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-6 text-xs text-fg-muted sm:flex-row sm:items-center sm:px-6">
           <p>© {currentYear} {portal.name}</p>
           <nav aria-label="Footer" className="flex gap-4 sm:ml-auto">
-            {Array.isArray(portal.features.footer_links) &&
-              portal.features.footer_links.map((link) => {
+            {Array.isArray(portal.theme.footer_links) &&
+              portal.theme.footer_links.map((link) => {
                 if (!link || typeof link !== "object") return null;
-                const item = link as { href?: unknown; label?: unknown };
-                if (typeof item.href !== "string" || typeof item.label !== "string") return null;
-                return <a key={item.href} href={item.href} className="transition-colors hover:text-fg">{item.label}</a>;
+                const item = link as { url?: unknown; href?: unknown; label?: unknown };
+                const href = typeof item.url === "string" ? item.url : item.href;
+                if (typeof href !== "string" || typeof item.label !== "string") return null;
+                const safeHref = portalAssetURL(href);
+                if (!safeHref) return null;
+                return <a key={`${safeHref}-${item.label}`} href={safeHref} target="_blank" rel="noopener noreferrer" className="transition-colors hover:text-fg">{item.label}</a>;
               })}
           </nav>
         </div>

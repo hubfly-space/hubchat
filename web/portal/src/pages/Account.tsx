@@ -77,9 +77,7 @@ export default function Account() {
             <SettingsRow label="Photo">
               <div className="flex items-center gap-3">
                 <Avatar name={viewer.name} seed={viewer.email} size="lg" />
-                <Button variant="secondary" size="sm">
-                  Upload
-                </Button>
+                <span className="text-xs text-fg-muted">Profile photos are managed by your support team.</span>
               </div>
             </SettingsRow>
 
@@ -93,7 +91,7 @@ export default function Account() {
               htmlFor="email"
             >
               <div className="flex items-center gap-2">
-                <Input id="email" inputSize="sm" defaultValue={viewer.email} />
+                <Input id="email" inputSize="sm" defaultValue={viewer.email} readOnly />
                 <Badge tone="success">Verified</Badge>
               </div>
             </SettingsRow>
