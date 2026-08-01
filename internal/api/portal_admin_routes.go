@@ -14,6 +14,68 @@ func registerPortalAdminRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /v1/portals", requireCapability(deps, authorization.PortalManage, Idempotency(deps)(handleCreatePortal(deps))))
 	mux.HandleFunc("GET /v1/portals/{id}", requireCapability(deps, authorization.PortalManage, handleGetPortal(deps)))
 	mux.HandleFunc("PATCH /v1/portals/{id}", requireCapability(deps, authorization.PortalManage, Idempotency(deps)(handleUpdatePortal(deps))))
+	mux.HandleFunc("GET /v1/portals/{id}/domains", requireCapability(deps, authorization.PortalManage, handleListPortalDomains(deps)))
+	mux.HandleFunc("POST /v1/portals/{id}/domains", requireCapability(deps, authorization.PortalManage, Idempotency(deps)(handleAddPortalDomain(deps))))
+	mux.HandleFunc("POST /v1/portals/{id}/domains/{domainID}/verify", requireCapability(deps, authorization.PortalManage, handleVerifyPortalDomain(deps)))
+	mux.HandleFunc("DELETE /v1/portals/{id}/domains/{domainID}", requireCapability(deps, authorization.PortalManage, Idempotency(deps)(handleDeletePortalDomain(deps))))
+}
+
+func handleListPortalDomains(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		items, err := deps.Portal.ListDomains(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"))
+		if err != nil {
+			writePortalAdminError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+	}
+}
+
+func handleAddPortalDomain(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Domain string `json:"domain"`
+		}
+		if err := httpserver.DecodeJSON(r, &input); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed request body.")
+			return
+		}
+		item, err := deps.Portal.AddDomain(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"), input.Domain)
+		if err != nil {
+			writePortalAdminError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, item)
+	}
+}
+
+func handleVerifyPortalDomain(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		item, err := deps.Portal.VerifyDomain(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"), r.PathValue("domainID"))
+		if err != nil {
+			writePortalAdminError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, item)
+	}
+}
+
+func handleDeletePortalDomain(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := deps.Portal.DeleteDomain(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"), r.PathValue("domainID")); err != nil {
+			writePortalAdminError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"deleted": true})
+	}
+}
+
+func writePortalAdminError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, portal.ErrNotFound) {
+		httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Portal or domain not found.")
+		return
+	}
+	httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, err.Error())
 }
 
 func handleListPortals(deps Deps) http.HandlerFunc {

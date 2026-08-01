@@ -13,6 +13,7 @@ func registerPortabilityRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/portability/exports", requireCapability(deps, authorization.WorkspaceManage, handleListExports(deps)))
 	mux.HandleFunc("GET /v1/portability/exports/{id}", requireCapability(deps, authorization.WorkspaceManage, handleGetExport(deps)))
 	mux.HandleFunc("GET /v1/portability/exports/{id}/manifest", requireCapability(deps, authorization.WorkspaceManage, handleExportManifest(deps)))
+	mux.HandleFunc("POST /v1/portability/exports/preview", requireCapability(deps, authorization.WorkspaceManage, handlePreviewExport(deps)))
 	mux.HandleFunc("POST /v1/portability/exports", requireCapability(deps, authorization.WorkspaceManage, Idempotency(deps)(handleCreateExport(deps))))
 	mux.HandleFunc("GET /v1/portability/imports", requireCapability(deps, authorization.WorkspaceManage, handleListImports(deps)))
 	mux.HandleFunc("GET /v1/portability/imports/{id}", requireCapability(deps, authorization.WorkspaceManage, handleGetImport(deps)))
@@ -20,6 +21,29 @@ func registerPortabilityRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /v1/portability/imports", requireCapability(deps, authorization.WorkspaceManage, Idempotency(deps)(handleCreateImport(deps))))
 	mux.HandleFunc("POST /v1/portability/imports/{id}/preview", requireCapability(deps, authorization.WorkspaceManage, handlePreviewImport(deps)))
 	mux.HandleFunc("POST /v1/portability/imports/{id}/confirm", requireCapability(deps, authorization.WorkspaceManage, Idempotency(deps)(handleConfirmImport(deps))))
+}
+
+func handlePreviewExport(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Kind  string         `json:"kind"`
+			Scope map[string]any `json:"scope"`
+		}
+		if err := httpserver.DecodeJSON(r, &input); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, err.Error())
+			return
+		}
+		summaries, err := deps.Portability.PreviewExport(r.Context(), actorFromRequest(r).WorkspaceID, input.Kind, input.Scope)
+		if err != nil {
+			writePortabilityError(w, r, err)
+			return
+		}
+		var rows int
+		for _, summary := range summaries {
+			rows += summary.Rows
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"tables": summaries, "row_count": rows})
+	}
 }
 
 func handleUploadPortabilityFile(deps Deps) http.HandlerFunc {

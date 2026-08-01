@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -558,7 +559,13 @@ func requirePortalSession(deps Deps, w http.ResponseWriter, r *http.Request) (*p
 		httpserver.WriteError(w, r, http.StatusUnauthorized, httpserver.CodeUnauthorized, "Sign in to continue.")
 		return nil, false
 	}
-	session, err := deps.Portal.Session(r.Context(), token, portalIdentifier(r))
+	portalID := portalIdentifier(r)
+	if portalID == "" {
+		if resolved, resolveErr := resolvePortal(deps, r); resolveErr == nil {
+			portalID = resolved.ID
+		}
+	}
+	session, err := deps.Portal.Session(r.Context(), token, portalID)
 	if err != nil {
 		httpserver.WriteError(w, r, http.StatusUnauthorized, httpserver.CodeUnauthorized, "Your portal session has expired.")
 		return nil, false
@@ -574,7 +581,21 @@ func resolvePortalByIdentifier(deps Deps, r *http.Request, identifier string) (*
 	if deps.Portal == nil {
 		return nil, portal.ErrNotConfigured
 	}
-	return deps.Portal.Resolve(r.Context(), strings.TrimSpace(identifier))
+	identifier = strings.TrimSpace(identifier)
+	if identifier != "" {
+		return deps.Portal.Resolve(r.Context(), identifier)
+	}
+	host := r.Host
+	if hostname, _, err := net.SplitHostPort(host); err == nil {
+		host = hostname
+	}
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if host != "" {
+		if resolved, err := deps.Portal.Resolve(r.Context(), host); err == nil {
+			return resolved, nil
+		}
+	}
+	return deps.Portal.Resolve(r.Context(), "")
 }
 
 func portalIdentifier(r *http.Request) string {
@@ -585,11 +606,15 @@ func portalIdentifier(r *http.Request) string {
 }
 
 func portalJSON(p portal.Portal) map[string]any {
+	domains := make([]map[string]any, 0, len(p.Domains))
+	for _, item := range p.Domains {
+		domains = append(domains, map[string]any{"id": item.ID, "portal_id": item.PortalID, "domain": item.Domain, "status": item.Status, "verified_at": item.VerifiedAt, "last_checked_at": item.LastCheckedAt})
+	}
 	return map[string]any{
 		"id": p.ID, "workspace_id": p.WorkspaceID, "name": p.Name, "subdomain": p.Subdomain,
 		"theme": p.Theme, "features": p.Features, "auth_methods": p.AuthMethods,
 		"permissions": p.Permissions, "default_language": p.DefaultLanguage,
-		"navigation": p.Navigation, "enabled": p.Enabled,
+		"navigation": p.Navigation, "domains": domains, "enabled": p.Enabled,
 	}
 }
 

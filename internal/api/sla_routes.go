@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/httpserver"
@@ -56,12 +58,35 @@ func slaJSON(item *sla.SubjectSLA) any {
 
 func handleListCalendars(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := deps.SLA.ListCalendars(r.Context(), actorFromRequest(r).WorkspaceID)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed pagination parameters.")
+			return
+		}
+		var beforeDefault *bool
+		beforeName := ""
+		if !cursor.IsZero() {
+			parts := strings.SplitN(cursor.Value, "\x00", 2)
+			if len(parts) != 2 {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed pagination parameters.")
+				return
+			}
+			value, parseErr := strconv.ParseBool(parts[0])
+			if parseErr != nil {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed pagination parameters.")
+				return
+			}
+			beforeDefault = &value
+			beforeName = parts[1]
+		}
+		items, err := deps.SLA.ListCalendarsPage(r.Context(), actorFromRequest(r).WorkspaceID, beforeDefault, beforeName, cursor.ID, limit+1)
 		if err != nil {
 			writeSLAInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(items, limit, func(item sla.CalendarRecord) Cursor {
+			return Cursor{Value: strconv.FormatBool(item.IsDefault) + "\x00" + item.Name, ID: item.ID}
+		}))
 	}
 }
 func handleCreateCalendar(deps Deps) http.HandlerFunc {
@@ -106,12 +131,19 @@ func handleUpdateCalendar(deps Deps) http.HandlerFunc {
 }
 func handleListSLAPolicies(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		items, err := deps.SLA.ListPolicies(r.Context(), actorFromRequest(r).WorkspaceID)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed pagination parameters.")
+			return
+		}
+		items, err := deps.SLA.ListPoliciesPage(r.Context(), actorFromRequest(r).WorkspaceID, cursor.Value, cursor.ID, limit+1)
 		if err != nil {
 			writeSLAInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(items, limit, func(item sla.Policy) Cursor {
+			return Cursor{Value: item.Name, ID: item.ID}
+		}))
 	}
 }
 func handleCreateSLAPolicy(deps Deps) http.HandlerFunc {
