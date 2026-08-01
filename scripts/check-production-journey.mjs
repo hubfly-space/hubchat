@@ -104,6 +104,156 @@ if (portalBootstrap?.portal?.id !== portalID || portalBootstrap?.portal?.workspa
 }
 log("portal creation and public bootstrap");
 
+const weeklyHours = Array.from({ length: 7 }, () => [{ start: "09:00", end: "17:00" }]);
+const calendar = await request("/api/v1/sla/calendars", {
+  method: "POST",
+  body: {
+    name: "Production journey business hours",
+    timezone: "UTC",
+    weekly: weeklyHours,
+    holidays: [],
+    is_default: true,
+  },
+  expected: 201,
+});
+const calendarID = requireValue(calendar?.id, "SLA calendar id");
+const slaPolicy = await request("/api/v1/sla/policies", {
+  method: "POST",
+  body: {
+    name: "Production journey response policy",
+    description: "SLA policy created by the release journey.",
+    calendar_id: calendarID,
+    targets: [{ priority: "normal", first_response_minutes: 60, next_response_minutes: 120, resolution_minutes: 480 }],
+    pause_states: ["waiting_for_customer"],
+    warning_threshold_percent: 80,
+    escalation_actions: [],
+    applies_to: {},
+    enabled: true,
+  },
+  expected: 201,
+});
+if (slaPolicy?.calendar_id !== calendarID || slaPolicy?.enabled !== true) {
+  throw new Error("SLA policy did not preserve its calendar or enabled state");
+}
+log("SLA calendar and policy configuration");
+
+const webhook = await request("/api/v1/webhooks", {
+  method: "POST",
+  body: {
+    url: `${origin}/healthz`,
+    description: "Production journey webhook",
+    events: ["ticket.created", "conversation.created"],
+    enabled: true,
+  },
+  expected: 201,
+});
+const webhookID = requireValue(webhook?.data?.id, "webhook id");
+if (typeof webhook?.secret !== "string" || !webhook.secret.startsWith("whsec_")) {
+  throw new Error("webhook creation did not return a signing secret");
+}
+const webhookTest = await request(`/api/v1/webhooks/${webhookID}/test`, {
+  method: "POST",
+  expected: 202,
+});
+const webhookDeliveryID = requireValue(webhookTest?.id, "webhook test delivery id");
+const webhookDeliveries = await request(`/api/v1/webhooks/${webhookID}/deliveries`);
+if (!Array.isArray(webhookDeliveries?.data) || !webhookDeliveries.data.some((item) => item.id === webhookDeliveryID)) {
+  throw new Error("webhook delivery history did not include the test delivery");
+}
+const replay = await request(`/api/v1/webhooks/${webhookID}/deliveries/${webhookDeliveryID}/replay`, {
+  method: "POST",
+  expected: 202,
+});
+if (!replay?.id || replay.id === webhookDeliveryID) throw new Error("webhook replay did not create a new delivery");
+log("webhook signing, test delivery, and replay");
+
+const knowledgeBase = await request("/api/v1/knowledge-bases", {
+  method: "POST",
+  body: {
+    name: "Production journey help center",
+    slug: `journey-help-${suffix}`,
+    default_language: "en",
+    languages: ["en"],
+    visibility: "public",
+  },
+  expected: 201,
+});
+const knowledgeBaseID = requireValue(knowledgeBase?.id, "knowledge-base id");
+const knowledgeBaseSlug = requireValue(knowledgeBase?.slug, "knowledge-base slug");
+const collection = await request(`/api/v1/knowledge-bases/${knowledgeBaseID}/collections`, {
+  method: "POST",
+  body: {
+    name: "Production journey guides",
+    slug: `journey-guides-${suffix}`,
+    description: "Guides created by the release journey.",
+    position: 0,
+  },
+  expected: 201,
+});
+const collectionID = requireValue(collection?.id, "knowledge-base collection id");
+const article = await request("/api/v1/articles", {
+  method: "POST",
+  body: {
+    knowledge_base_id: knowledgeBaseID,
+    collection_id: collectionID,
+    title: "Production journey guide",
+    slug: `journey-guide-${suffix}`,
+    excerpt: "A searchable guide created by the release journey.",
+    body: "This production journey verifies published knowledge-base search.",
+    state: "draft",
+    language: "en",
+  },
+  expected: 201,
+});
+const articleID = requireValue(article?.id, "knowledge-base article id");
+const articleSlug = requireValue(article?.slug, "knowledge-base article slug");
+const publishedArticle = await request(`/api/v1/articles/${articleID}/publish`, {
+  method: "POST",
+  expected: 200,
+});
+if (publishedArticle?.state !== "published") throw new Error("article was not published");
+const articleSearch = await request(
+  `/api/v1/public/knowledge-bases/${workspaceID}/search?knowledge_base=${encodeURIComponent(knowledgeBaseSlug)}&q=${encodeURIComponent("production journey")}&language=en&surface=portal`,
+);
+if (!Array.isArray(articleSearch?.data) || !articleSearch.data.some((item) => item?.article?.id === articleID)) {
+  throw new Error("published article was not returned by public knowledge-base search");
+}
+const publicArticle = await request(`/api/v1/public/knowledge-bases/${workspaceID}/articles/${encodeURIComponent(articleSlug)}?surface=portal`);
+if (publicArticle?.id !== articleID || publicArticle?.state !== "published") {
+  throw new Error("public article lookup did not return the published article");
+}
+await request(`/api/v1/public/knowledge-bases/${workspaceID}/articles/${encodeURIComponent(articleSlug)}/feedback`, {
+  method: "POST",
+  body: { helpful: true, comment: "The production journey guide was useful." },
+  expected: 201,
+});
+log("knowledge-base publishing, search, and helpfulness feedback");
+
+const survey = await request("/api/v1/surveys", {
+  method: "POST",
+  body: {
+    name: "Production journey satisfaction",
+    type: "csat",
+    delivery: ["portal"],
+    anonymous: true,
+    questions: [{ prompt: "How was this support journey?", type: "number", required: true, position: 0 }],
+  },
+  expected: 201,
+});
+const surveyID = requireValue(survey?.id, "survey id");
+const questionID = requireValue(survey?.questions?.[0]?.id, "survey question id");
+const publicSurvey = await request(`/api/v1/public/surveys/${workspaceID}/${surveyID}`);
+if (publicSurvey?.id !== surveyID || publicSurvey?.enabled !== true) throw new Error("public survey was not enabled");
+const surveyResponse = await request(`/api/v1/public/surveys/${workspaceID}/${surveyID}/responses`, {
+  method: "POST",
+  body: { score: 5, answers: { [questionID]: 5 }, comment: "The journey was clear." },
+  expected: 201,
+});
+if (surveyResponse?.survey_id !== surveyID || surveyResponse?.score !== 5) {
+  throw new Error("public survey response was not recorded");
+}
+log("survey delivery and response");
+
 const widget = await request("/api/v1/widgets", {
   method: "POST",
   body: { name: "Production journey widget", inbox_id: inboxID },
@@ -195,6 +345,37 @@ const ticket = await request(`/api/v1/conversations/${conversationID}/ticket`, {
 if (!ticket?.id || ticket.conversation_id !== conversationID) throw new Error("ticket conversion did not preserve the conversation link");
 log("conversation to ticket conversion");
 
+const automationRule = await request("/api/v1/automation/rules", {
+  method: "POST",
+  body: {
+    name: "Production journey priority rule",
+    description: "Dry-run rule created by the release journey.",
+    trigger: "ticket.created",
+    conditions: {},
+    actions: [{ type: "set_priority", params: { priority: "high" } }],
+    position: 0,
+    enabled: true,
+    max_runs_per_hour: 10,
+  },
+  expected: 201,
+});
+const automationRuleID = requireValue(automationRule?.id, "automation rule id");
+const execution = await request(`/api/v1/automation/rules/${automationRuleID}/dry-run`, {
+  method: "POST",
+  body: {
+    event_id: `journey-event-${suffix}`,
+    subject_type: "ticket",
+    subject_id: ticket.id,
+    depth: 0,
+    causation_id: `journey-causation-${suffix}`,
+  },
+  expected: 200,
+});
+if (execution?.outcome !== "matched" || execution?.dry_run !== true) {
+  throw new Error("automation dry-run did not match without applying changes");
+}
+log("automation rule dry-run");
+
 const exportPreview = await request("/api/v1/portability/exports/preview", {
   method: "POST",
   body: { kind: "workspace", scope: {} },
@@ -204,4 +385,4 @@ if (!Array.isArray(exportPreview?.tables) || typeof exportPreview?.row_count !==
 }
 log("workspace export preview");
 
-console.log("Production HTTP journey OK (setup, widget, visitor identity, conversation, ticket conversion, export preview)");
+console.log("Production HTTP journey OK (setup, portal, SLA, webhook, knowledge base, survey, widget, feedback, conversation, ticket, automation, export preview)");

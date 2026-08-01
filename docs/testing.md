@@ -128,8 +128,10 @@ The production-binary check also runs an HTTP acceptance journey against the
 compiled binary. It creates an isolated, uniquely named owner/workspace,
 installs a widget, verifies public widget configuration and visitor identity,
 creates and publicly bootstraps a portal, starts and replies to a visitor
-conversation, submits and votes on widget feedback, converts the conversation
-to a ticket, and checks workspace export preview.
+conversation, publishes and searches a knowledge-base article, records article
+helpfulness, creates and answers an anonymous CSAT survey, submits and votes on
+widget feedback, converts the conversation to a ticket, and checks workspace
+export preview.
 Run it directly against an already running binary with:
 
 ```bash
