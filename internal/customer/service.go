@@ -97,7 +97,9 @@ func (s *Service) Search(ctx context.Context, workspaceID, query string, limit i
 // presence bit keeps NULL last_seen_at values after customers that have been
 // seen, matching the legacy search ordering without an unstable NULL cursor.
 func (s *Service) SearchPage(ctx context.Context, workspaceID, query string, beforeLastSeenPresent bool, hasCursor bool, beforeLastSeen, beforeFirstSeen time.Time, beforeID string, limit int) ([]SearchResult, error) {
-	if limit <= 0 || limit > 100 {
+	// 101 is allowed internally so callers can request a page plus one
+	// look-ahead row without losing the configured public maximum of 100.
+	if limit <= 0 || limit > 101 {
 		limit = 20
 	}
 	return s.repo.searchPage(ctx, workspaceID, strings.TrimSpace(query), beforeLastSeenPresent, beforeLastSeen, beforeFirstSeen, beforeID, hasCursor, limit)

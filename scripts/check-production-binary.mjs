@@ -124,6 +124,10 @@ try {
     HUBCHAT_LOAD_CONCURRENCY: process.env.HUBCHAT_LOAD_CONCURRENCY ?? "16",
   };
   await runNodeScript("scripts/check-production-http.mjs", childEnv);
+  await runNodeScript("scripts/check-production-journey.mjs", {
+    ...childEnv,
+    HUBCHAT_JOURNEY_BASE_URL: baseURL,
+  });
   await runNodeScript("scripts/check-production-load.mjs", childEnv);
 
   const exitPromise = waitForExit(child);

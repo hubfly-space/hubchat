@@ -42,7 +42,11 @@
     </main>
 
     <script type="module">
-      import { mount } from "/src/main.tsx";
+      // Vite serves this package below the /widget/ base path. Keeping the
+      // harness import on that path is important: importing /src directly
+      // bypasses Vite's package root and leaves the demo without its inline
+      // Shadow DOM stylesheet.
+      import { mount } from "/widget/src/main.tsx";
 
       const config = {
         enabled: true,

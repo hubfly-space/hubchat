@@ -97,6 +97,10 @@ build-go: ## Build the binary without rebuilding web assets
 production-http-check: ## Smoke-test a running production binary (set HUBCHAT_SMOKE_BASE_URL)
 	node scripts/check-production-http.mjs
 
+.PHONY: production-journey-check
+production-journey-check: ## Run the production API acceptance journey (set HUBCHAT_JOURNEY_BASE_URL)
+	node scripts/check-production-journey.mjs
+
 .PHONY: production-load-check
 production-load-check: ## Run bounded production HTTP load smoke (set HUBCHAT_LOAD_BASE_URL)
 	node scripts/check-production-load.mjs

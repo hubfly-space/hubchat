@@ -35,7 +35,9 @@ func (s *Service) SearchMessages(ctx context.Context, workspaceID, query string,
 // alone is not a sufficient cursor because several messages can have the
 // same score, so created_at and id provide deterministic tie-breakers.
 func (s *Service) SearchMessagesPage(ctx context.Context, workspaceID, query string, beforeRank float32, beforeCreatedAt time.Time, beforeID string, hasCursor bool, limit int) ([]MessageSearchResult, error) {
-	if limit <= 0 || limit > 100 {
+	// 101 is allowed internally so the global search service can request one
+	// look-ahead row for a public page of 100.
+	if limit <= 0 || limit > 101 {
 		limit = 20
 	}
 	return s.repo.searchMessagesPage(ctx, workspaceID, query, beforeRank, beforeCreatedAt, beforeID, hasCursor, limit)

@@ -122,6 +122,24 @@ The suite runs one package at a time because each package resets the shared
 test database. A missing `HUBCHAT_TEST_DATABASE_URL` skips integration tests by
 design; it never guesses which database is safe to destroy.
 
+## Production journeys
+
+The production-binary check also runs an HTTP acceptance journey against the
+compiled binary. It creates an isolated, uniquely named owner/workspace,
+installs a widget, verifies public widget configuration and visitor identity,
+creates and publicly bootstraps a portal, starts and replies to a visitor
+conversation, submits and votes on widget feedback, converts the conversation
+to a ticket, and checks workspace export preview.
+Run it directly against an already running binary with:
+
+```bash
+HUBCHAT_JOURNEY_BASE_URL="http://127.0.0.1:8080" make production-journey-check
+```
+
+This is an API-level journey, not a browser DOM test. It catches production
+router, cookie, CSRF, tenant, widget-origin, and cross-module contract errors
+without adding a browser runtime to the Go release artifact.
+
 ## Browser journeys
 
 The cross-module API journey currently runs against a real PostgreSQL database:
@@ -134,8 +152,10 @@ HUBCHAT_TEST_DATABASE_URL="postgres://hubchat:hubchat@127.0.0.1:5432/hubchat_tes
 It covers workspace bootstrap, customer identity, portal magic-link login,
 ticket creation, agent and customer replies, attachment upload/download, and
 idempotent reply retry. A browser-level acceptance suite should still run
-against a built binary with a temporary PostgreSQL database. The full journey
-set is documented in
+against a built binary with a temporary PostgreSQL database. The production
+HTTP journey above covers the operator/widget portion; a browser-level suite
+is still useful for DOM, keyboard, accessibility, and real portal navigation.
+The full journey set is documented in
 `.material/idea.md`: setup, widget conversation, verified identity, agent
 reply, ticket/portal reply, attachments, feedback, knowledge-base search,
 surveys, SLA/automation, webhook replay, and workspace export/import.
