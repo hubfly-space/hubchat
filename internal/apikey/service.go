@@ -212,6 +212,19 @@ func (s *Service) Revoke(ctx context.Context, workspaceID, id string) error {
 	return nil
 }
 
+// RevokeAllForMember ends API keys issued by a member during directory
+// deprovisioning. API keys are workspace-scoped, but their creator is still a
+// credential owner whose access must not survive account suspension.
+func (s *Service) RevokeAllForMember(ctx context.Context, workspaceID, memberID string) error {
+	if _, err := s.pool.Exec(ctx, `
+		UPDATE api_keys SET revoked_at=coalesce(revoked_at, now())
+		WHERE workspace_id=$1 AND created_by=$2 AND revoked_at IS NULL
+	`, workspaceID, memberID); err != nil {
+		return fmt.Errorf("api key: revoke member keys: %w", err)
+	}
+	return nil
+}
+
 // Authenticate resolves a raw Bearer token and records usage only after all
 // revocation and expiry predicates have passed. The returned principal is
 // intentionally narrower than an agent session; the caller maps scopes to
