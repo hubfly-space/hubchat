@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -32,6 +33,13 @@ func (s *Service) CreateTeam(
 	ctx context.Context, workspaceID, actorMemberID, name string,
 	description *string, leadID *string, routingStrategy string, memberIDs []string,
 ) (*Team, error) {
+	return s.CreateTeamWithRouting(ctx, workspaceID, actorMemberID, name, description, leadID, routingStrategy, memberIDs, nil)
+}
+
+func (s *Service) CreateTeamWithRouting(
+	ctx context.Context, workspaceID, actorMemberID, name string,
+	description *string, leadID *string, routingStrategy string, memberIDs []string, routingConfig map[string]any,
+) (*Team, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, ErrInvalidTeamName
@@ -46,7 +54,7 @@ func (s *Service) CreateTeam(
 	id := ids.New(ids.PrefixTeam)
 
 	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := s.repo.insertTeam(ctx, tx, id, workspaceID, name, description, leadID, routingStrategy); err != nil {
+		if err := s.repo.insertTeam(ctx, tx, id, workspaceID, name, description, leadID, routingStrategy, routingConfig); err != nil {
 			return err
 		}
 		for _, memberID := range memberIDs {
@@ -88,6 +96,13 @@ func (s *Service) UpdateTeam(
 	ctx context.Context, workspaceID, actorMemberID, teamID, name string,
 	description *string, leadID *string, routingStrategy string,
 ) (*Team, error) {
+	return s.UpdateTeamWithRouting(ctx, workspaceID, actorMemberID, teamID, name, description, leadID, routingStrategy, nil)
+}
+
+func (s *Service) UpdateTeamWithRouting(
+	ctx context.Context, workspaceID, actorMemberID, teamID, name string,
+	description *string, leadID *string, routingStrategy string, routingConfig map[string]any,
+) (*Team, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, ErrInvalidTeamName
@@ -97,7 +112,7 @@ func (s *Service) UpdateTeam(
 	}
 
 	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := s.repo.updateTeam(ctx, tx, workspaceID, teamID, name, description, leadID, routingStrategy); err != nil {
+		if err := s.repo.updateTeam(ctx, tx, workspaceID, teamID, name, description, leadID, routingStrategy, routingConfig); err != nil {
 			return err
 		}
 		if err := s.recordAudit(ctx, tx, audit.Entry{
@@ -163,17 +178,24 @@ func (s *Service) ListTeams(ctx context.Context, workspaceID string) ([]Team, er
 	return s.repo.listTeams(ctx, workspaceID)
 }
 
+// ListTeamsPage keeps the team directory bounded while preserving the same
+// alphabetical order as ListTeams. The id tiebreaker makes duplicate names
+// deterministic even though names are normally unique within a workspace.
+func (s *Service) ListTeamsPage(ctx context.Context, workspaceID, beforeName, beforeID string, limit int) ([]Team, error) {
+	return s.repo.listTeamsPage(ctx, workspaceID, beforeName, beforeID, limit)
+}
+
 // ---------------------------------------------------------------- repository
 
 var errUniqueTeamName = errors.New("workspace: duplicate team name")
 
 func (r *repository) insertTeam(
-	ctx context.Context, tx pgx.Tx, id, workspaceID, name string, description, leadID *string, routingStrategy string,
+	ctx context.Context, tx pgx.Tx, id, workspaceID, name string, description, leadID *string, routingStrategy string, routingConfig map[string]any,
 ) error {
 	_, err := tx.Exec(ctx, `
-		INSERT INTO teams (id, workspace_id, name, description, lead_id, routing_strategy)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, id, workspaceID, name, description, leadID, routingStrategy)
+		INSERT INTO teams (id, workspace_id, name, description, lead_id, routing_strategy, routing_config)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, id, workspaceID, name, description, leadID, routingStrategy, routingJSON(routingConfig))
 	if err != nil && isUniqueViolation(err) {
 		return errUniqueTeamName
 	}
@@ -184,12 +206,13 @@ func (r *repository) insertTeam(
 }
 
 func (r *repository) updateTeam(
-	ctx context.Context, tx pgx.Tx, workspaceID, teamID, name string, description, leadID *string, routingStrategy string,
+	ctx context.Context, tx pgx.Tx, workspaceID, teamID, name string, description, leadID *string, routingStrategy string, routingConfig map[string]any,
 ) error {
 	tag, err := tx.Exec(ctx, `
-		UPDATE teams SET name = $3, description = $4, lead_id = $5, routing_strategy = $6
+		UPDATE teams SET name = $3, description = $4, lead_id = $5, routing_strategy = $6,
+			routing_config = CASE WHEN $7::jsonb IS NULL THEN routing_config ELSE $7::jsonb END
 		WHERE workspace_id = $1 AND id = $2
-	`, workspaceID, teamID, name, description, leadID, routingStrategy)
+	`, workspaceID, teamID, name, description, leadID, routingStrategy, nullableRoutingJSON(routingConfig))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return errUniqueTeamName
@@ -217,7 +240,7 @@ func (r *repository) deleteTeam(ctx context.Context, tx pgx.Tx, workspaceID, tea
 func (r *repository) teamByID(ctx context.Context, workspaceID, teamID string) (*Team, error) {
 	var t Team
 	err := r.pool.QueryRow(ctx, `
-		SELECT t.id, t.name, t.description, t.lead_id, t.routing_strategy, t.created_at,
+		SELECT t.id, t.name, t.description, t.lead_id, t.routing_strategy, t.routing_config, t.created_at,
 		       coalesce(
 		           array_agg(tm.member_id) FILTER (WHERE tm.member_id IS NOT NULL),
 		           '{}'
@@ -226,7 +249,7 @@ func (r *repository) teamByID(ctx context.Context, workspaceID, teamID string) (
 		LEFT JOIN team_members tm ON tm.team_id = t.id
 		WHERE t.workspace_id = $1 AND t.id = $2
 		GROUP BY t.id, t.name, t.description, t.lead_id, t.routing_strategy, t.created_at
-	`, workspaceID, teamID).Scan(&t.ID, &t.Name, &t.Description, &t.LeadID, &t.RoutingStrategy, &t.CreatedAt, &t.MemberIDs)
+	`, workspaceID, teamID).Scan(&t.ID, &t.Name, &t.Description, &t.LeadID, &t.RoutingStrategy, &t.RoutingConfig, &t.CreatedAt, &t.MemberIDs)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrTeamNotFound
@@ -234,7 +257,25 @@ func (r *repository) teamByID(ctx context.Context, workspaceID, teamID string) (
 	if err != nil {
 		return nil, fmt.Errorf("workspace: load team: %w", err)
 	}
+	if t.RoutingConfig == nil {
+		t.RoutingConfig = map[string]any{}
+	}
 	return &t, nil
+}
+
+func routingJSON(value map[string]any) []byte {
+	if value == nil {
+		value = map[string]any{}
+	}
+	data, _ := json.Marshal(value)
+	return data
+}
+
+func nullableRoutingJSON(value map[string]any) []byte {
+	if value == nil {
+		return nil
+	}
+	return routingJSON(value)
 }
 
 func (r *repository) insertTeamMember(ctx context.Context, tx pgx.Tx, teamID, memberID string) error {

@@ -14,10 +14,12 @@ import {
   cn,
   formatRelativeShort,
   idempotencyKey,
+  useInfinite,
   useMutation,
   useQuery,
   useTheme,
   type ThemeMode,
+  type Paginated,
 } from "@hubchat/shared";
 import {
   Bell,
@@ -49,16 +51,18 @@ export function TopBar({
   const count = useQuery<{ count: number }>(["notifications-count"], (signal) =>
     api.get("/notifications/count", { signal }),
   );
-  const notifications = useQuery<{ data: LiveNotification[] }>(["notifications"], (signal) =>
-    api.get("/notifications?limit=20", { signal }),
-  );
+  const notifications = useInfinite<LiveNotification>(["notifications"], (cursor, signal) => {
+    const params = new URLSearchParams({ limit: "20" });
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<LiveNotification>>(`/notifications?${params.toString()}`, { signal });
+  });
   const preferences = useQuery<{ data: NotificationPreference[] }>(["notification-preferences"], (signal) =>
     api.get("/notifications/preferences", { signal }),
     { staleTime: 60_000 },
   );
   const { mode, setMode, density, setDensity } = useTheme();
 
-  useBrowserNotifications(notifications.data?.data ?? [], preferences.data?.data ?? [], preferences.isSuccess, navigate);
+  useBrowserNotifications(notifications.items, preferences.data?.data ?? [], preferences.isSuccess, navigate);
 
   return (
     <header className="flex h-topbar shrink-0 items-center gap-3 border-b border-line bg-surface px-3">
@@ -137,9 +141,12 @@ export function TopBar({
 
         <NotificationsMenu
           unreadCount={count.data?.count ?? 0}
-          items={notifications.data?.data ?? []}
+          items={notifications.items}
           loading={notifications.isLoading}
-          error={notifications.isError}
+          error={Boolean(notifications.error)}
+          hasMore={notifications.hasMore}
+          loadMore={() => void notifications.fetchNext()}
+          loadingMore={notifications.isFetching && !notifications.isLoading}
         />
       </div>
     </header>
@@ -222,11 +229,17 @@ function NotificationsMenu({
   items,
   loading,
   error,
+  hasMore,
+  loadMore,
+  loadingMore,
 }: {
   unreadCount: number;
   items: LiveNotification[];
   loading: boolean;
   error: boolean;
+  hasMore: boolean;
+  loadMore: () => void;
+  loadingMore: boolean;
 }) {
   const navigate = useNavigate();
   const markRead = useMutation<string, void>(
@@ -307,6 +320,7 @@ function NotificationsMenu({
               </span>
             </button>
           ))}
+          {!loading && !error && hasMore && <button type="button" onClick={loadMore} disabled={loadingMore} className="w-full rounded-md px-2 py-2 text-center text-xs text-accent-text hover:bg-fill disabled:opacity-60">{loadingMore ? "Loading older…" : "Load older notifications"}</button>}
         </div>
 
         <div className="border-t border-line p-1">
