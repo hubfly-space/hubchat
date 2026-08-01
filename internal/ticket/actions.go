@@ -360,6 +360,12 @@ func (s *Service) Followers(ctx context.Context, workspaceID, id string) ([]stri
 	return s.repo.followerIDs(ctx, workspaceID, id)
 }
 
+// FollowersPage returns follower member IDs in stable order for the API's
+// opaque cursor pagination contract.
+func (s *Service) FollowersPage(ctx context.Context, workspaceID, id, before string, limit int) ([]string, error) {
+	return s.repo.followerIDsPage(ctx, workspaceID, id, before, limit)
+}
+
 // Link records a directed relationship between two tickets — related,
 // duplicate_of, blocks, or blocked_by (§6.3 linked tickets).
 func (s *Service) Link(ctx context.Context, workspaceID, actorMemberID, sourceID, targetID, relation string) error {

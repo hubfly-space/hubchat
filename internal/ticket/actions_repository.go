@@ -227,11 +227,39 @@ func (r *repository) unfollow(ctx context.Context, tx pgx.Tx, ticketID, memberID
 }
 
 func (r *repository) followerIDs(ctx context.Context, workspaceID, ticketID string) ([]string, error) {
+	var out []string
+	var before string
+	for {
+		page, err := r.followerIDsPage(ctx, workspaceID, ticketID, before, 201)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, page...)
+		if len(page) < 201 {
+			return out, nil
+		}
+		before = page[len(page)-1]
+	}
+}
+
+func (r *repository) followerIDsPage(ctx context.Context, workspaceID, ticketID, before string, limit int) ([]string, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := "t.workspace_id = $1 AND tf.ticket_id = $2"
+	args := []any{workspaceID, ticketID}
+	if before != "" {
+		where += " AND tf.member_id > $3"
+		args = append(args, before)
+	}
+	args = append(args, limit)
+	limitPlaceholder := fmt.Sprintf("$%d", len(args))
 	rows, err := r.pool.Query(ctx, `
 		SELECT tf.member_id FROM ticket_followers tf
 		JOIN tickets t ON t.id = tf.ticket_id
-		WHERE t.workspace_id = $1 AND tf.ticket_id = $2
-	`, workspaceID, ticketID)
+		WHERE `+where+`
+		ORDER BY tf.member_id ASC
+		LIMIT `+limitPlaceholder, args...)
 	if err != nil {
 		return nil, err
 	}

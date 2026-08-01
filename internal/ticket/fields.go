@@ -116,7 +116,28 @@ func (s *Service) ListFieldDefinitions(ctx context.Context, workspaceID, entityT
 	if !validEntityTypes[entityType] {
 		return nil, ErrInvalidEntityType
 	}
-	return s.fields.list(ctx, workspaceID, entityType)
+	var out []FieldDefinition
+	var beforePosition int16
+	var beforeID string
+	for {
+		page, err := s.fields.listPage(ctx, workspaceID, entityType, beforePosition, beforeID, 201)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, page...)
+		if len(page) < 201 {
+			return out, nil
+		}
+		last := page[len(page)-1]
+		beforePosition, beforeID = last.Position, last.ID
+	}
+}
+
+func (s *Service) ListFieldDefinitionsPage(ctx context.Context, workspaceID, entityType string, beforePosition int16, beforeID string, limit int) ([]FieldDefinition, error) {
+	if !validEntityTypes[entityType] {
+		return nil, ErrInvalidEntityType
+	}
+	return s.fields.listPage(ctx, workspaceID, entityType, beforePosition, beforeID, limit)
 }
 
 // ReorderFieldDefinitions applies a new display order in one pass — the

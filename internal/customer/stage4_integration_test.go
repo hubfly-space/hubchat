@@ -134,6 +134,25 @@ func createDef(t *testing.T, ctx context.Context, svc *customer.Service, wsID, k
 	return def
 }
 
+func TestAttributeDefinitionsUseStableCursorPages(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	svc := newTestService(t, pool)
+	wsID, _ := seedWorkspace(t, ctx, pool)
+	createDef(t, ctx, svc, wsID, "account", "string", customer.AttributeDefinitionInput{Label: "Account"})
+	createDef(t, ctx, svc, wsID, "plan", "string", customer.AttributeDefinitionInput{Label: "Plan"})
+
+	first, err := svc.ListAttributeDefinitionsPage(ctx, wsID, "customer", "", "", 1)
+	if err != nil || len(first) != 1 || first[0].Key != "account" {
+		t.Fatalf("first attribute page = %+v, %v", first, err)
+	}
+	next, err := svc.ListAttributeDefinitionsPage(ctx, wsID, "customer", first[0].Key, first[0].ID, 1)
+	if err != nil || len(next) != 1 || next[0].Key != "plan" {
+		t.Fatalf("second attribute page = %+v, %v", next, err)
+	}
+}
+
 func TestSetCustomerAttributesEnforcesTheMetadataSchema(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.Reset(t, pool)
