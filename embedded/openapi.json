@@ -10441,6 +10441,345 @@
         }
       }
     },
+    "/v1/scim/v2.0/{workspaceID}/Users": {
+      "get": {
+        "operationId": "getScimV20WorkspaceIDUsers",
+        "summary": "get /v1/scim/v2.0/{workspaceID}/Users",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [
+          {
+            "name": "workspaceID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "postScimV20WorkspaceIDUsers",
+        "summary": "post /v1/scim/v2.0/{workspaceID}/Users",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [
+          {
+            "name": "workspaceID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/scim/v2.0/{workspaceID}/Users/{id}": {
+      "get": {
+        "operationId": "getScimV20WorkspaceIDUsersId",
+        "summary": "get /v1/scim/v2.0/{workspaceID}/Users/{id}",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [
+          {
+            "name": "workspaceID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "operationId": "putScimV20WorkspaceIDUsersId",
+        "summary": "put /v1/scim/v2.0/{workspaceID}/Users/{id}",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [
+          {
+            "name": "workspaceID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "patchScimV20WorkspaceIDUsersId",
+        "summary": "patch /v1/scim/v2.0/{workspaceID}/Users/{id}",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [
+          {
+            "name": "workspaceID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteScimV20WorkspaceIDUsersId",
+        "summary": "delete /v1/scim/v2.0/{workspaceID}/Users/{id}",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [
+          {
+            "name": "workspaceID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/search": {
       "get": {
         "operationId": "getSearch",

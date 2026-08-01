@@ -17,6 +17,12 @@ func registerMemberRoutes(mux *http.ServeMux, deps Deps) {
 		requireActor(deps, handleListMembers(deps)))
 	mux.HandleFunc("GET /v1/roles",
 		requireActor(deps, handleListRoles(deps)))
+	mux.HandleFunc("POST /v1/roles",
+		requireCapability(deps, authorization.MemberManage, idempotent(handleCreateRole(deps))))
+	mux.HandleFunc("PATCH /v1/roles/{id}",
+		requireCapability(deps, authorization.MemberManage, idempotent(handleUpdateRole(deps))))
+	mux.HandleFunc("DELETE /v1/roles/{id}",
+		requireCapability(deps, authorization.MemberManage, idempotent(handleDeleteRole(deps))))
 
 	mux.HandleFunc("PATCH /v1/members/{id}/role",
 		requireCapability(deps, authorization.MemberManage, idempotent(handleSetMemberRole(deps))))
@@ -53,7 +59,7 @@ func handleListMembers(deps Deps) http.HandlerFunc {
 			out = append(out, memberJSON{
 				ID: member.ID, WorkspaceID: actor.WorkspaceID, UserID: member.UserID,
 				Name: member.Name, Email: member.Email, AvatarURL: member.AvatarURL,
-				Role: member.Role, Capabilities: []string{}, Teams: orEmpty(member.TeamIDs),
+				Role: member.Role, Active: member.Active, Capabilities: []string{}, Teams: orEmpty(member.TeamIDs),
 				Presence: member.Presence, Accepting: member.Accepting,
 				LastSeenAt: formatOptionalTime(member.LastSeenAt),
 				CreatedAt:  member.CreatedAt.UTC().Format(time.RFC3339),
@@ -171,15 +177,100 @@ func handleSetOwnAccepting(deps Deps) http.HandlerFunc {
 }
 
 type roleJSON struct {
+	ID           string   `json:"id"`
+	WorkspaceID  string   `json:"workspace_id,omitempty"`
+	Key          string   `json:"key"`
+	Name         string   `json:"name"`
+	Description  *string  `json:"description"`
+	IsBuiltin    bool     `json:"is_builtin"`
+	Capabilities []string `json:"capabilities"`
+}
+
+type createRoleRequest struct {
 	Key          string   `json:"key"`
 	Name         string   `json:"name"`
 	Description  *string  `json:"description"`
 	Capabilities []string `json:"capabilities"`
 }
 
+type updateRoleRequest struct {
+	Name         string   `json:"name"`
+	Description  *string  `json:"description"`
+	Capabilities []string `json:"capabilities"`
+}
+
+func roleJSONValue(role *workspace.RoleDefinition) roleJSON {
+	return roleJSON{
+		ID: role.ID, WorkspaceID: role.WorkspaceID, Key: role.Key, Name: role.Name,
+		Description: role.Description, IsBuiltin: role.IsBuiltin,
+		Capabilities: orEmpty(role.Capabilities),
+	}
+}
+
+func handleCreateRole(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		var req createRoleRequest
+		if err := httpserver.DecodeJSON(r, &req); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed role request.")
+			return
+		}
+		capabilities := make([]authorization.Capability, len(req.Capabilities))
+		for i, capability := range req.Capabilities {
+			capabilities[i] = authorization.Capability(capability)
+		}
+		role, err := deps.Workspace.CreateRole(r.Context(), actor.WorkspaceID, actor.MemberID, workspace.RoleInput{
+			Key: req.Key, Name: req.Name, Description: req.Description, Capabilities: capabilities,
+		})
+		if err != nil {
+			writeRoleError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, roleJSONValue(role))
+	}
+}
+
+func handleUpdateRole(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		var req updateRoleRequest
+		if err := httpserver.DecodeJSON(r, &req); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed role request.")
+			return
+		}
+		var capabilities []authorization.Capability
+		if req.Capabilities != nil {
+			capabilities = make([]authorization.Capability, len(req.Capabilities))
+			for i, capability := range req.Capabilities {
+				capabilities[i] = authorization.Capability(capability)
+			}
+		}
+		role, err := deps.Workspace.UpdateRole(r.Context(), actor.WorkspaceID, actor.MemberID, r.PathValue("id"), workspace.RoleUpdateInput{
+			Name: req.Name, Description: req.Description, Capabilities: capabilities,
+		})
+		if err != nil {
+			writeRoleError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, roleJSONValue(role))
+	}
+}
+
+func handleDeleteRole(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		if err := deps.Workspace.DeleteRole(r.Context(), actor.WorkspaceID, actor.MemberID, r.PathValue("id")); err != nil {
+			writeRoleError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 func handleListRoles(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		roles, err := deps.Workspace.ListRoles(r.Context())
+		actor := actorFromRequest(r)
+		roles, err := deps.Workspace.ListRoles(r.Context(), actor.WorkspaceID)
 		if err != nil {
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load roles.")
 			return
@@ -187,12 +278,24 @@ func handleListRoles(deps Deps) http.HandlerFunc {
 
 		out := make([]roleJSON, 0, len(roles))
 		for _, role := range roles {
-			out = append(out, roleJSON{
-				Key: role.Key, Name: role.Name, Description: role.Description,
-				Capabilities: orEmpty(role.Capabilities),
-			})
+			out = append(out, roleJSONValue(&role))
 		}
 		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+	}
+}
+
+func writeRoleError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, workspace.ErrRoleNotFound):
+		httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "No such role.")
+	case errors.Is(err, workspace.ErrRoleInUse), errors.Is(err, workspace.ErrRoleKeyTaken):
+		httpserver.WriteError(w, r, http.StatusConflict, httpserver.CodeConflict, err.Error())
+	case errors.Is(err, workspace.ErrRoleBuiltin), errors.Is(err, workspace.ErrRoleKeyInvalid),
+		errors.Is(err, workspace.ErrRoleKeyReserved), errors.Is(err, workspace.ErrRoleNameRequired),
+		errors.Is(err, workspace.ErrInvalidCapability), errors.Is(err, workspace.ErrInvalidRole):
+		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, err.Error())
+	default:
+		httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not update roles.")
 	}
 }
 

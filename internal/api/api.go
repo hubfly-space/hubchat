@@ -130,6 +130,7 @@ func New(deps Deps) http.Handler {
 	registerBootstrapRoutes(mux, deps)
 	registerWorkspaceRoutes(mux, deps)
 	registerMemberRoutes(mux, deps)
+	registerSCIMRoutes(mux, deps)
 	registerInviteRoutes(mux, deps)
 	registerTeamRoutes(mux, deps)
 	registerSettingsRoutes(mux, deps)

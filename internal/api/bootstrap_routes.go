@@ -54,6 +54,7 @@ type viewerJSON struct {
 	Email        string   `json:"email"`
 	AvatarURL    *string  `json:"avatar_url"`
 	Role         string   `json:"role"`
+	Active       bool     `json:"active"`
 	Capabilities []string `json:"capabilities"`
 }
 
@@ -65,6 +66,7 @@ type memberJSON struct {
 	Email        string   `json:"email"`
 	AvatarURL    *string  `json:"avatar_url"`
 	Role         string   `json:"role"`
+	Active       bool     `json:"active"`
 	Capabilities []string `json:"capabilities"`
 	Teams        []string `json:"teams"`
 	Presence     string   `json:"presence"`
@@ -167,6 +169,7 @@ func buildBootstrapResponse(data *workspace.Bootstrap) bootstrapResponse {
 			Name:        member.Name,
 			Email:       member.Email,
 			AvatarURL:   member.AvatarURL,
+			Active:      member.Active,
 			Role:        member.Role,
 			// Other members' effective capabilities are not the viewer's
 			// business: the UI never renders a control on someone else's
