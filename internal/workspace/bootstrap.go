@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/hubchat/hubchat/internal/authorization"
@@ -54,12 +55,12 @@ type Viewer struct {
 // MemberProfile is a workspace member as the directory and assignee pickers
 // need them.
 type MemberProfile struct {
-	ID        string
-	UserID    string
-	Name      string
-	Email     string
-	AvatarURL *string
-	Role      string
+	ID         string
+	UserID     string
+	Name       string
+	Email      string
+	AvatarURL  *string
+	Role       string
 	Presence   string
 	Accepting  bool
 	TeamIDs    []string
@@ -73,6 +74,7 @@ type Team struct {
 	Description     *string
 	LeadID          *string
 	RoutingStrategy string
+	RoutingConfig   map[string]any
 	MemberIDs       []string
 	CreatedAt       time.Time
 }
@@ -249,7 +251,7 @@ func (r *repository) listMembers(ctx context.Context, workspaceID string) ([]Mem
 
 func (r *repository) listTeams(ctx context.Context, workspaceID string) ([]Team, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT t.id, t.name, t.description, t.lead_id, t.routing_strategy, t.created_at,
+		SELECT t.id, t.name, t.description, t.lead_id, t.routing_strategy, t.routing_config, t.created_at,
 		       coalesce(
 		           array_agg(tm.member_id) FILTER (WHERE tm.member_id IS NOT NULL),
 		           '{}'
@@ -257,7 +259,7 @@ func (r *repository) listTeams(ctx context.Context, workspaceID string) ([]Team,
 		FROM teams t
 		LEFT JOIN team_members tm ON tm.team_id = t.id
 		WHERE t.workspace_id = $1
-		GROUP BY t.id, t.name, t.description, t.lead_id, t.routing_strategy, t.created_at
+		GROUP BY t.id, t.name, t.description, t.lead_id, t.routing_strategy, t.routing_config, t.created_at
 		ORDER BY t.name
 	`, workspaceID)
 	if err != nil {
@@ -269,10 +271,51 @@ func (r *repository) listTeams(ctx context.Context, workspaceID string) ([]Team,
 	for rows.Next() {
 		var t Team
 		if err := rows.Scan(&t.ID, &t.Name, &t.Description, &t.LeadID,
-			&t.RoutingStrategy, &t.CreatedAt, &t.MemberIDs); err != nil {
+			&t.RoutingStrategy, &t.RoutingConfig, &t.CreatedAt, &t.MemberIDs); err != nil {
 			return nil, err
 		}
+		if t.RoutingConfig == nil {
+			t.RoutingConfig = map[string]any{}
+		}
 		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (r *repository) listTeamsPage(ctx context.Context, workspaceID, beforeName, beforeID string, limit int) ([]Team, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 101
+	}
+	where := "t.workspace_id = $1"
+	args := []any{workspaceID}
+	if beforeName != "" {
+		where += " AND (t.name,t.id) > ($2,$3)"
+		args = append(args, beforeName, beforeID)
+	}
+	args = append(args, limit)
+	rows, err := r.pool.Query(ctx, `
+		SELECT t.id, t.name, t.description, t.lead_id, t.routing_strategy, t.routing_config, t.created_at,
+		       coalesce(array_agg(tm.member_id) FILTER (WHERE tm.member_id IS NOT NULL), '{}') AS member_ids
+		FROM teams t
+		LEFT JOIN team_members tm ON tm.team_id = t.id
+		WHERE `+where+`
+		GROUP BY t.id, t.name, t.description, t.lead_id, t.routing_strategy, t.routing_config, t.created_at
+		ORDER BY t.name, t.id
+		LIMIT $`+strconv.Itoa(len(args)), args...)
+	if err != nil {
+		return nil, fmt.Errorf("workspace: list teams page: %w", err)
+	}
+	defer rows.Close()
+	out := []Team{}
+	for rows.Next() {
+		var team Team
+		if err := rows.Scan(&team.ID, &team.Name, &team.Description, &team.LeadID, &team.RoutingStrategy, &team.RoutingConfig, &team.CreatedAt, &team.MemberIDs); err != nil {
+			return nil, err
+		}
+		if team.RoutingConfig == nil {
+			team.RoutingConfig = map[string]any{}
+		}
+		out = append(out, team)
 	}
 	return out, rows.Err()
 }

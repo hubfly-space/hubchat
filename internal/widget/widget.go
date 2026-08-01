@@ -20,14 +20,14 @@ import (
 )
 
 var (
-	ErrNotFound         = errors.New("widget: not found")
-	ErrInvalidInbox     = errors.New("widget: not an inbox in this workspace")
-	ErrInvalidName      = errors.New("widget: name must not be empty")
-	ErrDuplicateDomain  = errors.New("widget: domain already allowlisted")
-	ErrWildcardDomain   = errors.New("widget: a bare \"*\" is not a valid domain — a widget allowlisted to everything has no allowlist")
-	ErrOriginNotAllowed = errors.New("widget: origin is not on this widget's domain allowlist")
-	ErrDisabled         = errors.New("widget: disabled")
-	ErrVisitorInvalid   = errors.New("widget: visitor token is invalid or expired")
+	ErrNotFound          = errors.New("widget: not found")
+	ErrInvalidInbox      = errors.New("widget: not an inbox in this workspace")
+	ErrInvalidName       = errors.New("widget: name must not be empty")
+	ErrDuplicateDomain   = errors.New("widget: domain already allowlisted")
+	ErrWildcardDomain    = errors.New("widget: a bare \"*\" is not a valid domain — a widget allowlisted to everything has no allowlist")
+	ErrOriginNotAllowed  = errors.New("widget: origin is not on this widget's domain allowlist")
+	ErrDisabled          = errors.New("widget: disabled")
+	ErrVisitorInvalid    = errors.New("widget: visitor token is invalid or expired")
 	ErrConversationOwner = errors.New("widget: this conversation does not belong to this visitor")
 )
 
@@ -275,10 +275,17 @@ func (s *Service) Delete(ctx context.Context, workspaceID, actorMemberID, id str
 }
 
 func (s *Service) Versions(ctx context.Context, workspaceID, widgetID string) ([]ConfigVersion, error) {
+	return s.VersionsPage(ctx, workspaceID, widgetID, 0, 200)
+}
+
+func (s *Service) VersionsPage(ctx context.Context, workspaceID, widgetID string, beforeVersion, limit int) ([]ConfigVersion, error) {
 	if _, err := s.repo.byID(ctx, workspaceID, widgetID); err != nil {
 		return nil, err
 	}
-	return s.repo.versions(ctx, widgetID)
+	if limit <= 0 || limit > 201 {
+		limit = 200
+	}
+	return s.repo.versionsPage(ctx, widgetID, beforeVersion, limit)
 }
 
 // Rollback republishes an earlier version's configuration as a brand-new

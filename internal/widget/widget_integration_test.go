@@ -160,6 +160,14 @@ func TestWidgetUpdateVersionsAndRollback(t *testing.T) {
 	if len(versions) != 2 {
 		t.Fatalf("expected 2 versions, got %d", len(versions))
 	}
+	firstPage, err := h.Widget.VersionsPage(ctx, ws.WorkspaceID, w.ID, 0, 1)
+	if err != nil || len(firstPage) != 1 || firstPage[0].Version != 2 {
+		t.Fatalf("first version page = %+v, err=%v", firstPage, err)
+	}
+	secondPage, err := h.Widget.VersionsPage(ctx, ws.WorkspaceID, w.ID, firstPage[0].Version, 1)
+	if err != nil || len(secondPage) != 1 || secondPage[0].Version != 1 {
+		t.Fatalf("second version page = %+v, err=%v", secondPage, err)
+	}
 
 	rolledBack, err := h.Widget.Rollback(ctx, ws.WorkspaceID, ws.MemberID, w.ID, 1)
 	if err != nil {

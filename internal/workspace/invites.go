@@ -124,6 +124,12 @@ func (s *Service) ListInvites(ctx context.Context, workspaceID string) ([]Invite
 	return s.repo.listInvites(ctx, workspaceID)
 }
 
+// ListInvitesPage returns the invite history newest first with a timestamp/id
+// cursor so large workspaces do not need to materialize every invitation.
+func (s *Service) ListInvitesPage(ctx context.Context, workspaceID string, before time.Time, beforeID string, limit int) ([]Invite, error) {
+	return s.repo.listInvitesPage(ctx, workspaceID, before, beforeID, limit)
+}
+
 // RevokeInvite cancels a pending invite. Idempotent against one already
 // accepted or expired — revoking is a no-op, not an error, because the
 // outcome the caller wants ("this invite must not work") already holds.
