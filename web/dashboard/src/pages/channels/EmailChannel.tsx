@@ -25,7 +25,9 @@ import {
   api,
   idempotencyKey,
   useMutation,
+  useInfinite,
   useQuery,
+  type Paginated,
 } from "@hubchat/shared";
 import { AlertTriangle, CheckCircle2, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -72,8 +74,16 @@ export default function EmailChannel() {
   const [inboundMode, setInboundMode] = useState<Mailbox["inbound_mode"]>("off");
   const update = useMutation<Record<string, unknown>, Mailbox>((input) => api.patch(`/email/mailboxes/${encodeURIComponent(active?.id ?? "")}`, input, { idempotencyKey: idempotencyKey() }), { invalidates: [["email-mailboxes"]] });
   const create = useMutation<{ address: string; inbox_id: string; inbound_mode: "webhook"; enabled: boolean }, CreatedMailbox>((input) => api.post("/email/mailboxes", input, { idempotencyKey: idempotencyKey() }), { invalidates: [["email-mailboxes"]], onSuccess: (value) => { setCreateOpen(false); setNewAddress(""); setNewInboxID(""); setNewSecret(value.inbound_secret); } });
-  const deliveryEvents = useQuery<{ data: DeliveryEvent[] }>(active ? ["email-delivery-events", active.id] : null, (signal) => api.get(`/email/mailboxes/${encodeURIComponent(active?.id ?? "")}/delivery-events?limit=20`, { signal, fresh: true }));
-  const suppressions = useQuery<{ data: Suppression[] }>(["email-suppressions"], (signal) => api.get("/email/suppressions", { signal }));
+  const deliveryEvents = useInfinite<DeliveryEvent>(active ? ["email-delivery-events", active.id] : null, (cursor, signal) => {
+    const params = new URLSearchParams({ limit: "20" });
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<DeliveryEvent>>(`/email/mailboxes/${encodeURIComponent(active?.id ?? "")}/delivery-events?${params.toString()}`, { signal, fresh: true });
+  });
+  const suppressions = useInfinite<Suppression>(["email-suppressions"], (cursor, signal) => {
+    const params = new URLSearchParams({ limit: "50" });
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<Suppression>>(`/email/suppressions?${params.toString()}`, { signal });
+  });
   const removeSuppression = useMutation<string, void>((address) => api.delete(`/email/mailboxes/${encodeURIComponent(active?.id ?? "")}/suppressions/${encodeURIComponent(address)}`), { invalidates: [["email-suppressions"]] });
 
   useEffect(() => {
@@ -348,13 +358,13 @@ export default function EmailChannel() {
                   description="Recorded when the provider reports them. Addresses with a hard bounce are suppressed automatically."
                 />
                 <CardBody>
-                  {suppressions.isLoading ? <p className="text-xs text-fg-muted">Loading suppression list…</p> : suppressions.error ? <div className="flex items-center justify-between gap-3"><p className="text-xs text-danger">Could not load suppressed addresses.</p><Button variant="ghost" size="xs" leading={<RefreshCw />} onClick={suppressions.refetch}>Retry</Button></div> : suppressions.data?.data.length ? <div className="space-y-2">{suppressions.data.data.map((item) => <div key={item.address} className="flex items-center gap-3 rounded-md border border-line-subtle px-3 py-2"><div className="min-w-0 flex-1"><p className="truncate font-mono text-xs text-fg">{item.address}</p><p className="text-2xs text-fg-muted">{item.reason} · {item.source}</p></div><Button variant="ghost" size="xs" leading={<Trash2 />} loading={removeSuppression.isPending} onClick={() => void removeSuppression.mutate(item.address).catch(() => {})}>Remove</Button></div>)}</div> : <p className="text-xs text-fg-muted">No suppressed addresses.</p>}
+                  {suppressions.isLoading ? <p className="text-xs text-fg-muted">Loading suppression list…</p> : suppressions.error ? <div className="flex items-center justify-between gap-3"><p className="text-xs text-danger">Could not load suppressed addresses.</p><Button variant="ghost" size="xs" leading={<RefreshCw />} onClick={suppressions.refetch}>Retry</Button></div> : suppressions.items.length ? <><div className="space-y-2">{suppressions.items.map((item) => <div key={item.address} className="flex items-center gap-3 rounded-md border border-line-subtle px-3 py-2"><div className="min-w-0 flex-1"><p className="truncate font-mono text-xs text-fg">{item.address}</p><p className="text-2xs text-fg-muted">{item.reason} · {item.source}</p></div><Button variant="ghost" size="xs" leading={<Trash2 />} loading={removeSuppression.isPending} onClick={() => void removeSuppression.mutate(item.address).catch(() => {})}>Remove</Button></div>)}</div>{suppressions.hasMore && <div className="flex justify-center pt-3"><Button variant="secondary" size="xs" loading={suppressions.isFetching} onClick={() => void suppressions.fetchNext()}>Load more suppressed addresses</Button></div>}</> : <p className="text-xs text-fg-muted">No suppressed addresses.</p>}
                 </CardBody>
               </Card>
               <Card className="mt-3">
                 <CardHeader title="Delivery event history" description="Provider callbacks are retained for troubleshooting and replay-safe status updates." />
                 <CardBody className="p-0">
-                  {deliveryEvents.isLoading ? <p className="px-4 py-5 text-xs text-fg-muted">Loading delivery events…</p> : deliveryEvents.error ? <div className="flex items-center justify-between gap-3 px-4 py-5"><p className="text-xs text-danger">Could not load delivery events.</p><Button variant="ghost" size="xs" leading={<RefreshCw />} onClick={deliveryEvents.refetch}>Retry</Button></div> : deliveryEvents.data?.data.length ? <ul className="divide-y divide-line-subtle">{deliveryEvents.data.data.map((event) => <li key={event.id} className="flex items-start gap-3 px-4 py-2.5"><span className={`mt-1.5 size-2 shrink-0 rounded-full ${event.type === "bounced" ? "bg-danger" : event.type === "delivered" ? "bg-success-text" : "bg-warning-text"}`} /><div className="min-w-0 flex-1"><p className="text-xs text-fg">{event.type} {event.recipient ? `· ${event.recipient}` : ""}</p><p className="text-2xs text-fg-muted">{event.provider}{event.reason ? ` · ${event.reason}` : ""}</p></div><time className="shrink-0 text-2xs tabular text-fg-muted">{new Date(event.occurred_at).toLocaleString()}</time></li>)}</ul> : <p className="px-4 py-5 text-xs text-fg-muted">No delivery events recorded.</p>}
+                  {deliveryEvents.isLoading ? <p className="px-4 py-5 text-xs text-fg-muted">Loading delivery events…</p> : deliveryEvents.error ? <div className="flex items-center justify-between gap-3 px-4 py-5"><p className="text-xs text-danger">Could not load delivery events.</p><Button variant="ghost" size="xs" leading={<RefreshCw />} onClick={deliveryEvents.refetch}>Retry</Button></div> : deliveryEvents.items.length ? <><ul className="divide-y divide-line-subtle">{deliveryEvents.items.map((event) => <li key={event.id} className="flex items-start gap-3 px-4 py-2.5"><span className={`mt-1.5 size-2 shrink-0 rounded-full ${event.type === "bounced" ? "bg-danger" : event.type === "delivered" ? "bg-success-text" : "bg-warning-text"}`} /><div className="min-w-0 flex-1"><p className="text-xs text-fg">{event.type} {event.recipient ? `· ${event.recipient}` : ""}</p><p className="text-2xs text-fg-muted">{event.provider}{event.reason ? ` · ${event.reason}` : ""}</p></div><time className="shrink-0 text-2xs tabular text-fg-muted">{new Date(event.occurred_at).toLocaleString()}</time></li>)}</ul>{deliveryEvents.hasMore && <div className="flex justify-center border-t border-line-subtle p-3"><Button variant="secondary" size="xs" loading={deliveryEvents.isFetching} onClick={() => void deliveryEvents.fetchNext()}>Load older events</Button></div>}</> : <p className="px-4 py-5 text-xs text-fg-muted">No delivery events recorded.</p>}
                 </CardBody>
               </Card>
             </Section>

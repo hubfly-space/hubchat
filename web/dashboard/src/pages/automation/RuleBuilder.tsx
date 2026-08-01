@@ -56,6 +56,8 @@ const TRIGGERS = [
   { value: "event.received", label: "Application event received", group: "Customers" },
   { value: "form.submitted", label: "Form submitted", group: "Intake" },
   { value: "feedback.submitted", label: "Feedback submitted", group: "Intake" },
+  { value: "article.published", label: "Knowledge-base article published", group: "Content" },
+  { value: "changelog.published", label: "Changelog entry published", group: "Content" },
   { value: "sla.approaching", label: "SLA approaching breach", group: "Service level" },
   { value: "sla.breached", label: "SLA breached", group: "Service level" },
   { value: "business_hours.changed", label: "Business hours start or end", group: "Time" },
