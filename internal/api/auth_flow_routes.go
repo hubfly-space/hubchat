@@ -315,15 +315,23 @@ func handleVerifyTOTPChallenge(deps Deps) http.HandlerFunc {
 func handleListSessions(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user := userFromRequest(r)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
 
-		sessions, err := deps.Auth.ListSessions(r.Context(), user.ID, httpserver.SessionToken(r))
+		sessions, err := deps.Auth.ListSessionsPage(r.Context(), user.ID, httpserver.SessionToken(r), cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not list your sessions.")
 			return
 		}
 
-		out := make([]map[string]any, 0, len(sessions))
-		for _, session := range sessions {
+		page := NewPage(sessions, limit, func(session auth.SessionInfo) Cursor {
+			return Cursor{At: session.LastSeenAt, ID: session.ID}
+		})
+		out := make([]map[string]any, 0, len(page.Data))
+		for _, session := range page.Data {
 			out = append(out, map[string]any{
 				"id":           session.ID,
 				"user_agent":   session.UserAgent,
@@ -334,7 +342,7 @@ func handleListSessions(deps Deps) http.HandlerFunc {
 				"current":      session.Current,
 			})
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+		httpserver.WriteJSON(w, http.StatusOK, Page[map[string]any]{Data: out, NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
 }
 

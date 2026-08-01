@@ -18,12 +18,18 @@ func registerAutomationRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("PATCH /v1/automation/rules/{id}", requireCapability(deps, authorization.AutomationManage, idempotent(handleUpdateAutomationRule(deps))))
 	mux.HandleFunc("POST /v1/automation/rules/{id}/dry-run", requireCapability(deps, authorization.AutomationManage, idempotent(handleDryRunAutomationRule(deps))))
 	mux.HandleFunc("GET /v1/automation/executions", requireCapability(deps, authorization.AutomationManage, handleListAutomationExecutions(deps)))
+	// Saved replies are safe composer content. Macro listing/execution requires
+	// automation.manage, and ExecuteMacro adds the capability required by each
+	// configured state-changing action before running any of them.
 	mux.HandleFunc("GET /v1/automation/macros", requireCapability(deps, authorization.AutomationManage, handleListMacros(deps)))
 	mux.HandleFunc("POST /v1/automation/macros", requireCapability(deps, authorization.AutomationManage, Idempotency(deps)(handleCreateMacro(deps))))
+	mux.HandleFunc("GET /v1/automation/macros/{id}", requireCapability(deps, authorization.AutomationManage, handleGetMacro(deps)))
+	mux.HandleFunc("PATCH /v1/automation/macros/{id}", requireCapability(deps, authorization.AutomationManage, idempotent(handleUpdateMacro(deps))))
+	mux.HandleFunc("DELETE /v1/automation/macros/{id}", requireCapability(deps, authorization.AutomationManage, idempotent(handleDeleteMacro(deps))))
 	mux.HandleFunc("POST /v1/automation/macros/{id}/use", requireCapability(deps, authorization.AutomationManage, idempotent(handleUseMacro(deps))))
-	mux.HandleFunc("GET /v1/automation/replies", requireCapability(deps, authorization.AutomationManage, handleListSavedReplies(deps)))
+	mux.HandleFunc("GET /v1/automation/replies", requireCapability(deps, authorization.ConversationReply, handleListSavedReplies(deps)))
 	mux.HandleFunc("POST /v1/automation/replies", requireCapability(deps, authorization.AutomationManage, Idempotency(deps)(handleCreateSavedReply(deps))))
-	mux.HandleFunc("POST /v1/automation/replies/{id}/use", requireCapability(deps, authorization.AutomationManage, idempotent(handleUseSavedReply(deps))))
+	mux.HandleFunc("POST /v1/automation/replies/{id}/use", requireCapability(deps, authorization.ConversationReply, idempotent(handleUseSavedReply(deps))))
 }
 func handleListAutomationRules(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +148,8 @@ func handleListMacros(deps Deps) http.HandlerFunc {
 			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
 			return
 		}
-		items, err := deps.Automation.ListMacrosPage(r.Context(), actorFromRequest(r).WorkspaceID, r.URL.Query().Get("q"), cursor.Value, cursor.ID, limit+1)
+		actor := actorFromRequest(r)
+		items, err := deps.Automation.ListMacrosForMemberPage(r.Context(), actor.WorkspaceID, actor.MemberID, r.URL.Query().Get("q"), cursor.Value, cursor.ID, limit+1)
 		if err != nil {
 			writeAutomationInternal(w, r)
 			return
@@ -168,10 +175,53 @@ func handleCreateMacro(deps Deps) http.HandlerFunc {
 		httpserver.WriteJSON(w, http.StatusCreated, item)
 	}
 }
+func handleGetMacro(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		item, err := deps.Automation.GetMacroForMember(r.Context(), actor.WorkspaceID, actor.MemberID, r.PathValue("id"))
+		if err != nil {
+			writeAutomationContentError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, item)
+	}
+}
 func handleUseMacro(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
-		if err := deps.Automation.UseMacro(r.Context(), actor.WorkspaceID, r.PathValue("id")); err != nil {
+		var request automation.MacroExecutionRequest
+		if err := httpserver.DecodeJSON(r, &request); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed macro execution request.")
+			return
+		}
+		result, err := deps.Automation.ExecuteMacro(r.Context(), actor.WorkspaceID, actor.MemberID, r.PathValue("id"), actor, request)
+		if err != nil {
+			writeAutomationContentError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, result)
+	}
+}
+func handleUpdateMacro(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input automation.MacroInput
+		if err := httpserver.DecodeJSON(r, &input); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, err.Error())
+			return
+		}
+		actor := actorFromRequest(r)
+		item, err := deps.Automation.UpdateMacro(r.Context(), actor.WorkspaceID, actor.MemberID, r.PathValue("id"), input)
+		if err != nil {
+			writeAutomationContentError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, item)
+	}
+}
+func handleDeleteMacro(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		if err := deps.Automation.DeleteMacro(r.Context(), actor.WorkspaceID, actor.MemberID, r.PathValue("id")); err != nil {
 			writeAutomationContentError(w, r, err)
 			return
 		}
@@ -185,7 +235,8 @@ func handleListSavedReplies(deps Deps) http.HandlerFunc {
 			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
 			return
 		}
-		items, err := deps.Automation.ListSavedRepliesPage(r.Context(), actorFromRequest(r).WorkspaceID, r.URL.Query().Get("q"), cursor.Value, cursor.ID, limit+1)
+		actor := actorFromRequest(r)
+		items, err := deps.Automation.ListSavedRepliesForMemberPage(r.Context(), actor.WorkspaceID, actor.MemberID, r.URL.Query().Get("q"), cursor.Value, cursor.ID, limit+1)
 		if err != nil {
 			writeAutomationInternal(w, r)
 			return
@@ -214,7 +265,7 @@ func handleCreateSavedReply(deps Deps) http.HandlerFunc {
 func handleUseSavedReply(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
-		if err := deps.Automation.UseSavedReply(r.Context(), actor.WorkspaceID, r.PathValue("id")); err != nil {
+		if err := deps.Automation.UseSavedReplyForMember(r.Context(), actor.WorkspaceID, actor.MemberID, r.PathValue("id")); err != nil {
 			writeAutomationContentError(w, r, err)
 			return
 		}
@@ -225,6 +276,14 @@ func writeAutomationContentError(w http.ResponseWriter, r *http.Request, err err
 	switch {
 	case errors.Is(err, automation.ErrNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Automation content not found.")
+	case errors.Is(err, automation.ErrMacroForbidden):
+		httpserver.WriteError(w, r, http.StatusForbidden, httpserver.CodeForbidden, err.Error())
+	case errors.Is(err, automation.ErrSavedReplyForbidden):
+		httpserver.WriteError(w, r, http.StatusForbidden, httpserver.CodeForbidden, err.Error())
+	case errors.Is(err, automation.ErrMacroSubject):
+		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, err.Error())
+	case errors.Is(err, automation.ErrMacroCapability):
+		httpserver.WriteError(w, r, http.StatusForbidden, httpserver.CodeForbidden, err.Error())
 	case errors.Is(err, automation.ErrInvalidName), errors.Is(err, automation.ErrInvalidScope), errors.Is(err, automation.ErrInvalidTarget), errors.Is(err, automation.ErrInvalidShortcut), errors.Is(err, automation.ErrInvalidAction):
 		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, err.Error())
 	default:

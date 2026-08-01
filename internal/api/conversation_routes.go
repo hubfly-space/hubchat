@@ -615,13 +615,18 @@ func handleRemoveConversationTag(deps Deps) http.HandlerFunc {
 func handleListFollowers(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
 
-		followers, err := deps.Conversation.Followers(r.Context(), actor.WorkspaceID, r.PathValue("id"))
+		followers, err := deps.Conversation.FollowersPage(r.Context(), actor.WorkspaceID, r.PathValue("id"), cursor.Value, limit+1)
 		if err != nil {
 			writeConversationError(w, r, err)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": orEmpty(followers)})
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(followers, limit, func(memberID string) Cursor { return Cursor{Value: memberID} }))
 	}
 }
 
