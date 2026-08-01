@@ -14,8 +14,9 @@ import {
   useQuery,
   type Conversation,
   type Customer,
+  type Ticket,
 } from "@hubchat/shared";
-import { BadgeCheck, Mail, MessageSquare, ShieldQuestion, StickyNote } from "lucide-react";
+import { BadgeCheck, Mail, MessageSquare, ShieldQuestion, StickyNote, Ticket as TicketIcon } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useWorkspace } from "../../app/workspace-context";
@@ -23,12 +24,10 @@ import { useWorkspace } from "../../app/workspace-context";
 /**
  * Right-hand context panel (§6.9).
  *
- * The fixture build also showed a live-session indicator, an account/company
- * card, sensitive-attribute masking, an application event stream, and a
- * ticket history — none of those have a backend yet (live sessions and
- * companies are the widget/portal stages, sensitive-attribute definitions
- * and event ingestion are Stage 4, tickets are Stage 3), so they are left
- * out entirely rather than shown against data that does not exist.
+ * Customer details, conversation history, and ticket history are all loaded
+ * from workspace-scoped APIs. The larger customer 360 view remains available
+ * from the full profile link so this compact panel stays useful in a narrow
+ * inbox column.
  */
 export function CustomerContextPanel({ customerId }: { customerId: string | null }) {
   const customer = useQuery<Customer>(
@@ -58,9 +57,13 @@ function CustomerContext({ customer }: { customer: Customer }) {
     ["conversations", "customer-history", customer.id],
     (signal) =>
       api.get(
-        `/conversations?customer_id=${customer.id}&state=new,open,pending,waiting_for_customer,waiting_for_support,resolved,closed`,
+        `/conversations?customer_id=${encodeURIComponent(customer.id)}&limit=5&state=new,open,pending,waiting_for_customer,waiting_for_support,resolved,closed`,
         { signal },
       ),
+  );
+  const tickets = useQuery<{ data: Ticket[] }>(
+    ["tickets", "customer-history", customer.id],
+    (signal) => api.get(`/tickets?customer_id=${encodeURIComponent(customer.id)}&limit=5`, { signal }),
   );
 
   return (
@@ -130,12 +133,43 @@ function CustomerContext({ customer }: { customer: Customer }) {
         <Eyebrow className="mb-2">History</Eyebrow>
 
         <p className="mb-1 flex items-center gap-1.5 text-xs text-fg-secondary [&_svg]:size-3 [&_svg]:text-fg-muted">
+          <TicketIcon />
+          Tickets
+          <span className="ml-auto tabular text-fg-muted">{tickets.data?.data.length ?? 0}</span>
+        </p>
+        {tickets.isLoading ? (
+          <p className="mb-3 text-2xs text-fg-muted">Loading tickets…</p>
+        ) : tickets.error ? (
+          <p className="mb-3 text-2xs text-danger">Could not load ticket history.</p>
+        ) : tickets.data?.data.length ? (
+          <ul className="mb-3 flex flex-col gap-px">
+            {tickets.data.data.map((item) => (
+              <li key={item.id}>
+                <Link
+                  to={`/tickets/${item.id}`}
+                  className="-mx-1.5 block rounded-md p-1.5 transition-colors hover:bg-fill"
+                >
+                  <span className="block truncate text-xs text-fg-secondary">
+                    {item.prefix}-{item.number} · {item.title}
+                  </span>
+                  <span className="block truncate text-2xs capitalize text-fg-muted">
+                    {item.status.replace(/_/g, " ")} · {formatRelativeShort(item.updated_at, new Date())}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mb-3 text-2xs text-fg-muted">No tickets yet</p>
+        )}
+
+        <p className="mb-1 flex items-center gap-1.5 text-xs text-fg-secondary [&_svg]:size-3 [&_svg]:text-fg-muted">
           <MessageSquare />
           Conversations
           <span className="ml-auto tabular text-fg-muted">{history.data?.data.length ?? 0}</span>
         </p>
         <ul className="flex flex-col gap-px">
-          {(history.data?.data ?? []).slice(0, 5).map((item) => (
+          {(history.data?.data ?? []).map((item) => (
             <li key={item.id}>
               <Link
                 to={`/inbox/all/${item.id}`}
@@ -151,7 +185,9 @@ function CustomerContext({ customer }: { customer: Customer }) {
             </li>
           ))}
           {(history.data?.data.length ?? 0) === 0 && (
-            <li className="text-2xs text-fg-muted">None yet</li>
+            <li className="text-2xs text-fg-muted">
+              {history.isLoading ? "Loading conversations…" : history.error ? "Could not load conversation history." : "None yet"}
+            </li>
           )}
         </ul>
       </section>

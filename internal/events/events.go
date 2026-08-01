@@ -42,6 +42,8 @@ const (
 	ConversationStateSet Type = "conversation.state_changed"
 	ConversationResolved Type = "conversation.resolved"
 	ConversationMerged   Type = "conversation.merged"
+	ConversationLinked   Type = "conversation.linked"
+	ConversationUnlinked Type = "conversation.unlinked"
 
 	MessageCreated  Type = "message.created"
 	MessageEdited   Type = "message.edited"

@@ -27,6 +27,7 @@ import {
   useMutation,
   useQuery,
   type Conversation,
+  type ConversationLink,
   type Customer,
   type Inbox,
   type Message,
@@ -42,6 +43,7 @@ import {
   Combine,
   Download,
   Flag,
+  Link2,
   MoreHorizontal,
   PanelRightClose,
   Tag,
@@ -49,7 +51,7 @@ import {
   UserPlus,
 } from "lucide-react";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useWorkspace } from "../../app/workspace-context";
 import { Composer } from "./Composer";
 import { MessageTimeline } from "./MessageTimeline";
@@ -61,8 +63,8 @@ import { MessageTimeline } from "./MessageTimeline";
  * backend action; the four an agent uses hourly (assign, priority, snooze,
  * resolve) are surfaced as buttons, the rest live behind the overflow menu.
  * Conversion to a ticket is a durable, permissioned action backed by the
- * ticket service. Splitting and related-conversation links remain absent until
- * their own storage and transition rules exist.
+ * ticket service. Related-conversation links are durable, workspace-scoped
+ * records and are managed from the overflow menu below.
  */
 export function ConversationPanel({
   conversation,
@@ -75,6 +77,7 @@ export function ConversationPanel({
   const { memberById, tagById, viewer, can, workspace } = useWorkspace();
   const [managingTags, setManagingTags] = useState(false);
   const [merging, setMerging] = useState(false);
+  const [linking, setLinking] = useState(false);
   const [blocking, setBlocking] = useState(false);
 
   const assignee = memberById(conversation.assignee_id);
@@ -92,6 +95,10 @@ export function ConversationPanel({
     conversation.ticket_id ? ["ticket", workspace.id, conversation.ticket_id] : null,
     (signal) => api.get(`/tickets/${conversation.ticket_id}`, { signal, workspaceId: workspace.id }),
     { enabled: Boolean(conversation.ticket_id) },
+  );
+  const links = useQuery<{ data: ConversationLink[] }>(
+    ["conversation-links", conversation.id],
+    (signal) => api.get(`/conversations/${conversation.id}/links`, { signal }),
   );
 
   const markRead = useMutation<void, unknown>(() => api.post(`/conversations/${conversation.id}/read`));
@@ -287,6 +294,9 @@ export function ConversationPanel({
               <MenuItem icon={<Combine />} onSelect={() => setMerging(true)}>
                 Merge with another conversation…
               </MenuItem>
+              <MenuItem icon={<Link2 />} disabled={!conversation.customer_id} onSelect={() => setLinking(true)}>
+                Link a related conversation…
+              </MenuItem>
               <MoveToInboxMenu
                 currentInboxId={conversation.inbox_id}
                 onPick={(id) => void setInbox.mutate(id).catch(() => {})}
@@ -339,6 +349,19 @@ export function ConversationPanel({
             this conversation.
           </Callout>
         )}
+        {links.data?.data.length ? (
+          <div className="flex flex-wrap items-center gap-2 border-t border-line-subtle px-4 py-2 text-xs">
+            <span className="text-fg-muted">Related</span>
+            {links.data.data.map((link) => {
+              const otherID = link.source_id === conversation.id ? link.target_id : link.source_id;
+              return (
+                <Link key={link.id} to={`/inbox/all/${otherID}`} className="rounded-md bg-inset px-2 py-1 text-accent-text hover:underline">
+                  {link.relation.replaceAll("_", " ")} · {otherID}
+                </Link>
+              );
+            })}
+          </div>
+        ) : null}
       </header>
 
       {/* Timeline ---------------------------------------------------------- */}
@@ -360,6 +383,9 @@ export function ConversationPanel({
       )}
       {merging && conversation.customer_id && (
         <MergeDialog conversation={conversation} customerId={conversation.customer_id} onClose={() => setMerging(false)} />
+      )}
+      {linking && conversation.customer_id && (
+        <LinkDialog conversation={conversation} customerId={conversation.customer_id} existing={links.data?.data ?? []} onClose={() => setLinking(false)} />
       )}
       {blocking && customer.data && (
         <BlockVisitorDialog customer={customer.data} onClose={() => setBlocking(false)} />
@@ -536,6 +562,72 @@ function MergeDialog({
                 >
                   <span className="block truncate text-fg">{other.subject ?? other.last_message_preview}</span>
                   <span className="block text-xs text-fg-muted capitalize">{other.state.replace(/_/g, " ")}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function LinkDialog({
+  conversation,
+  customerId,
+  existing,
+  onClose,
+}: {
+  conversation: Conversation;
+  customerId: string;
+  existing: ConversationLink[];
+  onClose: () => void;
+}) {
+  const [relation, setRelation] = useState<ConversationLink["relation"]>("related");
+  const candidates = useQuery<{ data: Conversation[] }>(
+    ["conversations", "link-candidates", customerId],
+    (signal) => api.get(`/conversations?customer_id=${encodeURIComponent(customerId)}&limit=50&state=new,open,pending,waiting_for_customer,waiting_for_support,resolved,closed`, { signal }),
+  );
+  const linkedIDs = new Set(existing.flatMap((link) => [link.source_id, link.target_id]));
+  const others = (candidates.data?.data ?? []).filter((item) => item.id !== conversation.id && !linkedIDs.has(item.id));
+  const link = useMutation<{ target_id: string; relation: ConversationLink["relation"] }, ConversationLink>(
+    (input) => api.post(`/conversations/${conversation.id}/links`, input, { idempotencyKey: idempotencyKey() }),
+    {
+      invalidates: [["conversation-links", conversation.id]],
+      onSuccess: onClose,
+    },
+  );
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent title="Link a conversation" description="Keep related support threads visible without merging their message histories.">
+        <label className="mb-3 block text-xs text-fg-muted">
+          Relationship
+          <select className="mt-1 h-9 w-full rounded-md border border-line bg-surface px-2 text-sm text-fg" value={relation} onChange={(event) => setRelation(event.target.value as ConversationLink["relation"])}>
+            <option value="related">Related</option>
+            <option value="duplicate_of">Duplicate of</option>
+            <option value="follow_up">Follow-up</option>
+          </select>
+        </label>
+        {link.error ? <Callout tone="danger" className="mb-3">Could not link that conversation.</Callout> : null}
+        {candidates.isLoading ? (
+          <p className="text-sm text-fg-muted">Loading other conversations…</p>
+        ) : candidates.error ? (
+          <p className="text-sm text-danger">Could not load link candidates.</p>
+        ) : others.length === 0 ? (
+          <EmptyState size="sm" title="No other conversations to link" description="This customer has no additional unlinked conversations." />
+        ) : (
+          <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto">
+            {others.map((other) => (
+              <li key={other.id}>
+                <button
+                  type="button"
+                  disabled={link.isPending}
+                  onClick={() => void link.mutate({ target_id: other.id, relation }).catch(() => {})}
+                  className="w-full rounded-md px-2 py-2 text-left text-sm hover:bg-inset disabled:opacity-50"
+                >
+                  <span className="block truncate text-fg">{other.subject ?? other.last_message_preview}</span>
+                  <span className="block text-xs text-fg-muted">{other.state.replace(/_/g, " ")} · {other.id}</span>
                 </button>
               </li>
             ))}
