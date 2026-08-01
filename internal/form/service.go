@@ -224,11 +224,27 @@ func (s *Service) GetPublic(ctx context.Context, workspaceID, slug string) (*For
 // ListPublic returns only enabled public forms for an embeddable surface. It
 // intentionally does not expose authenticated forms or internal routing data.
 func (s *Service) ListPublic(ctx context.Context, workspaceID string) ([]Form, error) {
-	rows, err := s.pool.Query(ctx, `
+	return s.ListPublicPage(ctx, workspaceID, "", "", 0)
+}
+
+// ListPublicPage returns enabled public forms ordered by name and id for
+// deterministic widget and portal selectors.
+func (s *Service) ListPublicPage(ctx context.Context, workspaceID, beforeName, beforeID string, limit int) ([]Form, error) {
+	query := `
 		SELECT id, workspace_id, name, slug, description, purpose, routing, confirmation,
 		       access, spam_protection, max_submissions, submission_count, enabled, created_at, updated_at
-		FROM forms WHERE workspace_id=$1 AND enabled AND access='public' ORDER BY name, id
-	`, workspaceID)
+		FROM forms WHERE workspace_id=$1 AND enabled AND access='public'`
+	args := []any{workspaceID}
+	if beforeName != "" || beforeID != "" {
+		query += ` AND (name,id) > ($2,$3)`
+		args = append(args, beforeName, beforeID)
+	}
+	query += ` ORDER BY name, id`
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		args = append(args, limit)
+	}
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("form: list public: %w", err)
 	}

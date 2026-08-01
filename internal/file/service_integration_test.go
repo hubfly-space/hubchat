@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hubchat/hubchat/internal/audit"
+	"github.com/hubchat/hubchat/internal/conversation"
 	"github.com/hubchat/hubchat/internal/database"
 	"github.com/hubchat/hubchat/internal/database/dbtest"
 	"github.com/hubchat/hubchat/internal/events"
@@ -109,5 +110,53 @@ func TestCommittedUploadIsNotCollectedByAbandonedSweep(t *testing.T) {
 	}
 	if _, err := service.Get(ctx, workspaceID, record.ID); err != nil {
 		t.Fatalf("committed upload was removed: %v", err)
+	}
+}
+
+func TestAttachToMessageRejectsFilesFromAnotherConversation(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	workspaceID := seedFileWorkspace(t, ctx, pool)
+
+	var inboxID string
+	if err := pool.QueryRow(ctx, `SELECT id FROM inboxes WHERE workspace_id=$1 LIMIT 1`, workspaceID).Scan(&inboxID); err != nil {
+		t.Fatalf("find inbox: %v", err)
+	}
+	conversations := conversation.New(pool, events.New(pool), audit.New(pool))
+	first, firstMessage, err := conversations.Start(ctx, workspaceID, inboxID, "widget", nil, nil, nil, "Visitor one", "First conversation")
+	if err != nil {
+		t.Fatalf("start first conversation: %v", err)
+	}
+	second, _, err := conversations.Start(ctx, workspaceID, inboxID, "widget", nil, nil, nil, "Visitor two", "Second conversation")
+	if err != nil {
+		t.Fatalf("start second conversation: %v", err)
+	}
+
+	store, err := NewLocalStore(t.TempDir(), 1<<20, []string{"text/plain"})
+	if err != nil {
+		t.Fatalf("create local store: %v", err)
+	}
+	service := New(pool, store)
+	foreign, err := service.Create(ctx, workspaceID, UploadInput{
+		Name: "foreign.txt", MIMEType: "text/plain", SizeBytes: 7, Body: bytes.NewReader([]byte("foreign")),
+		OwnerType: "conversation", OwnerID: second.ID, UploadedByType: "visitor",
+	})
+	if err != nil {
+		t.Fatalf("create foreign file: %v", err)
+	}
+	if err := service.AttachToMessage(ctx, workspaceID, firstMessage.ID, []string{foreign.ID}); !errors.Is(err, ErrInvalidAttachment) {
+		t.Fatalf("cross-conversation attachment error = %v, want %v", err, ErrInvalidAttachment)
+	}
+
+	local, err := service.Create(ctx, workspaceID, UploadInput{
+		Name: "local.txt", MIMEType: "text/plain", SizeBytes: 5, Body: bytes.NewReader([]byte("local")),
+		OwnerType: "conversation", OwnerID: first.ID, UploadedByType: "visitor",
+	})
+	if err != nil {
+		t.Fatalf("create local file: %v", err)
+	}
+	if err := service.AttachToMessage(ctx, workspaceID, firstMessage.ID, []string{local.ID}); err != nil {
+		t.Fatalf("same-conversation attachment: %v", err)
 	}
 }

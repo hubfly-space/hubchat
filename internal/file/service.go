@@ -267,21 +267,38 @@ func (s *Service) AttachToMessage(ctx context.Context, workspaceID, messageID st
 	}
 
 	return database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
-		var messageExists bool
-		if err := tx.QueryRow(ctx, `
-			SELECT EXISTS (SELECT 1 FROM messages WHERE workspace_id = $1 AND id = $2)
-		`, workspaceID, messageID).Scan(&messageExists); err != nil {
-			return fmt.Errorf("file: validate message attachment target: %w", err)
-		}
-		if !messageExists {
-			return ErrInvalidAttachment
-		}
-
+		// A file ID is not an authorization token. In particular, portal and
+		// widget clients may only attach files that belong to this message's
+		// conversation (or its linked ticket). Workspace-scoping alone would
+		// allow a leaked ID from one customer conversation to be reused in
+		// another conversation in the same workspace.
 		var fileCount int
 		if err := tx.QueryRow(ctx, `
-			SELECT count(*) FROM files
-			WHERE workspace_id = $1 AND id = ANY($2::text[]) AND committed_at IS NOT NULL
-		`, workspaceID, unique).Scan(&fileCount); err != nil {
+			SELECT count(*)
+			FROM files f
+			JOIN messages target
+			  ON target.workspace_id = $1 AND target.id = $3
+			WHERE f.workspace_id = $1
+			  AND f.id = ANY($2::text[])
+			  AND f.committed_at IS NOT NULL
+			  AND (
+					f.owner_type IS NULL OR f.owner_type = ''
+					OR (f.owner_type = 'workspace' AND f.owner_id = $1)
+					OR (f.owner_type = 'message' AND EXISTS (
+						SELECT 1 FROM messages source
+						WHERE source.workspace_id = $1
+						  AND source.id = f.owner_id
+						  AND source.conversation_id = target.conversation_id
+					))
+					OR (f.owner_type = 'conversation' AND f.owner_id = target.conversation_id)
+					OR (f.owner_type = 'ticket' AND EXISTS (
+						SELECT 1 FROM tickets t
+						WHERE t.workspace_id = $1
+						  AND t.id = f.owner_id
+						  AND t.conversation_id = target.conversation_id
+					))
+				)
+		`, workspaceID, unique, messageID).Scan(&fileCount); err != nil {
 			return fmt.Errorf("file: validate message attachments: %w", err)
 		}
 		if fileCount != len(unique) {
