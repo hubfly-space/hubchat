@@ -5,6 +5,7 @@ package realtime_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -37,6 +38,41 @@ func TestHubDeliversLiveEvents(t *testing.T) {
 	frame := h.expectFrame(t, conn, string(events.MessageCreated))
 	if frame.Sequence == 0 {
 		t.Fatal("delivered event carried no sequence; resume would be impossible")
+	}
+}
+
+func TestHubFansOutAConcurrentInboxBurstWithoutGaps(t *testing.T) {
+	h := newHarness(t)
+	const clients = 6
+	const burst = 80
+	connections := make([]*websocket.Conn, 0, clients)
+	for index := 0; index < clients; index++ {
+		conn := h.connect(t, realtime.AgentGrant(fmt.Sprintf("mem_load_%d", index), "Load Agent"))
+		h.expectFrame(t, conn, "hub.ready")
+		connections = append(connections, conn)
+	}
+
+	for index := 0; index < burst; index++ {
+		h.append(t, events.Event{
+			WorkspaceID: h.workspaceID,
+			Type:        events.MessageCreated,
+			EntityType:  "conversation",
+			EntityID:    fmt.Sprintf("cnv_load_%d", index),
+		})
+	}
+
+	for clientIndex, conn := range connections {
+		var previous int64
+		for eventIndex := 0; eventIndex < burst; eventIndex++ {
+			frame := h.readFrame(t, conn)
+			if frame.Type != events.MessageCreated {
+				t.Fatalf("client %d received frame type %q at event %d, want %q", clientIndex, frame.Type, eventIndex, events.MessageCreated)
+			}
+			if frame.Sequence <= previous {
+				t.Fatalf("client %d received non-increasing sequence %d after %d", clientIndex, frame.Sequence, previous)
+			}
+			previous = frame.Sequence
+		}
 	}
 }
 

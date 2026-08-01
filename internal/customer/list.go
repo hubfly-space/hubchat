@@ -21,9 +21,9 @@ type ListFilter struct {
 }
 
 // List returns one page of customers, most-recently-seen first, tie-broken
-// by id so pagination is exact under concurrent writes (§16) — the
-// customer directory's server-driven counterpart to Search, which stays a
-// small unpaginated picker lookup.
+// by id so pagination is exact under concurrent writes (§16). The HTTP
+// customer directory and picker search both use this path; Search remains as
+// a small service-level convenience for callers that do not need a cursor.
 func (s *Service) List(ctx context.Context, workspaceID string, filter ListFilter) ([]Customer, error) {
 	if filter.Limit <= 0 || filter.Limit > 200 {
 		filter.Limit = 50

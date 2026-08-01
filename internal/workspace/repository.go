@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -237,9 +238,35 @@ type RoleDefinition struct {
 	Capabilities []string
 }
 
-// listRoleDefinitions loads the global presets and one workspace's custom
-// roles in one query, ordered so owner sorts first.
-func (r *repository) listRoleDefinitions(ctx context.Context, workspaceID string) ([]RoleDefinition, error) {
+// listRoleDefinitionsPage loads the global presets and one workspace's
+// custom roles in one bounded query. The rank bits sort built-ins and owner
+// first; name/key are ascending tie-breakers.
+func (r *repository) listRoleDefinitionsPage(ctx context.Context, workspaceID string, before RoleListCursor, limit int) ([]RoleDefinition, error) {
+	if limit <= 0 || limit > 10000 {
+		limit = 50
+	}
+	args := []any{workspaceID}
+	arg := func(value any) string {
+		args = append(args, value)
+		return fmt.Sprintf("$%d", len(args))
+	}
+	where := "((r.workspace_id IS NULL AND r.is_builtin) OR r.workspace_id = $1)"
+	if before.Key != "" {
+		builtin := arg(before.BuiltinRank)
+		owner := arg(before.OwnerRank)
+		name := arg(before.Name)
+		key := arg(before.Key)
+		where += ` AND (
+			(CASE WHEN r.is_builtin THEN 1 ELSE 0 END) < ` + builtin + `
+			OR ((CASE WHEN r.is_builtin THEN 1 ELSE 0 END) = ` + builtin + ` AND (
+				(CASE WHEN r.key = 'owner' THEN 1 ELSE 0 END) < ` + owner + `
+				OR ((CASE WHEN r.key = 'owner' THEN 1 ELSE 0 END) = ` + owner + ` AND (
+					r.name > ` + name + ` OR (r.name = ` + name + ` AND r.key > ` + key + `)
+				))
+			))
+		)`
+	}
+	limitPlaceholder := arg(limit)
 	rows, err := r.pool.Query(ctx, `
 		SELECT r.id, coalesce(r.workspace_id,''), r.key, r.name, r.description, r.is_builtin,
 		       coalesce(
@@ -248,10 +275,10 @@ func (r *repository) listRoleDefinitions(ctx context.Context, workspaceID string
 	       ) AS capabilities
 		FROM roles r
 		LEFT JOIN role_permissions rp ON rp.role_id = r.id
-		WHERE (r.workspace_id IS NULL AND r.is_builtin) OR r.workspace_id = $1
+		WHERE `+where+`
 		GROUP BY r.id, r.workspace_id, r.key, r.name, r.description, r.is_builtin
 		ORDER BY r.is_builtin DESC, (r.key = 'owner') DESC, r.name, r.key
-	`, workspaceID)
+		LIMIT `+limitPlaceholder, args...)
 	if err != nil {
 		return nil, err
 	}
