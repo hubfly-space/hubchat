@@ -147,6 +147,7 @@ export const router = createBrowserRouter(
         { path: "/login", element: page(() => import("../pages/auth/Login")) },
         { path: "/signup", element: page(() => import("../pages/auth/Signup")) },
         { path: "/forgot-password", element: page(() => import("../pages/auth/ForgotPassword")) },
+        { path: "/magic-link", element: page(() => import("../pages/auth/MagicLink")) },
         { path: "/reset-password", element: page(() => import("../pages/auth/ResetPassword")) },
         { path: "/verify", element: page(() => import("../pages/auth/VerifyEmail")) },
         { path: "/two-factor", element: page(() => import("../pages/auth/TwoFactor")) },

@@ -1,5 +1,4 @@
 import {
-  Button,
   Card,
   CardBody,
   CardHeader,
@@ -39,8 +38,6 @@ const SHORTCUTS = [
   { group: "Composer", items: [
     { keys: "mod+enter", label: "Send" },
     { keys: "mod+/", label: "Saved replies and macros" },
-    { keys: "mod+b", label: "Bold" },
-    { keys: "mod+i", label: "Italic" },
   ]},
 ];
 
@@ -182,11 +179,6 @@ export default function Preferences() {
             ))}
           </div>
 
-          <div className="mt-3 flex justify-end">
-            <Button variant="ghost" size="sm">
-              Reset to defaults
-            </Button>
-          </div>
         </Section>
       </PageBody>
     </Page>
