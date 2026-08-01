@@ -29,6 +29,8 @@ import {
   type Conversation,
   type ConversationLink,
   type Customer,
+  type FeedbackItem,
+  type FeedbackLink,
   type Inbox,
   type Message,
   type Paginated,
@@ -44,6 +46,7 @@ import {
   Download,
   Flag,
   Link2,
+  Lightbulb,
   MoreHorizontal,
   PanelRightClose,
   Tag,
@@ -78,6 +81,7 @@ export function ConversationPanel({
   const [managingTags, setManagingTags] = useState(false);
   const [merging, setMerging] = useState(false);
   const [linking, setLinking] = useState(false);
+  const [linkingFeedback, setLinkingFeedback] = useState(false);
   const [blocking, setBlocking] = useState(false);
 
   const assignee = memberById(conversation.assignee_id);
@@ -99,6 +103,11 @@ export function ConversationPanel({
   const links = useQuery<{ data: ConversationLink[] }>(
     ["conversation-links", conversation.id],
     (signal) => api.get(`/conversations/${conversation.id}/links`, { signal }),
+  );
+  const feedbackLinks = useQuery<Paginated<FeedbackItem>>(
+    ["conversation-feedback-links", conversation.id],
+    (signal) => api.get(`/feedback/items?conversation_id=${encodeURIComponent(conversation.id)}&link_state=linked&sort=recent&limit=25`, { signal }),
+    { enabled: can("feedback.moderate") },
   );
 
   const markRead = useMutation<void, unknown>(() => api.post(`/conversations/${conversation.id}/read`));
@@ -297,6 +306,11 @@ export function ConversationPanel({
               <MenuItem icon={<Link2 />} disabled={!conversation.customer_id} onSelect={() => setLinking(true)}>
                 Link a related conversation…
               </MenuItem>
+              {can("feedback.moderate") ? (
+                <MenuItem icon={<Lightbulb />} onSelect={() => setLinkingFeedback(true)}>
+                  Link to feedback…
+                </MenuItem>
+              ) : null}
               <MoveToInboxMenu
                 currentInboxId={conversation.inbox_id}
                 onPick={(id) => void setInbox.mutate(id).catch(() => {})}
@@ -362,6 +376,16 @@ export function ConversationPanel({
             })}
           </div>
         ) : null}
+        {feedbackLinks.data?.data.length ? (
+          <div className="flex flex-wrap items-center gap-2 border-t border-line-subtle px-4 py-2 text-xs">
+            <span className="text-fg-muted">Feedback</span>
+            {feedbackLinks.data.data.map((item) => (
+              <Link key={item.id} to={`/feedback/items/${item.id}`} className="max-w-full truncate rounded-md bg-inset px-2 py-1 text-accent-text hover:underline">
+                {item.title}
+              </Link>
+            ))}
+          </div>
+        ) : null}
       </header>
 
       {/* Timeline ---------------------------------------------------------- */}
@@ -387,10 +411,44 @@ export function ConversationPanel({
       {linking && conversation.customer_id && (
         <LinkDialog conversation={conversation} customerId={conversation.customer_id} existing={links.data?.data ?? []} onClose={() => setLinking(false)} />
       )}
+      {linkingFeedback && (
+        <FeedbackLinkDialog conversation={conversation} onClose={() => setLinkingFeedback(false)} />
+      )}
       {blocking && customer.data && (
         <BlockVisitorDialog customer={customer.data} onClose={() => setBlocking(false)} />
       )}
     </div>
+  );
+}
+
+function FeedbackLinkDialog({ conversation, onClose }: { conversation: Conversation; onClose: () => void }) {
+  const [query, setQuery] = useState("");
+  const items = useInfinite<FeedbackItem>(["feedback-link-items", query], (cursor, signal) => {
+    const params = new URLSearchParams({ sort: "recent", q: query, conversation_id: conversation.id, link_state: "available", limit: "50" });
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<FeedbackItem>>(`/feedback/items?${params.toString()}`, { signal });
+  });
+  const link = useMutation<{ feedback_item_id: string; conversation_id: string; ticket_id: string }, FeedbackLink>(
+    (input) => api.post(`/feedback/items/${input.feedback_item_id}/links`, { conversation_id: conversation.id, ticket_id: "" }, { idempotencyKey: idempotencyKey() }),
+    {
+      onSuccess: () => {
+        invalidate(["conversation-feedback-links", conversation.id]);
+        onClose();
+      },
+    },
+  );
+  const normalized = query.trim().toLowerCase();
+  const candidates = items.items.filter((item) => !normalized || `${item.title} ${item.description}`.toLowerCase().includes(normalized));
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent title="Link to feedback" description="Connect this conversation to a customer request so its support history stays together.">
+        <input aria-label="Search feedback items" className="h-9 w-full rounded-md border border-line bg-surface px-2 text-sm text-fg" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search feedback items…" autoFocus />
+        {items.isLoading ? <p className="mt-3 text-sm text-fg-muted">Loading feedback…</p> : items.error ? <p className="mt-3 text-sm text-danger">Could not load feedback items.</p> : candidates.length === 0 ? <EmptyState size="sm" title="No matching feedback items" description="Try another search or create feedback from the customer request." /> : <ul className="mt-3 flex max-h-64 flex-col gap-1 overflow-y-auto">{candidates.map((item) => <li key={item.id}><button type="button" disabled={link.isPending} className="w-full rounded-md px-2 py-2 text-left hover:bg-inset" onClick={() => void link.mutate({ feedback_item_id: item.id, conversation_id: "", ticket_id: "" }).catch(() => {})}><span className="block truncate text-sm text-fg">{item.title}</span><span className="block truncate text-2xs text-fg-muted">{item.status.replaceAll("_", " ")} · {item.vote_count} votes</span></button></li>)}</ul>}
+        {items.hasMore && <Button variant="ghost" size="sm" loading={items.isFetching} onClick={() => void items.fetchNext()}>Load more feedback</Button>}
+        {link.error ? <Callout tone="danger" className="mt-3">Could not link this feedback item.</Callout> : null}
+      </DialogContent>
+    </Dialog>
   );
 }
 

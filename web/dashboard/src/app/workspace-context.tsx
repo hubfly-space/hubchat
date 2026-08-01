@@ -175,7 +175,12 @@ function useWorkspaceInvalidation() {
       invalidate(["customers"]);
       invalidate(["companies"]);
       invalidate(["bootstrap"]);
+      invalidateNotifications();
       return;
+    }
+
+    if (notificationEventTypes.has(event.type)) {
+      invalidateNotifications();
     }
 
     switch (event.entity_type) {
@@ -216,6 +221,23 @@ function useWorkspaceInvalidation() {
         break;
     }
   });
+}
+
+// These source events can create durable agent notifications in the Go
+// notification consumer. Keeping this mapping beside the other realtime
+// invalidation rules means the bell converges from the same event stream as
+// the inbox, rather than waiting for focus or a stale-time refresh.
+const notificationEventTypes = new Set([
+  "conversation.assigned",
+  "message.created",
+  "ticket.updated",
+  "sla.approaching",
+  "sla.breached",
+]);
+
+function invalidateNotifications() {
+  invalidate(["notifications"]);
+  invalidate(["notifications-count"]);
 }
 
 function BootstrapSkeleton() {
