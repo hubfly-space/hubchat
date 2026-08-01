@@ -16,6 +16,29 @@ go test ./... -race -count=1
 
 `make check` runs the same release checks.
 
+The production HTTP router smoke test also runs in the fast Go suite. It
+proves the compiled server serves health endpoints, the three embedded browser
+surfaces, the root redirect, and a safe no-database API response.
+The same package includes a bounded concurrent smoke test for health and
+widget asset requests; it is a transport sanity check, not a substitute for
+production-scale capacity testing.
+The PostgreSQL conversation integration suite also exercises a 160-conversation
+inbox with concurrent paginated reads and verifies workspace/inbox isolation.
+The realtime integration suite exercises a six-client, 80-event workspace
+burst and verifies every client receives ordered, gap-free frames.
+The HTTP server package also starts on a dynamically reserved port, serves a
+health request, and verifies clean context-driven shutdown.
+
+After building and starting a production binary, run the live HTTP smoke
+check with:
+
+```bash
+HUBCHAT_SMOKE_BASE_URL="http://127.0.0.1:8080" make production-http-check
+```
+
+This verifies the binary's health/readiness endpoints, all three embedded
+browser surfaces, and the live API route.
+
 ## PostgreSQL integration tests
 
 Start the development dependencies, then point the test suite at a dedicated
@@ -40,8 +63,29 @@ design; it never guesses which database is safe to destroy.
 
 ## Browser journeys
 
-The browser acceptance suite should run against a built binary with a temporary
-PostgreSQL database. The minimum journey set is documented in
+The cross-module API journey currently runs against a real PostgreSQL database:
+
+```bash
+HUBCHAT_TEST_DATABASE_URL="postgres://hubchat:hubchat@127.0.0.1:5432/hubchat_test?sslmode=disable" \
+  go test ./internal/api -tags=integration -run '^TestCoreSupportPortalJourney$' -count=1
+```
+
+It covers workspace bootstrap, customer identity, portal magic-link login,
+ticket creation, agent and customer replies, attachment upload/download, and
+idempotent reply retry. A browser-level acceptance suite should still run
+against a built binary with a temporary PostgreSQL database. The full journey
+set is documented in
 `.material/idea.md`: setup, widget conversation, verified identity, agent
 reply, ticket/portal reply, attachments, feedback, knowledge-base search,
 surveys, SLA/automation, webhook replay, and workspace export/import.
+
+The self-service module composition journey can be run with:
+
+```bash
+HUBCHAT_TEST_DATABASE_URL="postgres://hubchat:hubchat@127.0.0.1:5432/hubchat_test?sslmode=disable" \
+  go test ./internal/api -tags=integration -run '^TestSelfServiceJourney$' -count=1
+```
+
+It covers customer feedback submission, voting, comments, status changes,
+published knowledge-base search and helpfulness feedback, survey submission
+and aggregation, plus cross-workspace isolation.

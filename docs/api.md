@@ -48,6 +48,10 @@ should send an `Idempotency-Key`. Successful replays include
 `Idempotent-Replay: true`; reuse with a different body is rejected, and
 concurrent attempts return `409 idempotency_in_flight`.
 
+`GET /api/v1/customers` uses the same cursor envelope for directory filters,
+picker searches, and subsequent pages. `ids=` is the deliberate bounded batch
+lookup exception used to decorate another paginated resource.
+
 The automation content endpoints separate safe support use from configuration:
 `GET /api/v1/automation/replies` and its `/{id}/use` action require
 `conversation.reply`, so agents can use approved saved replies without
@@ -157,7 +161,8 @@ relation of `related`, `duplicate_of`, or `follow_up`; `related` links are
 canonicalised so retries or reversed requests cannot create duplicates, while
 the directional relations preserve their source and target. `GET` returns
 every link touching the conversation, and `DELETE` accepts the target ID plus
-the relation query parameter. Link creation and removal are idempotent,
+the relation query parameter. `GET` uses the standard opaque cursor envelope.
+Link creation and removal are idempotent,
 audited, and published as conversation events; a target from another
 workspace is rejected.
 

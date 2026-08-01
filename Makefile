@@ -93,6 +93,10 @@ build-go: ## Build the binary without rebuilding web assets
 	mkdir -p $(DIST)
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(DIST)/$(BINARY) $(PKG)
 
+.PHONY: production-http-check
+production-http-check: ## Smoke-test a running production binary (set HUBCHAT_SMOKE_BASE_URL)
+	node scripts/check-production-http.mjs
+
 .PHONY: checksums
 checksums: ## Produce SHA256 checksums for release artifacts
 	cd $(DIST) && sha256sum * > SHA256SUMS
@@ -100,7 +104,7 @@ checksums: ## Produce SHA256 checksums for release artifacts
 ## ---------------------------------------------------------------- quality
 
 .PHONY: check
-check: typecheck lint vet test openapi-check widget-sdk-check ## Run every check the CI pipeline runs
+check: typecheck lint vet test openapi-check widget-sdk-check web ## Run every check the CI pipeline runs, including frontend builds
 
 .PHONY: typecheck
 typecheck: ## TypeScript project-wide typecheck
