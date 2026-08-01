@@ -1571,6 +1571,31 @@
         ]
       }
     },
+    "/v1/feedback/items": {
+      "get": {
+        "summary": "List resources",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "listAllFeedbackItems",
+        "tags": [
+          "Feedback"
+        ]
+      }
+    },
     "/v1/feedback/items/{id}/links": {
       "parameters": [
         {

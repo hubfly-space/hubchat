@@ -223,6 +223,9 @@
       "get": { "$ref": "#/components/operations/list", "operationId": "listFeedbackItems", "tags": ["Feedback"] },
       "post": { "$ref": "#/components/operations/create", "operationId": "createFeedbackItem", "tags": ["Feedback"] }
     },
+    "/v1/feedback/items": {
+      "get": { "$ref": "#/components/operations/list", "operationId": "listAllFeedbackItems", "tags": ["Feedback"] }
+    },
     "/v1/feedback/items/{id}/links": {
       "parameters": [{ "$ref": "#/components/parameters/Id" }],
       "get": { "$ref": "#/components/operations/list", "operationId": "listFeedbackLinks", "tags": ["Feedback"] },

@@ -18,6 +18,7 @@ func registerFeedbackRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/feedback/boards/{id}", requireCapability(deps, authorization.FeedbackModerate, handleGetFeedbackBoard(deps)))
 	mux.HandleFunc("GET /v1/feedback/boards/{id}/items", requireCapability(deps, authorization.FeedbackModerate, handleListFeedbackItems(deps)))
 	mux.HandleFunc("POST /v1/feedback/boards/{id}/items", requireCapability(deps, authorization.FeedbackModerate, Idempotency(deps)(handleCreateFeedbackItem(deps))))
+	mux.HandleFunc("GET /v1/feedback/items", requireCapability(deps, authorization.FeedbackModerate, handleListAllFeedbackItems(deps)))
 	mux.HandleFunc("GET /v1/feedback/items/{id}", requireCapability(deps, authorization.FeedbackModerate, handleGetFeedbackItem(deps)))
 	mux.HandleFunc("GET /v1/feedback/roadmap", requireCapability(deps, authorization.FeedbackModerate, handleListFeedbackRoadmap(deps)))
 	mux.HandleFunc("GET /v1/feedback/items/{id}/comments", requireCapability(deps, authorization.FeedbackModerate, handleListFeedbackComments(deps)))
@@ -38,6 +39,35 @@ func registerFeedbackRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("POST /v1/public/feedback/{workspaceID}/items/{id}/votes", Idempotency(deps)(handlePublicVoteFeedbackItem(deps)))
 	mux.HandleFunc("POST /v1/public/feedback/{workspaceID}/items/{id}/subscription", Idempotency(deps)(handlePublicSubscribeFeedbackItem(deps)))
 	mux.HandleFunc("DELETE /v1/public/feedback/{workspaceID}/items/{id}/subscription", Idempotency(deps)(handlePublicUnsubscribeFeedbackItem(deps)))
+}
+
+func handleListAllFeedbackItems(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed feedback cursor.")
+			return
+		}
+		linkState := r.URL.Query().Get("link_state")
+		if linkState != "" && linkState != "available" && linkState != "linked" {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "link_state must be empty, available, or linked.")
+			return
+		}
+		conversationID := r.URL.Query().Get("conversation_id")
+		if linkState != "" && conversationID == "" {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "conversation_id is required when link_state is set.")
+			return
+		}
+		items, err := deps.Feedback.ListItemsPageAll(r.Context(), actorFromRequest(r).WorkspaceID, r.URL.Query().Get("status"), r.URL.Query().Get("q"), conversationID, linkState, cursor.At, cursor.ID, limit+1)
+		if err != nil {
+			writeFeedbackInternal(w, r)
+			return
+		}
+		page := NewPage(items, limit, func(item feedback.Item) Cursor {
+			return Cursor{At: item.CreatedAt, ID: item.ID}
+		})
+		httpserver.WriteJSON(w, http.StatusOK, page)
+	}
 }
 
 func handleListFeedbackBoards(deps Deps) http.HandlerFunc {
