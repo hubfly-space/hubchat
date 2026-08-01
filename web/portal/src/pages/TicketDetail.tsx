@@ -18,7 +18,7 @@ import {
   type BadgeTone,
 } from "@hubchat/shared";
 import { Paperclip, TicketCheck } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { portalErrorMessage, usePortal } from "../portal-context";
 
@@ -52,7 +52,7 @@ type Message = {
   attachments?: { id: string; name: string; url: string }[];
 };
 
-type Detail = { ticket: Ticket; messages: Message[] };
+type Detail = { ticket: Ticket; messages: Message[]; has_more: boolean; next_cursor: string | null };
 
 export default function TicketDetail() {
   const { number: id } = useParams();
@@ -62,6 +62,9 @@ export default function TicketDetail() {
   const [reply, setReply] = useState("");
   const [attachments, setAttachments] = useState<{ id: string; name: string; url: string }[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [olderMessages, setOlderMessages] = useState<Message[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const query = useQuery<Detail>(
     portalData?.viewer && id ? ["portal", "ticket", id] : null,
     (signal) => api.get(`/portal/tickets/${encodeURIComponent(id!)}`, { signal }),
@@ -69,6 +72,12 @@ export default function TicketDetail() {
   const sendReply = useMutation(({ body, key, fileIDs }: { body: string; key: string; fileIDs: string[] }) =>
     api.post(`/portal/tickets/${encodeURIComponent(id!)}/replies`, { body, client_id: key, file_ids: fileIDs }, { idempotencyKey: key }),
   );
+
+  useEffect(() => {
+    if (!query.data) return;
+    setOlderMessages([]);
+    setNextCursor(query.data.next_cursor ?? null);
+  }, [query.data]);
 
   if (!portalData?.viewer) {
     return <EmptyState icon={TicketCheck} title="Sign in to view this request" description="This request is available only to its customer." action={<Button variant="primary" size="sm" asChild><Link to={`/sign-in?portal=${encodeURIComponent(portalData?.portal.id ?? "")}&next=${encodeURIComponent(location.pathname + location.search)}`}>Sign in</Link></Button>} />;
@@ -81,6 +90,20 @@ export default function TicketDetail() {
   const { ticket, messages } = query.data;
   const viewer = portalData.viewer;
   const status = STATUS[ticket.status] ?? { label: "Open", tone: "accent" as BadgeTone };
+  const visibleMessages = [...olderMessages, ...messages];
+  const loadOlder = async () => {
+    if (!nextCursor || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const page = await api.get<Detail>(`/portal/tickets/${encodeURIComponent(id!) }?limit=100&cursor=${encodeURIComponent(nextCursor)}`);
+      setOlderMessages((current) => [...page.messages, ...current]);
+      setNextCursor(page.next_cursor ?? null);
+    } catch (error) {
+      toast.error({ title: "Could not load older messages", description: portalErrorMessage(error) });
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
   const submitReply = async () => {
     const body = reply.trim();
     if (!body) return;
@@ -126,8 +149,10 @@ export default function TicketDetail() {
 
       {ticket.status === "resolved" && <Callout tone="success" className="mb-5">This request was resolved. Replying below reopens it — no need to start a new one.</Callout>}
 
+      {nextCursor && <div className="mb-4 flex justify-center"><Button variant="secondary" size="sm" loading={loadingOlder} onClick={() => void loadOlder()}>Load older messages</Button></div>}
+
       <ol className="space-y-4">
-        {messages.map((message) => {
+        {visibleMessages.map((message) => {
           const mine = message.author_type === "customer";
           return <li key={message.id} className={cn("flex gap-3", mine && "flex-row-reverse")}>
             <Avatar name={message.author_name} seed={mine ? viewer.email : message.author_name} size="sm" className="mt-0.5 shrink-0" />

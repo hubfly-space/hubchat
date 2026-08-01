@@ -20,9 +20,11 @@ The automation content endpoints separate safe support use from configuration:
 `GET /api/v1/automation/replies` and its `/{id}/use` action require
 `conversation.reply`, so agents can use approved saved replies without
 receiving `automation.manage`. Creating or changing saved replies remains
-restricted to automation managers. Macros remain management-only until their
-state-changing action execution path can enforce the capability required by
-each action. Saved-reply bodies may use `{{customer.name}}` and
+restricted to automation managers, and personal/team replies are filtered by
+the authenticated member's scope. Macro configuration is restricted to
+automation managers; personal and team macros are filtered by member scope,
+and execution enforces the capability required by every configured action.
+Saved-reply bodies may use `{{customer.name}}` and
 `{{ticket.number}}`; the dashboard expands those variables when an agent
 inserts a reply into the composer.
 
@@ -76,12 +78,14 @@ contract; it regenerates and validates both artifacts. Existing dashboard
 imports remain compatible while endpoint clients migrate to the generated
 `ApiRequest<OperationId>` and `ApiResponse<OperationId>` types.
 
-Macros are human-triggered, workspace-scoped actions. `POST
+Macros are human-triggered actions stored within a workspace. `POST
 /v1/automation/macros/{id}/use` requires `subject_type` (`conversation` or
 `ticket`) and `subject_id`; the server checks personal/team visibility and
 every action's capability before executing anything. Macro reply text is sent
 as a conversation reply, while state-changing actions use the same automation
-action engine as deterministic rules.
+action engine as deterministic rules. `GET`, `PATCH`, and `DELETE`
+`/v1/automation/macros/{id}` provide the scope-safe configuration lifecycle;
+the dashboard action editor persists the same action vocabulary used by rules.
 
 The embeddable browser contract is documented separately in
 [`widget-sdk.md`](widget-sdk.md), including the typed `window.Hubchat` API and

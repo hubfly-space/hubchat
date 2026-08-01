@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -350,21 +351,32 @@ func handlePortalTicket(deps Deps) http.HandlerFunc {
 			writePortalNotFound(w, r)
 			return
 		}
-		out := map[string]any{"ticket": portalTicketJSON(*ticket)}
-		messages := []map[string]any{}
+		before, after, limit, pageErr := messagePageParams(r)
+		if pageErr != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, pageErr.Error())
+			return
+		}
+		messages := []conversation.Message{}
+		hasMore := false
 		if ticket.ConversationID != nil {
-			all, messageErr := deps.Conversation.Messages(r.Context(), session.WorkspaceID, *ticket.ConversationID, 0)
+			var messageErr error
+			messages, hasMore, messageErr = deps.Conversation.ListMessagesPage(r.Context(), session.WorkspaceID, *ticket.ConversationID, before, after, limit)
 			if messageErr != nil {
 				httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load this request.")
 				return
 			}
-			for _, message := range all {
-				if message.Kind == "reply" {
-					messages = append(messages, portalMessageJSONWithAttachments(r, deps, session.WorkspaceID, message))
-				}
+		}
+		outMessages := make([]map[string]any, 0, len(messages))
+		for _, message := range messages {
+			if message.Kind == "reply" {
+				outMessages = append(outMessages, portalMessageJSONWithAttachments(r, deps, session.WorkspaceID, message))
 			}
 		}
-		out["messages"] = messages
+		out := map[string]any{"ticket": portalTicketJSON(*ticket), "messages": outMessages, "has_more": hasMore, "next_cursor": nil}
+		if hasMore && len(messages) > 0 && after == 0 {
+			cursor := Cursor{Value: strconv.FormatInt(messages[0].Sequence, 10)}.Encode()
+			out["next_cursor"] = cursor
+		}
 		httpserver.WriteJSON(w, http.StatusOK, out)
 	}
 }
