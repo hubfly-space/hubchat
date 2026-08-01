@@ -454,6 +454,48 @@ func TestSessionListingAndRevocation(t *testing.T) {
 	}
 }
 
+func TestSessionListingSupportsCursorPagination(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+
+	svc := newService(t, pool)
+	user := seedUser(t, ctx, svc, "session-pages@example.com")
+	first, _ := svc.CreateSession(ctx, user.ID, "first-browser", "")
+	_, _ = svc.CreateSession(ctx, user.ID, "second-browser", "")
+	_, _ = svc.CreateSession(ctx, user.ID, "third-browser", "")
+
+	// Make the ordering independent of wall-clock resolution and assert that
+	// the ID tie-breaker is part of the cursor contract.
+	if _, err := pool.Exec(ctx, `
+		UPDATE user_sessions
+		SET last_seen_at = CASE id
+			WHEN (SELECT id FROM user_sessions WHERE user_id=$1 AND user_agent='first-browser') THEN '2026-01-03T00:00:00Z'::timestamptz
+			WHEN (SELECT id FROM user_sessions WHERE user_id=$1 AND user_agent='second-browser') THEN '2026-01-02T00:00:00Z'::timestamptz
+			WHEN (SELECT id FROM user_sessions WHERE user_id=$1 AND user_agent='third-browser') THEN '2026-01-01T00:00:00Z'::timestamptz
+		END
+		WHERE user_id = $1
+	`, user.ID); err != nil {
+		t.Fatalf("set session order: %v", err)
+	}
+
+	page, err := svc.ListSessionsPage(ctx, user.ID, first.Token, time.Time{}, "", 2)
+	if err != nil {
+		t.Fatalf("first page: %v", err)
+	}
+	if len(page) != 2 || page[0].UserAgent != "first-browser" || page[1].UserAgent != "second-browser" {
+		t.Fatalf("first page = %#v, want first and second sessions", page)
+	}
+
+	next, err := svc.ListSessionsPage(ctx, user.ID, first.Token, page[1].LastSeenAt, page[1].ID, 2)
+	if err != nil {
+		t.Fatalf("second page: %v", err)
+	}
+	if len(next) != 1 || next[0].UserAgent != "third-browser" {
+		t.Fatalf("second page = %#v, want third session", next)
+	}
+}
+
 // A session id is not a capability: revoking must be scoped to its owner, or
 // anyone holding an id could sign anyone else out.
 func TestRevokeSessionIsScopedToItsOwner(t *testing.T) {

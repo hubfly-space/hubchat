@@ -487,7 +487,29 @@ type SessionInfo struct {
 
 // ListSessions returns a user's live sessions, most recently active first.
 func (s *Service) ListSessions(ctx context.Context, userID, currentToken string) ([]SessionInfo, error) {
-	return s.repo.listSessions(ctx, userID, HashToken(currentToken))
+	currentHash := HashToken(currentToken)
+	var out []SessionInfo
+	var before time.Time
+	var beforeID string
+	for {
+		page, err := s.repo.listSessionsPage(ctx, userID, currentHash, before, beforeID, 201)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, page...)
+		if len(page) < 201 {
+			return out, nil
+		}
+		last := page[len(page)-1]
+		before, beforeID = last.LastSeenAt, last.ID
+	}
+}
+
+// ListSessionsPage returns active sessions in stable, cursor-friendly order.
+// The compatibility ListSessions method above remains available to internal
+// callers that explicitly need the complete bounded set.
+func (s *Service) ListSessionsPage(ctx context.Context, userID, currentToken string, before time.Time, beforeID string, limit int) ([]SessionInfo, error) {
+	return s.repo.listSessionsPage(ctx, userID, HashToken(currentToken), before, beforeID, limit)
 }
 
 // RevokeSession ends one session.

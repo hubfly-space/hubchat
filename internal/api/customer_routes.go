@@ -663,7 +663,12 @@ func handleListAttributeDefinitions(deps Deps) http.HandlerFunc {
 		if entityType == "" {
 			entityType = "customer"
 		}
-		defs, err := deps.Customer.ListAttributeDefinitions(r.Context(), actor.WorkspaceID, entityType)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		defs, err := deps.Customer.ListAttributeDefinitionsPage(r.Context(), actor.WorkspaceID, entityType, cursor.Value, cursor.ID, limit+1)
 		if err != nil {
 			writeCustomerError(w, r, err)
 			return
@@ -672,7 +677,9 @@ func handleListAttributeDefinitions(deps Deps) http.HandlerFunc {
 		for i, d := range defs {
 			out[i] = attributeDefinitionJSON(d)
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(out, limit, func(item map[string]any) Cursor {
+			return Cursor{Value: item["key"].(string), ID: item["id"].(string)}
+		}))
 	}
 }
 

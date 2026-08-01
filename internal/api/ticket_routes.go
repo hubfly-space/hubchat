@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -567,12 +568,17 @@ func handleRemoveTicketTag(deps Deps) http.HandlerFunc {
 func handleListTicketFollowers(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
-		followers, err := deps.Ticket.Followers(r.Context(), actor.WorkspaceID, r.PathValue("id"))
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		followers, err := deps.Ticket.FollowersPage(r.Context(), actor.WorkspaceID, r.PathValue("id"), cursor.Value, limit+1)
 		if err != nil {
 			writeTicketError(w, r, err)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": orEmpty(followers)})
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(followers, limit, func(memberID string) Cursor { return Cursor{Value: memberID} }))
 	}
 }
 
@@ -681,16 +687,33 @@ func handleListFieldDefinitions(deps Deps) http.HandlerFunc {
 		if entityType == "" {
 			entityType = "ticket"
 		}
-		defs, err := deps.Ticket.ListFieldDefinitions(r.Context(), actor.WorkspaceID, entityType)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		beforePosition := int16(0)
+		if cursor.ID != "" {
+			parsed, parseErr := strconv.ParseInt(cursor.Value, 10, 16)
+			if parseErr != nil {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+				return
+			}
+			beforePosition = int16(parsed)
+		}
+		defs, err := deps.Ticket.ListFieldDefinitionsPage(r.Context(), actor.WorkspaceID, entityType, beforePosition, cursor.ID, limit+1)
 		if err != nil {
 			writeTicketError(w, r, err)
 			return
 		}
-		out := make([]map[string]any, len(defs))
-		for i, d := range defs {
+		page := NewPage(defs, limit, func(def ticket.FieldDefinition) Cursor {
+			return Cursor{Value: strconv.Itoa(int(def.Position)), ID: def.ID}
+		})
+		out := make([]map[string]any, len(page.Data))
+		for i, d := range page.Data {
 			out[i] = fieldDefinitionJSON(d)
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+		httpserver.WriteJSON(w, http.StatusOK, Page[map[string]any]{Data: out, NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
 }
 
