@@ -30,10 +30,12 @@ import {
   Textarea,
   Toolbar,
   Tooltip,
+  useInfinite,
   useMutation,
   useQuery,
   useToast,
   formatRelativeShort,
+  type Paginated,
 } from "@hubchat/shared";
 import {
   Eye,
@@ -975,16 +977,18 @@ function WidgetHistoryDialog({
   onClose: () => void;
   onRolledBack: () => void;
 }) {
-  const versions = useQuery<{ data: WidgetVersion[] }>(["widget-versions", widgetId], (signal) =>
-    api.get(`/widgets/${widgetId}/versions`, { signal }),
-  );
+  const versions = useInfinite<WidgetVersion>(["widget-versions", widgetId], (cursor, signal) => {
+    const params = new URLSearchParams({ limit: "25" });
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<WidgetVersion>>(`/widgets/${widgetId}/versions?${params.toString()}`, { signal });
+  });
 
   const rollback = useMutation<number, Widget>(
     (version) => api.post(`/widgets/${widgetId}/rollback`, { version }),
     { invalidates: [["widget", widgetId], ["widgets"], ["widget-versions", widgetId]], onSuccess: onRolledBack },
   );
 
-  const rows = versions.data?.data ?? [];
+  const rows = versions.items;
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -994,36 +998,43 @@ function WidgetHistoryDialog({
             {rollback.error instanceof ApiError ? rollback.error.message : "Could not roll back."}
           </Callout>
         ) : null}
-        {rows.length === 0 ? (
+        {versions.isLoading ? (
+          <p className="py-6 text-center text-xs text-fg-muted">Loading configuration history…</p>
+        ) : versions.error ? (
+          <div className="flex items-center justify-between gap-3 py-6"><p className="text-xs text-danger">Could not load configuration history.</p><Button variant="ghost" size="xs" onClick={versions.refetch}>Retry</Button></div>
+        ) : rows.length === 0 ? (
           <p className="py-6 text-center text-xs text-fg-muted">No history yet.</p>
         ) : (
-          <ul className="divide-y divide-line-subtle">
-            {rows.map((version, index) => (
-              <li key={version.id} className="flex items-center justify-between gap-3 py-2.5">
-                <div className="min-w-0">
-                  <p className="text-sm text-fg">
-                    v{version.version}
-                    {index === 0 && <span className="ml-1.5 text-2xs text-fg-muted">(current)</span>}
-                  </p>
-                  <p className="mt-0.5 text-xs text-fg-muted">
-                    {formatRelativeShort(version.created_at, new Date())} ago
-                    {version.note ? ` · ${version.note}` : ""}
-                  </p>
-                </div>
-                {index !== 0 && (
-                  <Button
-                    variant="secondary"
-                    size="xs"
-                    leading={<RotateCcw />}
-                    loading={rollback.isPending}
-                    onClick={() => void rollback.mutate(version.version).catch(() => {})}
-                  >
-                    Roll back
-                  </Button>
-                )}
-              </li>
-            ))}
-          </ul>
+          <>
+            <ul className="divide-y divide-line-subtle">
+              {rows.map((version, index) => (
+                <li key={version.id} className="flex items-center justify-between gap-3 py-2.5">
+                  <div className="min-w-0">
+                    <p className="text-sm text-fg">
+                      v{version.version}
+                      {index === 0 && <span className="ml-1.5 text-2xs text-fg-muted">(current)</span>}
+                    </p>
+                    <p className="mt-0.5 text-xs text-fg-muted">
+                      {formatRelativeShort(version.created_at, new Date())} ago
+                      {version.note ? ` · ${version.note}` : ""}
+                    </p>
+                  </div>
+                  {index !== 0 && (
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      leading={<RotateCcw />}
+                      loading={rollback.isPending}
+                      onClick={() => void rollback.mutate(version.version).catch(() => {})}
+                    >
+                      Roll back
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {versions.hasMore && <div className="flex justify-center border-t border-line-subtle pt-3"><Button variant="secondary" size="xs" loading={versions.isFetching} onClick={() => void versions.fetchNext()}>Load older versions</Button></div>}
+          </>
         )}
       </DialogContent>
     </Dialog>

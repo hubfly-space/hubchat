@@ -17,15 +17,16 @@ import {
   Page,
   PageBody,
   PageHeader,
+  Pagination,
   Section,
+  useInfinite,
   useMutation,
-  useQuery,
   api,
   idempotencyKey,
 } from "@hubchat/shared";
 import { Inbox, Plus, Save, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { Inbox as InboxRecord, Team } from "@hubchat/shared";
+import type { Inbox as InboxRecord, Paginated, Team } from "@hubchat/shared";
 import { useWorkspace } from "../../app/workspace-context";
 
 type InboxPayload = {
@@ -45,8 +46,8 @@ function errorMessage(error: unknown, fallback: string) {
 /** Live inbox configuration (§6.1, §6.12). */
 export default function InboxSettings() {
   const { teams } = useWorkspace();
-  const query = useQuery<{ data: InboxRecord[] }>(["inboxes"], (signal) => api.get("/inboxes", { signal }));
-  const inboxes = query.data?.data ?? [];
+  const query = useInfinite<InboxRecord>(["inboxes"], (cursor, signal) => api.get<Paginated<InboxRecord>>(`/inboxes?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
+  const inboxes = query.items;
   const [activeId, setActiveId] = useState<string | null>(null);
   const active = inboxes.find((inbox) => inbox.id === activeId) ?? inboxes[0];
   const [draft, setDraft] = useState<InboxRecord | null>(null);
@@ -120,14 +121,14 @@ export default function InboxSettings() {
       <PageBody>
         {query.isLoading ? <p className="text-sm text-fg-muted">Loading inboxes…</p> : query.error ? <EmptyState icon={Inbox} title="Inboxes unavailable" description={errorMessage(query.error, "Could not load inboxes.")} action={<Button variant="secondary" onClick={query.refetch}>Try again</Button>} /> : !active || !draft ? <EmptyState icon={Inbox} title="No inboxes configured" description="Create an inbox to receive conversations and tickets." /> : (
           <div className="grid gap-5 lg:grid-cols-[240px_minmax(0,1fr)]">
-            <nav aria-label="Inboxes" className="space-y-1">{inboxes.map((inbox) => <button key={inbox.id} type="button" onClick={() => setActiveId(inbox.id)} className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm ${inbox.id === active.id ? "bg-accent-subtle font-medium text-fg" : "text-fg-secondary hover:bg-fill hover:text-fg"}`}><Inbox aria-hidden="true" className="size-3.5 shrink-0 text-fg-muted" /><span className="min-w-0 flex-1 truncate">{inbox.name}</span>{inbox.is_default && <Badge tone="neutral">Default</Badge>}</button>)}</nav>
+            <div><nav aria-label="Inboxes" className="space-y-1">{inboxes.map((inbox) => <button key={inbox.id} type="button" onClick={() => setActiveId(inbox.id)} className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm ${inbox.id === active.id ? "bg-accent-subtle font-medium text-fg" : "text-fg-secondary hover:bg-fill hover:text-fg"}`}><Inbox aria-hidden="true" className="size-3.5 shrink-0 text-fg-muted" /><span className="min-w-0 flex-1 truncate">{inbox.name}</span>{inbox.is_default && <Badge tone="neutral">Default</Badge>}</button>)}</nav>{query.hasMore && <Pagination hasPrevious={false} hasNext onPrevious={() => undefined} onNext={() => void query.fetchNext()} summary={`${inboxes.length} inboxes loaded`} />}</div>
             <div className="min-w-0">
               <div className="mb-5 flex flex-wrap items-end gap-3"><Field label="Name" className="min-w-56 flex-1"><Input value={draft.name} onChange={(event) => updateDraft((current) => ({ ...current, name: event.target.value }))} /></Field><Field label="Slug" description="Read-only after creation."><Input mono value={draft.slug} readOnly /></Field><Button variant="primary" size="sm" leading={<Save />} loading={update.isPending} onClick={save}>Save changes</Button></div>
               {Boolean(update.error) && <p className="mb-4 text-sm text-danger">{errorMessage(update.error, "Could not save this inbox.")}</p>}
               <Section title="Details"><Card><CardBody className="pt-0"><div className="border-b border-line-subtle py-3"><Field label="Description"><Input value={draft.description ?? ""} onChange={(event) => updateDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Where customer conversations are handled." /></Field></div><div className="flex items-center justify-between gap-4 py-3"><div><p className="text-sm text-fg">Default inbox</p><p className="mt-0.5 text-xs text-fg-muted">New conversations without an explicit destination use this inbox.</p></div><Button variant={draft.is_default ? "secondary" : "ghost"} size="sm" disabled={draft.is_default || setDefault.isPending} onClick={() => void setDefault.mutate(undefined).catch(() => {})}>{draft.is_default ? "Default" : "Make default"}</Button></div></CardBody></Card></Section>
               <Section title="Channels" description="Only selected sources can deliver into this inbox."><Card><CardBody className="grid gap-3 sm:grid-cols-2">{CHANNELS.map((channel) => <label key={channel} className="flex items-center gap-2 text-sm capitalize"><Checkbox checked={draft.channels.includes(channel)} onCheckedChange={() => toggleChannel(channel)} />{channel}</label>)}</CardBody></Card></Section>
               <Section title="Team access" description="Members outside these teams cannot see this inbox. The server applies this scope to queries."><Card><CardBody className="grid gap-3 sm:grid-cols-2">{teams.length ? teams.map((team: Team) => <label key={team.id} className="flex items-center gap-2 text-sm"><Checkbox checked={draft.team_ids.includes(team.id)} onCheckedChange={() => toggleTeam(team.id)} />{team.name}</label>) : <p className="text-sm text-fg-muted">No teams configured.</p>}</CardBody></Card></Section>
-              <Section title="Routing"><Callout tone="info">Inbox-level assignment strategy is not configured by this API. Use automation rules, team queues, and manual assignment for deterministic routing.</Callout></Section>
+              <Section title="Routing"><Callout tone="info">Assign this inbox to one or more teams to route new conversations automatically. The first team follows its configured strategy: team queue, round robin, least active, customer owner, or weighted assignment. Members who are not accepting conversations remain in the queue.</Callout></Section>
               <Section title="SLA policy" description="Attach a policy from the SLA settings area. The current inbox API exposes the active policy as read-only here."><Card><CardBody><span className="text-sm text-fg-secondary">{draft.sla_policy_id ?? "Not configured"}</span></CardBody></Card></Section>
               <Section title="Danger zone"><Card className="border-danger-border"><CardHeader title="Delete this inbox" description={`${draft.open_count} open conversations would need to be moved first. Deleting an inbox does not delete its history.`} actions={<Button variant="danger" size="sm" leading={<Trash2 />} disabled={draft.is_default} onClick={() => setDeleting(draft)}>Delete</Button>} /></Card></Section>
             </div>

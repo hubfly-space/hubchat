@@ -34,7 +34,7 @@ import {
 import { Book, Globe, GripVertical, Lightbulb, Megaphone, Plus, Ticket, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import type { Portal } from "@hubchat/shared";
+import type { Portal, PortalDomain } from "@hubchat/shared";
 
 /** Portal builder (§6.5). */
 export default function PortalBuilder() {
@@ -46,7 +46,11 @@ export default function PortalBuilder() {
   const [previewTheme, setPreviewTheme] = useState<"light" | "dark">("light");
   const [discardOpen, setDiscardOpen] = useState(false);
   const [disableOpen, setDisableOpen] = useState(false);
+  const [domainInput, setDomainInput] = useState("");
   const save = useMutation<Partial<Portal>, Portal>((input) => api.patch(`/portals/${encodeURIComponent(portalId ?? "")}`, input, { idempotencyKey: idempotencyKey() }), { onSuccess: (value) => { const next = normalizePortal(value); setDraft(next); setSavedDraft(next); } });
+  const addDomain = useMutation<{ domain: string }, PortalDomain>((input) => api.post(`/portals/${encodeURIComponent(portalId ?? "")}/domains`, input, { idempotencyKey: idempotencyKey() }), { onSuccess: (value) => { setDraft((current) => current ? { ...current, domains: [...(current.domains ?? []), value] } : current); setDomainInput(""); } });
+  const verifyDomain = useMutation<{ domainID: string }, PortalDomain>((input) => api.post(`/portals/${encodeURIComponent(portalId ?? "")}/domains/${encodeURIComponent(input.domainID)}/verify`, {}, {}), { onSuccess: (value) => setDraft((current) => current ? { ...current, domains: (current.domains ?? []).map((item) => item.id === value.id ? value : item) } : current) });
+  const deleteDomain = useMutation<{ domainID: string }, { deleted: boolean }>((input) => api.delete(`/portals/${encodeURIComponent(portalId ?? "")}/domains/${encodeURIComponent(input.domainID)}`, { idempotencyKey: idempotencyKey() }), { onSuccess: (_value, input) => setDraft((current) => current ? { ...current, domains: (current.domains ?? []).filter((item) => item.id !== input.domainID) } : current) });
 
   useEffect(() => {
     if (query.data) {
@@ -306,16 +310,11 @@ export default function PortalBuilder() {
 
                 <Section title="Custom domain">
                   <Card>
-                    <CardBody>
-                      <Field label="Domain">
-                        <Input inputSize="md" mono value={draft.custom_domain ?? ""} prefix="https://" readOnly disabled />
-                      </Field>
-
-                      <Callout tone="info" className="mt-4">
-                        Custom-domain provisioning is not available through this builder yet. The
-                        Hubchat subdomain above remains the active portal URL; this field is shown
-                        for visibility and does not make DNS changes.
-                      </Callout>
+                    <CardBody className="space-y-4">
+                      <div className="flex gap-2"><Input inputSize="md" mono value={domainInput} onChange={(event) => setDomainInput(event.target.value)} placeholder="support.example.com" /><Button variant="secondary" size="sm" leading={<Plus />} disabled={!domainInput.trim()} loading={addDomain.isPending} onClick={() => void addDomain.mutate({ domain: domainInput.trim() }).catch(() => {})}>Add</Button></div>
+                      <p className="text-xs text-fg-muted">Add a hostname you control, then publish the displayed TXT record before verifying it. Verified domains resolve this portal directly.</p>
+                      {(draft.domains ?? []).length > 0 && <div className="space-y-2">{(draft.domains ?? []).map((domain) => <div key={domain.id} className="rounded-md border border-line p-3"><div className="flex items-center gap-2"><span className="min-w-0 flex-1 truncate font-mono text-sm text-fg">https://{domain.domain}</span><Badge tone={domain.status === "verified" ? "success" : domain.status === "failed" ? "danger" : "warning"}>{domain.status}</Badge><Button variant="ghost" size="xs" iconOnly aria-label={`Remove ${domain.domain}`} leading={<Trash2 />} onClick={() => void deleteDomain.mutate({ domainID: domain.id }).catch(() => {})} /></div>{domain.status !== "verified" && <><p className="mt-2 text-xs text-fg-muted">Create a TXT record at <code className="font-mono text-fg-secondary">_hubchat-verification.{domain.domain}</code> with value:</p>{domain.verification_token && <code className="mt-1 block break-all rounded bg-inset px-2 py-1 text-xs text-fg-secondary">{domain.verification_token}</code>}<Button className="mt-2" variant="secondary" size="xs" loading={verifyDomain.isPending} onClick={() => void verifyDomain.mutate({ domainID: domain.id }).catch(() => {})}>Check DNS</Button></>}</div>)}</div>}
+                      {Boolean(addDomain.error || verifyDomain.error || deleteDomain.error) && <Callout tone="danger">The domain change could not be completed. Check the hostname and try again.</Callout>}
                     </CardBody>
                   </Card>
                 </Section>
@@ -432,7 +431,9 @@ function normalizePortal(raw: Record<string, unknown>): Portal {
   const permissions = (raw.permissions as Record<string, unknown> | undefined) ?? {};
   return {
     id: String(raw.id ?? ""), workspace_id: String(raw.workspace_id ?? ""), name: String(raw.name ?? "Portal"), subdomain: String(raw.subdomain ?? ""),
-    custom_domain: null, domain_status: "unverified", enabled: raw.enabled !== false, updated_at: String(raw.updated_at ?? new Date().toISOString()),
+    custom_domain: (Array.isArray(raw.domains) ? (raw.domains as Array<Record<string, unknown>>).find((item) => item.status === "verified")?.domain as string | undefined : undefined) ?? null,
+    domain_status: (Array.isArray(raw.domains) ? ((raw.domains as Array<Record<string, unknown>>).find((item) => item.status === "verified") ? "active" : (raw.domains as Array<Record<string, unknown>>).some((item) => item.status === "failed") ? "error" : (raw.domains as Array<Record<string, unknown>>).length ? "pending" : "unverified") : "unverified") as Portal["domain_status"],
+    domains: Array.isArray(raw.domains) ? raw.domains as PortalDomain[] : [], enabled: raw.enabled !== false, updated_at: String(raw.updated_at ?? new Date().toISOString()),
     theme: { accent: String(theme.accent ?? "#3B6EF6"), mode: (theme.mode as Portal["theme"]["mode"]) ?? "light", logo_url: (theme.logo_url as string | null) ?? null, favicon_url: (theme.favicon_url as string | null) ?? null, headline: String(theme.headline ?? "How can we help?"), subheadline: String(theme.subheadline ?? "Search our guides, track your requests, or start a conversation with the team."), footer_links: Array.isArray(theme.footer_links) ? theme.footer_links as Portal["theme"]["footer_links"] : [], custom_css_vars: (theme.custom_css_vars as Record<string, string>) ?? {} },
     features: { tickets: features.tickets !== false, knowledge_base: features.knowledge_base !== false, feedback: features.feedback !== false, changelog: features.changelog !== false, announcements: features.announcements === true },
     auth_methods: Array.isArray(raw.auth_methods) ? raw.auth_methods as Portal["auth_methods"] : ["magic_link"],
