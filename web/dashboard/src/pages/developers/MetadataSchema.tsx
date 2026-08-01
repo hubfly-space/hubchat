@@ -20,12 +20,13 @@ import {
   Select,
   Textarea,
   Tooltip,
+  useInfinite,
   useMutation,
-  useQuery,
   type AttributeDefinition,
   type AttributeType,
   type Column,
   type MetadataSource,
+  type Paginated,
 } from "@hubchat/shared";
 import { Braces, EyeOff, Pencil, Plus, ShieldAlert, Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -64,11 +65,12 @@ export default function MetadataSchema() {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<AttributeDefinition | null>(null);
 
-  const definitions = useQuery<{ data: AttributeDefinition[] }>(
-    ["attribute-definitions", "customer"],
-    (signal) => api.get(`/attribute-definitions?entity_type=customer`, { signal }),
-  );
-  const rows = definitions.data?.data ?? [];
+  const definitions = useInfinite<AttributeDefinition>(["attribute-definitions", "customer"], (cursor, signal) => {
+    const params = new URLSearchParams({ entity_type: "customer", limit: "50" });
+    if (cursor) params.set("cursor", cursor);
+    return api.get<Paginated<AttributeDefinition>>(`/attribute-definitions?${params.toString()}`, { signal });
+  });
+  const rows = definitions.items;
 
   const archive = useMutation<string, unknown>(
     (id) => api.delete(`/attribute-definitions/${id}`),
@@ -162,33 +164,36 @@ export default function MetadataSchema() {
         <Section title="Attributes">
           <Card>
             <CardBody className="p-0">
-              <DataTable
-                aria-label="Metadata attributes"
-                rows={rows}
-                columns={columns}
-                rowKey={(field) => field.id}
-                loading={definitions.isLoading}
-                rowActions={(field) => (
-                  <div className="flex items-center gap-0.5">
-                    <Button variant="ghost" size="xs" iconOnly aria-label="Edit attribute" leading={<Pencil />} onClick={() => setEditing(field)} />
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      iconOnly
-                      aria-label="Archive attribute"
-                      leading={<Trash2 />}
-                      onClick={() => void archive.mutate(field.id).catch(() => {})}
+              {definitions.error ? <div className="p-4"><EmptyState icon={Braces} title="Metadata schema unavailable" description="Could not load attribute definitions." action={<Button variant="secondary" size="sm" onClick={definitions.refetch}>Try again</Button>} /></div> : <>
+                <DataTable
+                  aria-label="Metadata attributes"
+                  rows={rows}
+                  columns={columns}
+                  rowKey={(field) => field.id}
+                  loading={definitions.isLoading}
+                  rowActions={(field) => (
+                    <div className="flex items-center gap-0.5">
+                      <Button variant="ghost" size="xs" iconOnly aria-label="Edit attribute" leading={<Pencil />} onClick={() => setEditing(field)} />
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        iconOnly
+                        aria-label="Archive attribute"
+                        leading={<Trash2 />}
+                        onClick={() => void archive.mutate(field.id).catch(() => {})}
+                      />
+                    </div>
+                  )}
+                  empty={
+                    <EmptyState
+                      icon={Braces}
+                      title="No attributes defined"
+                      description="Declare the attributes your application will send before wiring up the SDK."
                     />
-                  </div>
-                )}
-                empty={
-                  <EmptyState
-                    icon={Braces}
-                    title="No attributes defined"
-                    description="Declare the attributes your application will send before wiring up the SDK."
-                  />
-                }
-              />
+                  }
+                />
+                {definitions.hasMore && <div className="flex justify-center border-t border-line-subtle p-3"><Button variant="secondary" size="sm" loading={definitions.isFetching} onClick={() => void definitions.fetchNext()}>Load more attributes</Button></div>}
+              </>}
             </CardBody>
           </Card>
         </Section>

@@ -1,6 +1,12 @@
 import {
   Button,
   Kbd,
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuLabel,
+  MenuSeparator,
+  MenuTrigger,
   Tabs,
   TabsList,
   Textarea,
@@ -8,7 +14,10 @@ import {
   api,
   cn,
   idempotencyKey,
+  invalidate,
+  useInfinite,
   useToast,
+  type Paginated,
 } from "@hubchat/shared";
 import {
   Bold,
@@ -17,23 +26,28 @@ import {
   List,
   Lock,
   MessageSquare,
+  MessageSquareReply,
   Paperclip,
   Send,
   Smile,
+  Zap,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 type ComposerMode = "reply" | "note";
 
 export type ComposerProps = {
+  /** Omitted by the isolated fixture demo, which must not call production APIs. */
+  workspaceId?: string;
+  /** Macro execution is an explicit automation capability, not a fixture affordance. */
+  canUseMacros?: boolean;
   customerName: string;
+  ticketNumber?: string;
   /**
    * Drafts autosave to localStorage under this key, per conversation, so a
-   * reload or a tab switch never loses what someone was typing. Saved
-   * replies and macros are a later stage (§8's automation module owns them);
-   * until then the toolbar's formatting and attachment buttons are visual
-   * only, same as the fixture build — nothing here claims to format or
-   * attach anything it cannot.
+   * reload or a tab switch never loses what someone was typing. Formatting
+   * buttons remain intentionally presentation-only, while attachments and
+   * saved replies are real API-backed actions.
    */
   conversationId: string;
   onSend: (body: string, kind: ComposerMode, fileIDs: string[]) => Promise<void>;
@@ -53,7 +67,7 @@ function draftKey(conversationId: string) {
  * relabels the send button. There is no state in which "am I about to reply
  * publicly?" requires a second look.
  */
-export function Composer({ customerName, conversationId, onSend }: ComposerProps) {
+export function Composer({ workspaceId, canUseMacros = false, customerName, ticketNumber, conversationId, onSend }: ComposerProps) {
   const [mode, setMode] = useState<ComposerMode>("reply");
   const [value, setValue] = useState(() => {
     try {
@@ -68,6 +82,14 @@ export function Composer({ customerName, conversationId, onSend }: ComposerProps
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
+  const savedReplies = useInfinite<SavedReply>(
+    workspaceId ? ["composer-saved-replies", workspaceId] : null,
+    (cursor, signal) => api.get<Paginated<SavedReply>>(`/automation/replies?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal, workspaceId }),
+  );
+  const macros = useInfinite<Macro>(
+    canUseMacros && workspaceId ? ["composer-macros", workspaceId] : null,
+    (cursor, signal) => api.get<Paginated<Macro>>(`/automation/macros?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal, workspaceId }),
+  );
 
   // Switching conversations loads that thread's own draft rather than
   // carrying over whatever was being typed for the last one.
@@ -137,6 +159,43 @@ export function Composer({ customerName, conversationId, onSend }: ComposerProps
       .finally(() => setSending(false));
   };
 
+  const insertSavedReply = async (reply: SavedReply, shortcutToReplace?: string) => {
+    const expanded = expandReply(reply.body, { customerName, ticketNumber });
+    setValue((current) => {
+      let prefix = current.trimEnd();
+      if (shortcutToReplace && prefix.endsWith(shortcutToReplace)) {
+        prefix = prefix.slice(0, -shortcutToReplace.length).trimEnd();
+      }
+      return prefix ? `${prefix}\n\n${expanded}` : expanded;
+    });
+    textareaRef.current?.focus();
+    if (!workspaceId) return;
+    try {
+      await api.post(`/automation/replies/${encodeURIComponent(reply.id)}/use`, {}, { workspaceId, idempotencyKey: idempotencyKey() });
+    } catch (error) {
+      // Insertion is still useful if the usage counter is temporarily down;
+      // make the observability failure visible without losing the agent's
+      // prepared reply.
+      toast.error({ title: "Reply inserted", description: error instanceof Error ? `Usage could not be recorded: ${error.message}` : "Usage could not be recorded." });
+    }
+  };
+
+  const executeMacro = async (macro: Macro) => {
+    if (!workspaceId) return;
+    try {
+      await api.post(`/automation/macros/${encodeURIComponent(macro.id)}/use`, {
+        subject_type: "conversation",
+        subject_id: conversationId,
+      }, { workspaceId, idempotencyKey: idempotencyKey() });
+      invalidate(["conversations"]);
+      invalidate(["conversation", conversationId]);
+      invalidate(["conversation-messages", conversationId]);
+      toast.success({ title: "Macro applied", description: `${macro.name} ran on this conversation.` });
+    } catch (error) {
+      toast.error({ title: "Could not apply macro", description: error instanceof Error ? error.message : "Check the macro permissions and try again." });
+    }
+  };
+
   return (
     <div
       className={cn(
@@ -179,6 +238,15 @@ export function Composer({ customerName, conversationId, onSend }: ComposerProps
           value={value}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={(event) => {
+            if (event.key === "Tab" && !isNote) {
+              const shortcut = value.trimEnd().split(/\s+/).at(-1);
+              const reply = shortcut ? savedReplies.items.find((item) => item.shortcut === shortcut) : undefined;
+              if (reply) {
+                event.preventDefault();
+                void insertSavedReply(reply, shortcut);
+                return;
+              }
+            }
             if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
               event.preventDefault();
               send();
@@ -229,6 +297,66 @@ export function Composer({ customerName, conversationId, onSend }: ComposerProps
             <Tooltip content="Emoji">
               <Button variant="ghost" size="xs" iconOnly aria-label="Insert emoji" leading={<Smile />} />
             </Tooltip>
+
+            {workspaceId && (
+              <Menu>
+                <MenuTrigger asChild>
+                  <Button variant="ghost" size="xs" leading={<MessageSquareReply />} disabled={isNote || savedReplies.isLoading} loading={savedReplies.isFetching && savedReplies.items.length === 0}>
+                    Saved reply
+                  </Button>
+                </MenuTrigger>
+                <MenuContent className="w-72">
+                  <MenuLabel>Insert saved reply</MenuLabel>
+                  {savedReplies.error ? (
+                    <MenuItem disabled description="Check your support permissions or try again later.">Saved replies unavailable</MenuItem>
+                  ) : savedReplies.items.length === 0 && !savedReplies.isLoading ? (
+                    <MenuItem disabled description="Create shared replies under Automation.">No saved replies yet</MenuItem>
+                  ) : (
+                    savedReplies.items.map((reply) => (
+                      <MenuItem key={reply.id} icon={<MessageSquareReply />} onSelect={() => void insertSavedReply(reply)} description={`${reply.shortcut ? `${reply.shortcut} · ` : ""}${expandReply(reply.body, { customerName, ticketNumber }).slice(0, 112)}`}>
+                        {reply.name}
+                      </MenuItem>
+                    ))
+                  )}
+                  {savedReplies.hasMore && (
+                    <>
+                      <MenuSeparator />
+                      <MenuItem icon={<Zap />} onSelect={() => void savedReplies.fetchNext()} description={savedReplies.isFetching ? "Loading…" : undefined}>Load more replies</MenuItem>
+                    </>
+                  )}
+                </MenuContent>
+              </Menu>
+            )}
+
+            {workspaceId && canUseMacros && (
+              <Menu>
+                <MenuTrigger asChild>
+                  <Button variant="ghost" size="xs" leading={<Zap />} disabled={isNote || macros.isLoading} loading={macros.isFetching && macros.items.length === 0}>
+                    Macro
+                  </Button>
+                </MenuTrigger>
+                <MenuContent className="w-72">
+                  <MenuLabel>Apply macro</MenuLabel>
+                  {macros.error ? (
+                    <MenuItem disabled description="Check your automation permissions or try again later.">Macros unavailable</MenuItem>
+                  ) : macros.items.length === 0 && !macros.isLoading ? (
+                    <MenuItem disabled description="Create a macro under Automation.">No macros yet</MenuItem>
+                  ) : (
+                    macros.items.map((macro) => (
+                      <MenuItem key={macro.id} icon={<Zap />} onSelect={() => void executeMacro(macro)} description={`${macro.actions.length} action${macro.actions.length === 1 ? "" : "s"}${macro.body ? " · sends a reply" : ""}`}>
+                        {macro.name}
+                      </MenuItem>
+                    ))
+                  )}
+                  {macros.hasMore && (
+                    <>
+                      <MenuSeparator />
+                      <MenuItem icon={<Zap />} onSelect={() => void macros.fetchNext()} description={macros.isFetching ? "Loading…" : undefined}>Load more macros</MenuItem>
+                    </>
+                  )}
+                </MenuContent>
+              </Menu>
+            )}
           </div>
 
           <div className="flex items-center gap-1.5">
@@ -252,4 +380,33 @@ export function Composer({ customerName, conversationId, onSend }: ComposerProps
       </p>
     </div>
   );
+}
+
+type SavedReply = {
+  id: string;
+  name: string;
+  body: string;
+  shortcut: string;
+  folder: string;
+  scope: string;
+};
+
+type Macro = {
+  id: string;
+  name: string;
+  body: string;
+  actions: Array<{ id: string; type: string; params: Record<string, unknown> }>;
+};
+
+function expandReply(body: string, variables: { customerName: string; ticketNumber?: string }) {
+  return body.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (whole, key: string) => {
+    switch (key.trim()) {
+      case "customer.name":
+        return variables.customerName;
+      case "ticket.number":
+        return variables.ticketNumber ?? "the ticket";
+      default:
+        return whole;
+    }
+  });
 }

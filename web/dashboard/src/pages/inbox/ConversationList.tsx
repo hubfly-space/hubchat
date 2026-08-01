@@ -31,9 +31,9 @@ export type SortKey = "recent" | "oldest" | "priority";
 /**
  * Middle pane of the inbox.
  *
- * Not virtualised in this build because the fixture set is small, but the row
- * component is already height-stable and keyed, so dropping in a windowing
- * layer (§17: "virtualize long lists") is a change to this file alone.
+ * The API returns bounded cursor pages, so this list does not retain the whole
+ * inbox in memory. Row virtualization is still a follow-up for very large
+ * pages; the row component is height-stable and keyed for that upgrade.
  */
 export function ConversationList({
   conversations,

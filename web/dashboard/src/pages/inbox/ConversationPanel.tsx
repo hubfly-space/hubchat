@@ -72,7 +72,7 @@ export function ConversationPanel({
   onToggleContext: () => void;
 }) {
   const navigate = useNavigate();
-  const { memberById, tagById, viewer, can } = useWorkspace();
+  const { memberById, tagById, viewer, can, workspace } = useWorkspace();
   const [managingTags, setManagingTags] = useState(false);
   const [merging, setMerging] = useState(false);
   const [blocking, setBlocking] = useState(false);
@@ -87,6 +87,11 @@ export function ConversationPanel({
   const customer = useQuery<Customer>(
     conversation.customer_id ? ["customer", conversation.customer_id] : null,
     (signal) => api.get(`/customers/${conversation.customer_id}`, { signal }),
+  );
+  const linkedTicket = useQuery<{ number: number; prefix: string }>(
+    conversation.ticket_id ? ["ticket", workspace.id, conversation.ticket_id] : null,
+    (signal) => api.get(`/tickets/${conversation.ticket_id}`, { signal, workspaceId: workspace.id }),
+    { enabled: Boolean(conversation.ticket_id) },
   );
 
   const markRead = useMutation<void, unknown>(() => api.post(`/conversations/${conversation.id}/read`));
@@ -342,8 +347,11 @@ export function ConversationPanel({
       </div>
 
       <Composer
+        workspaceId={workspace.id}
+        canUseMacros={can("automation.manage")}
         conversationId={conversation.id}
         customerName={customer.data?.name ?? "the visitor"}
+        ticketNumber={linkedTicket.data ? `${linkedTicket.data.prefix}-${linkedTicket.data.number}` : undefined}
         onSend={sendMessage}
       />
 
