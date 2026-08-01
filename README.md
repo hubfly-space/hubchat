@@ -26,9 +26,10 @@ SLA runtime evaluation, automation execution, analytics rollups, workload
 reporting, legal-hold retention overrides, all declared privacy retention
 sweeps, workspace archive operations, and workspace-scoped SCIM member
 provisioning have live service/API slices. Provider Google and Microsoft Entra
-member adapters, plus several enterprise/management screens, are live; SAML,
-additional provider adapters, customer SSO, and some advanced deployment
-controls remain under active delivery. Workspace custom roles are live, with
+member adapters, plus several management screens, are live. SAML, additional
+provider adapters, customer SSO, and other enterprise expansion are explicitly
+out of the current product scope; existing OAuth/SCIM support is maintained
+without adding more enterprise adapters. Workspace custom roles are live, with
 capability bundles enforced by the server. Production pages do not silently
 fall back to fixtures.
 
@@ -62,7 +63,7 @@ Register the callback at `${HUBCHAT_PUBLIC_URL}/api/v1/auth/oauth/acme/callback`
 State values are short-lived and single-use, provider URLs are fixed at boot,
 and linked identities still pass through Hubchat sessions and TOTP. Per-workspace
 Workspace SSO policy is live for the configured provider. SAML and additional
-provider adapters remain enterprise follow-up work. SCIM provisioning is
+provider adapters are intentionally not planned in the current scope. SCIM provisioning is
 available through workspace-scoped API keys with the `member.manage` scope.
 Provisioning is idempotent by `externalId`/email, deactivation preserves the
 membership record for audit history, and deactivation revokes sessions, trusted
