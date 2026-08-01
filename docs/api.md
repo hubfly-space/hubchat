@@ -33,6 +33,16 @@ return authenticated, workspace-scoped CSV snapshots. Customer exports require
 the `customer.read_sensitive` capability and are capped at 10,000 rows; use the
 background portability archive for larger or complete workspace transfers.
 
+Retention administrators can create an audited legal hold with
+`POST /api/v1/workspace/legal-holds` using `{"category":"all|events|sessions|webhooks|surveys|audit","reason":"..."}`.
+An active `all` hold protects every configured retention sweep; category-specific
+holds protect only their matching data category. Holds are listed with cursor
+pagination at `GET /api/v1/workspace/legal-holds` and remain
+in history after `POST /api/v1/workspace/legal-holds/{id}/release`. Releasing a
+hold resumes future retention sweeps and never restores records already
+deleted. These endpoints require `workspace.manage_security` and are always
+workspace-scoped.
+
 Portability imports are deliberately two-step: upload a workspace-owned file
 through `POST /api/v1/portability/import-files`, create an import request with
 `auto_start: false`, preview it with

@@ -22,17 +22,66 @@ fixtures only under `/dev/live`. Authentication, workspaces, inboxes,
 conversations, realtime messaging, customers, companies, tickets, metadata,
 search, widget identity, audit logging, jobs, files, portals, forms, feedback,
 knowledge base, surveys, API keys, signed webhooks, email channel threading,
-SLA runtime evaluation, automation execution, analytics rollups, and workspace
-archive operations have live service/API slices. Advanced reporting, provider
-adapters, import/export breadth, and several management screens remain under
-active delivery; production pages do not silently fall back to fixtures.
+SLA runtime evaluation, automation execution, analytics rollups, workload
+reporting, legal-hold retention overrides, all declared privacy retention
+sweeps, and workspace archive operations have live service/API slices. Provider
+Google and Microsoft Entra member adapters, plus several enterprise/management
+screens, are live; SAML/SCIM, additional provider adapters, and some advanced
+deployment controls remain under active delivery. Production pages do not
+silently fall back to fixtures.
+
+### Optional member OAuth/OIDC sign-in
+
+The binary can expose one deployment-level OAuth/OIDC provider. Google and
+Microsoft Entra ID have built-in profiles; arbitrary OIDC/OAuth providers use
+the generic profile and must supply their own HTTPS endpoints. The provider
+must return a verified email address, and `HUBCHAT_OAUTH_ALLOWED_DOMAINS` can
+restrict which email domains may sign in:
+
+```text
+HUBCHAT_OAUTH_PROVIDER=acme
+HUBCHAT_OAUTH_PROFILE=generic # generic, google, or microsoft
+HUBCHAT_OAUTH_CLIENT_ID=...
+HUBCHAT_OAUTH_CLIENT_SECRET=...
+HUBCHAT_OAUTH_AUTHORIZATION_URL=https://id.example.com/oauth/authorize
+HUBCHAT_OAUTH_TOKEN_URL=https://id.example.com/oauth/token
+HUBCHAT_OAUTH_USERINFO_URL=https://id.example.com/oauth/userinfo
+HUBCHAT_OAUTH_SCOPES=openid,email,profile
+HUBCHAT_OAUTH_ALLOWED_DOMAINS=example.com
+```
+
+For Google, set `HUBCHAT_OAUTH_PROVIDER=google`, omit the profile and endpoint
+variables, and provide the client credentials. For Microsoft Entra ID, use
+`HUBCHAT_OAUTH_PROVIDER=microsoft` with the same minimum settings; the adapter
+requests `User.Read` and reads the directory's `mail` or
+`userPrincipalName` identity from Microsoft Graph.
+
+Register the callback at `${HUBCHAT_PUBLIC_URL}/api/v1/auth/oauth/acme/callback`.
+State values are short-lived and single-use, provider URLs are fixed at boot,
+and linked identities still pass through Hubchat sessions and TOTP. Per-workspace
+Workspace SSO policy is live for the configured provider. SAML/SCIM and
+additional provider adapters remain enterprise follow-up work.
+
+After a successful TOTP challenge, members may optionally trust the current
+browser for 30 days. The credential is hashed in PostgreSQL, stored in an
+HttpOnly cookie, and can be revoked individually or globally from Account →
+Sessions. Password changes, password resets, and disabling TOTP revoke all
+trusted devices.
+
+Workspace owners can additionally require organization SSO from Workspace
+Settings → Security. The server records authentication provenance on sessions
+and enforces the policy at workspace resolution, so a password-authenticated
+session cannot reach a protected workspace even if the browser still has a
+valid cookie. This setting is available only when the deployment OAuth/OIDC
+provider is configured.
 
 What runs today:
 
-The live composer can insert workspace-approved saved replies for agents,
-expanding `{{customer.name}}` and `{{ticket.number}}` and recording usage;
-automation macros remain restricted to management until their state-changing
-action permissions are enforced per action.
+The live composer can insert workspace-approved saved replies and apply
+visible macros for agents, expanding `{{customer.name}}` and
+`{{ticket.number}}` and recording usage. Macro execution requires
+`automation.manage`, then checks every configured action capability before any
+state change is applied.
 
 | | |
 |---|---|
