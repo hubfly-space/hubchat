@@ -39,6 +39,7 @@ type BrandingSettings struct {
 
 type SecuritySettings struct {
 	RequireTwoFactor    bool     `json:"require_two_factor"`
+	RequireSSO          bool     `json:"require_sso"`
 	RestrictSignup      bool     `json:"restrict_signup"`
 	AllowedEmailDomains []string `json:"allowed_email_domains"`
 	IPAllowlist         []string `json:"ip_allowlist"`

@@ -22,6 +22,7 @@ if (document.components?.operations) errors.push("operation templates must be ex
 const requiredSchemas = [
   "Conversation", "Message", "Ticket", "Customer", "SavedReply",
   "Macro", "MacroInput", "MacroExecution", "ConversationPage", "MessagePage", "TicketPage", "CustomerPage", "SavedReplyPage", "MacroPage",
+  "PortalTicket", "PortalMessage", "PortalTicketPage", "PortalTicketDetail",
 ];
 for (const schema of requiredSchemas) {
   if (!document.components?.schemas?.[schema]) errors.push(`core schema is missing: ${schema}`);
@@ -35,6 +36,8 @@ const richOperations = {
   listAutomationReplies: ["200", "SavedReplyPage"],
   getAutomationMacro: ["200", "Macro"],
   updateAutomationMacro: ["200", "Macro"],
+  getPortalTickets: ["200", "PortalTicketPage"],
+  getPortalTicketsId: ["200", "PortalTicketDetail"],
 };
 const operationsByID = new Map();
 for (const pathItem of Object.values(document.paths ?? {})) {
