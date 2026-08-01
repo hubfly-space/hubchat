@@ -287,7 +287,7 @@ function EditCompanyDialog({ company, onClose }: { company: Company; onClose: ()
 function LinkCustomerDialog({ company, onClose }: { company: Company; onClose: () => void }) {
   const [query, setQuery] = useState("");
 
-  const results = useQuery<{ data: Customer[] }>(
+  const results = useQuery<Paginated<Customer>>(
     query.trim().length > 1 ? ["customers", "search", query] : null,
     (signal) => api.get(`/customers?q=${encodeURIComponent(query)}&limit=10`, { signal }),
   );

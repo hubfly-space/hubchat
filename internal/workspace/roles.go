@@ -46,6 +46,30 @@ type RoleUpdateInput struct {
 	Capabilities []authorization.Capability
 }
 
+// RoleListCursor is the stable sort position used by the role catalog. The
+// catalog contains built-ins and workspace roles, so the cursor carries the
+// two descending rank bits as well as the ascending name/key tie-breakers.
+// It stays internal to the workspace service; the API wraps it in its opaque
+// cursor envelope.
+type RoleListCursor struct {
+	BuiltinRank int
+	OwnerRank   int
+	Name        string
+	Key         string
+}
+
+func RoleCursorFor(role RoleDefinition) RoleListCursor {
+	ownerRank := 0
+	if role.Key == "owner" {
+		ownerRank = 1
+	}
+	builtinRank := 0
+	if role.IsBuiltin {
+		builtinRank = 1
+	}
+	return RoleListCursor{BuiltinRank: builtinRank, OwnerRank: ownerRank, Name: role.Name, Key: role.Key}
+}
+
 func normalizeRoleInput(input RoleInput) (RoleInput, error) {
 	input.Key = strings.ToLower(strings.TrimSpace(input.Key))
 	input.Name = strings.TrimSpace(input.Name)

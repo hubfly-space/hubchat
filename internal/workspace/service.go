@@ -140,7 +140,14 @@ func (s *Service) AllocateTicketNumber(ctx context.Context, tx pgx.Tx, workspace
 // roles. Owner's row is filled in from authorization.AllCapabilityNames rather
 // than role_permissions, mirroring how Actor.Can short-circuits owner.
 func (s *Service) ListRoles(ctx context.Context, workspaceID string) ([]RoleDefinition, error) {
-	roles, err := s.repo.listRoleDefinitions(ctx, workspaceID)
+	return s.ListRolesPage(ctx, workspaceID, RoleListCursor{}, 10000)
+}
+
+// ListRolesPage returns the built-in catalog plus one workspace's custom
+// roles in the same stable order as ListRoles, bounded by limit+1 for the API
+// cursor envelope.
+func (s *Service) ListRolesPage(ctx context.Context, workspaceID string, before RoleListCursor, limit int) ([]RoleDefinition, error) {
+	roles, err := s.repo.listRoleDefinitionsPage(ctx, workspaceID, before, limit)
 	if err != nil {
 		return nil, err
 	}
