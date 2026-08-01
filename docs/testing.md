@@ -29,6 +29,36 @@ burst and verifies every client receives ordered, gap-free frames.
 The HTTP server package also starts on a dynamically reserved port, serves a
 health request, and verifies clean context-driven shutdown.
 
+For a data-heavy PostgreSQL acceptance gate, run:
+
+```bash
+make test-capacity
+```
+
+This opt-in test resets the dedicated test database, seeds a production-shaped
+inbox with 25,000 conversations and messages plus a second workspace, then
+performs concurrent indexed inbox reads. It verifies page size, tenant
+isolation, and p50/p95/p99 latency. Tune `HUBCHAT_SCALE_CONVERSATIONS`,
+`HUBCHAT_SCALE_WORKERS`, `HUBCHAT_SCALE_REQUESTS`, and
+`HUBCHAT_SCALE_MAX_P95_MS` for the installation's data volume and service
+objective. This validates one PostgreSQL deployment shape; multi-node capacity
+still requires running the same gate against the planned topology.
+
+The optional provider adapters can be exercised against the local MinIO and
+MailHog services with:
+
+```bash
+make dev-db
+make provider-check
+```
+
+The provider gate uploads, reads, and deletes an object through the real
+S3-compatible endpoint, then sends an SMTP message and verifies it through the
+MailHog inspection API. Override `HUBCHAT_PROVIDER_S3_*`,
+`HUBCHAT_PROVIDER_SMTP_*`, and `HUBCHAT_PROVIDER_SMTP_INSPECTION_URL` for an
+isolated staging provider. It is never part of `make check` because external
+provider availability is optional by design.
+
 After building and starting a production binary, run the live HTTP smoke
 check with:
 
@@ -38,6 +68,37 @@ HUBCHAT_SMOKE_BASE_URL="http://127.0.0.1:8080" make production-http-check
 
 This verifies the binary's health/readiness endpoints, all three embedded
 browser surfaces, and the live API route.
+
+For a bounded production-load baseline, run the binary smoke first and then:
+
+```bash
+HUBCHAT_LOAD_BASE_URL="http://127.0.0.1:8080" \
+HUBCHAT_LOAD_DURATION_MS=10000 \
+HUBCHAT_LOAD_CONCURRENCY=32 \
+make production-load-check
+```
+
+The load check cycles through health, readiness, embedded dashboard/portal/
+widget assets, and the live metadata route. It reports status counts and p50,
+p95, and p99 latency, fails on any unexpected response or timeout, accepts the
+metadata route's intentional `429` rate-limit response, and is bounded by the
+configured duration. It is a deployment smoke baseline, not a substitute for
+a capacity test at the target installation's expected scale.
+
+To build and validate the exact production binary without manually starting a
+server, use a dedicated PostgreSQL database:
+
+```bash
+HUBCHAT_BINARY_DATABASE_URL="postgres://hubchat:hubchat@127.0.0.1:5432/hubchat_test?sslmode=disable" \
+  make production-binary-check
+```
+
+This target builds the embedded release artifact, starts the documented
+`http,realtime` process split with `HUBCHAT_DEV=0`
+and `HUBCHAT_MIGRATE=verify`, runs both HTTP checks, and requires graceful
+shutdown. It also starts the worker/scheduler role split briefly and verifies
+that those roles start and stop cleanly. It must not be pointed at a database
+containing live work.
 
 ## PostgreSQL integration tests
 
