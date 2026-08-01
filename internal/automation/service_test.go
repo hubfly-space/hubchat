@@ -1,6 +1,10 @@
 package automation
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/hubchat/hubchat/internal/events"
+)
 
 func TestValidateActionsAssignsStableIDs(t *testing.T) {
 	actions := []Action{{Type: "add_tag"}, {Type: "set_priority"}}
@@ -37,6 +41,17 @@ func TestMatchesDataEvaluatesDeterministicOperators(t *testing.T) {
 	}
 	if matchesData(conditions, map[string]any{"priority": "normal", "channel": "email"}) {
 		t.Fatal("unexpected condition match")
+	}
+}
+
+func TestTriggerForPublicationEvents(t *testing.T) {
+	for eventType, want := range map[events.Type]string{
+		events.ArticlePublished:   "article.published",
+		events.ChangelogPublished: "changelog.published",
+	} {
+		if got := triggerForEvent(eventType); got != want {
+			t.Fatalf("triggerForEvent(%q) = %q, want %q", eventType, got, want)
+		}
 	}
 }
 

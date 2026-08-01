@@ -115,6 +115,78 @@ func TestStartCreatesConversationWithOpeningMessage(t *testing.T) {
 	}
 }
 
+func TestStartRoutesThroughInboxTeamRoundRobin(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	svc := newTestService(t, pool)
+	ws := seedWorkspace(t, ctx, pool)
+	secondMember := seedMember(t, ctx, pool, ws.WorkspaceID)
+	wsSvc := workspace.New(pool, events.New(pool), audit.New(pool))
+	team, err := wsSvc.CreateTeam(ctx, ws.WorkspaceID, ws.MemberID, "Support", nil, nil, "round_robin", []string{ws.MemberID, secondMember})
+	if err != nil {
+		t.Fatalf("create routing team: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO inbox_teams (inbox_id, team_id) VALUES ($1, $2)`, ws.InboxID, team.ID); err != nil {
+		t.Fatalf("attach team to inbox: %v", err)
+	}
+
+	first, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "First")
+	if err != nil {
+		t.Fatalf("first routed conversation: %v", err)
+	}
+	second, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "Second")
+	if err != nil {
+		t.Fatalf("second routed conversation: %v", err)
+	}
+	if first.TeamID == nil || *first.TeamID != team.ID || second.TeamID == nil || *second.TeamID != team.ID {
+		t.Fatalf("team routing = %v, %v; want %s", first.TeamID, second.TeamID, team.ID)
+	}
+	if first.AssigneeID == nil || second.AssigneeID == nil || *first.AssigneeID == *second.AssigneeID {
+		t.Fatalf("round-robin assignments = %v and %v; want two eligible members", first.AssigneeID, second.AssigneeID)
+	}
+}
+
+func TestStartSelectsInboxTeamByCustomerLanguage(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	svc := newTestService(t, pool)
+	ws := seedWorkspace(t, ctx, pool)
+	secondMember := seedMember(t, ctx, pool, ws.WorkspaceID)
+	wsSvc := workspace.New(pool, events.New(pool), audit.New(pool))
+	enTeam, err := wsSvc.CreateTeamWithRouting(ctx, ws.WorkspaceID, ws.MemberID, "English", nil, nil, "team_queue", []string{ws.MemberID}, map[string]any{"languages": []any{"en"}})
+	if err != nil {
+		t.Fatalf("create English team: %v", err)
+	}
+	frTeam, err := wsSvc.CreateTeamWithRouting(ctx, ws.WorkspaceID, ws.MemberID, "French", nil, nil, "team_queue", []string{secondMember}, map[string]any{"languages": []any{"fr"}})
+	if err != nil {
+		t.Fatalf("create French team: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO inbox_teams (inbox_id, team_id) VALUES ($1, $2), ($1, $3)`, ws.InboxID, enTeam.ID, frTeam.ID); err != nil {
+		t.Fatalf("attach language teams: %v", err)
+	}
+	enCustomer := ids.New(ids.PrefixCustomer)
+	frCustomer := ids.New(ids.PrefixCustomer)
+	if _, err := pool.Exec(ctx, `INSERT INTO customers (id,workspace_id,name,email,language,attributes) VALUES ($1,$3,'English','en-'||$1||'@example.com','en','{}'), ($2,$3,'French','fr-'||$2||'@example.com','fr','{}')`, enCustomer, frCustomer, ws.WorkspaceID); err != nil {
+		t.Fatalf("seed language customers: %v", err)
+	}
+	enConversation, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, &enCustomer, nil, "English customer", "Hello")
+	if err != nil {
+		t.Fatalf("start English conversation: %v", err)
+	}
+	frConversation, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, &frCustomer, nil, "French customer", "Bonjour")
+	if err != nil {
+		t.Fatalf("start French conversation: %v", err)
+	}
+	if enConversation.TeamID == nil || *enConversation.TeamID != enTeam.ID {
+		t.Fatalf("English team = %v, want %s", enConversation.TeamID, enTeam.ID)
+	}
+	if frConversation.TeamID == nil || *frConversation.TeamID != frTeam.ID {
+		t.Fatalf("French team = %v, want %s", frConversation.TeamID, frTeam.ID)
+	}
+}
+
 func TestPostMessageIsIdempotentByClientID(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.Reset(t, pool)

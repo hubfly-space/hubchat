@@ -30,7 +30,7 @@ var (
 	ErrRateLimited    = errors.New("automation: rule rate limit reached")
 )
 
-var triggers = map[string]bool{"conversation.created": true, "message.received": true, "ticket.created": true, "ticket.updated": true, "customer.identified": true, "customer.updated": true, "event.received": true, "form.submitted": true, "feedback.submitted": true, "sla.approaching": true, "sla.breached": true, "conversation.idle": true, "business_hours.changed": true, "schedule": true}
+var triggers = map[string]bool{"conversation.created": true, "message.received": true, "ticket.created": true, "ticket.updated": true, "customer.identified": true, "customer.updated": true, "event.received": true, "form.submitted": true, "feedback.submitted": true, "article.published": true, "changelog.published": true, "sla.approaching": true, "sla.breached": true, "conversation.idle": true, "business_hours.changed": true, "schedule": true}
 var actions = map[string]bool{"assign_member": true, "assign_team": true, "add_tag": true, "remove_tag": true, "set_priority": true, "set_field": true, "set_state": true, "send_message": true, "send_email": true, "invoke_webhook": true, "move_inbox": true, "start_sla": true, "pause_sla": true, "close_after_inactivity": true, "create_task": true}
 
 const JobRunScheduled = "automation.scheduled_actions"
@@ -735,6 +735,10 @@ func triggerForEvent(eventType events.Type) string {
 		return "form.submitted"
 	case events.FeedbackCreated:
 		return "feedback.submitted"
+	case events.ArticlePublished:
+		return "article.published"
+	case events.ChangelogPublished:
+		return "changelog.published"
 	case events.SLAApproaching:
 		return "sla.approaching"
 	case events.SLABreached:
@@ -744,14 +748,24 @@ func triggerForEvent(eventType events.Type) string {
 	}
 }
 func (s *Service) ListExecutions(ctx context.Context, workspaceID, ruleID string, limit int) ([]Execution, error) {
-	if limit <= 0 || limit > 200 {
+	return s.ListExecutionsPage(ctx, workspaceID, ruleID, time.Time{}, "", limit)
+}
+
+// ListExecutionsPage returns the execution log newest first with a stable
+// occurred_at/id cursor boundary.
+func (s *Service) ListExecutionsPage(ctx context.Context, workspaceID, ruleID string, before time.Time, beforeID string, limit int) ([]Execution, error) {
+	if limit <= 0 || limit > 201 {
 		limit = 100
 	}
 	query := `SELECT e.id,e.workspace_id,e.rule_id,e.rule_version,e.event_id,e.subject_type,e.subject_id,e.outcome,e.depth,e.causation_id,e.actions_applied,e.error,e.duration_ms,e.dry_run,e.occurred_at FROM automation_executions e WHERE e.workspace_id=$1`
 	args := []any{workspaceID}
 	if ruleID != "" {
-		query += ` AND e.rule_id=$2`
+		query += ` AND e.rule_id=$` + fmt.Sprint(len(args)+1)
 		args = append(args, ruleID)
+	}
+	if !before.IsZero() {
+		query += ` AND (e.occurred_at,e.id) < ($` + fmt.Sprint(len(args)+1) + `,$` + fmt.Sprint(len(args)+2) + `)`
+		args = append(args, before, beforeID)
 	}
 	query += ` ORDER BY e.occurred_at DESC,e.id DESC LIMIT $` + fmt.Sprint(len(args)+1)
 	args = append(args, limit)

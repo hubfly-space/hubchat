@@ -69,7 +69,22 @@ type SavedReplyInput struct {
 }
 
 func (s *Service) ListMacros(ctx context.Context, workspaceID, query string) ([]Macro, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id,workspace_id,name,coalesce(folder,''),scope,owner_id,team_id,body,actions,usage_count,created_at,updated_at FROM macros WHERE workspace_id=$1 AND ($2='' OR name ILIKE '%'||$2||'%' OR body ILIKE '%'||$2||'%') ORDER BY name,id`, workspaceID, strings.TrimSpace(query))
+	return s.ListMacrosPage(ctx, workspaceID, query, "", "", 0)
+}
+
+func (s *Service) ListMacrosPage(ctx context.Context, workspaceID, query, beforeName, beforeID string, limit int) ([]Macro, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 100
+	}
+	sql := `SELECT id,workspace_id,name,coalesce(folder,''),scope,owner_id,team_id,body,actions,usage_count,created_at,updated_at FROM macros WHERE workspace_id=$1 AND ($2='' OR name ILIKE '%'||$2||'%' OR body ILIKE '%'||$2||'%')`
+	args := []any{workspaceID, strings.TrimSpace(query)}
+	if beforeName != "" {
+		sql += ` AND (name,id) > ($3,$4)`
+		args = append(args, beforeName, beforeID)
+	}
+	sql += ` ORDER BY name,id LIMIT $` + fmt.Sprint(len(args)+1)
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +142,22 @@ func (s *Service) UseMacro(ctx context.Context, workspaceID, id string) error {
 }
 
 func (s *Service) ListSavedReplies(ctx context.Context, workspaceID, query string) ([]SavedReply, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id,workspace_id,name,coalesce(shortcut::text,''),coalesce(folder,''),scope,owner_id,team_id,body,usage_count,created_at,updated_at FROM saved_replies WHERE workspace_id=$1 AND ($2='' OR name ILIKE '%'||$2||'%' OR body ILIKE '%'||$2||'%' OR shortcut::text ILIKE '%'||$2||'%') ORDER BY name,id`, workspaceID, strings.TrimSpace(query))
+	return s.ListSavedRepliesPage(ctx, workspaceID, query, "", "", 0)
+}
+
+func (s *Service) ListSavedRepliesPage(ctx context.Context, workspaceID, query, beforeName, beforeID string, limit int) ([]SavedReply, error) {
+	if limit <= 0 || limit > 201 {
+		limit = 100
+	}
+	sql := `SELECT id,workspace_id,name,coalesce(shortcut::text,''),coalesce(folder,''),scope,owner_id,team_id,body,usage_count,created_at,updated_at FROM saved_replies WHERE workspace_id=$1 AND ($2='' OR name ILIKE '%'||$2||'%' OR body ILIKE '%'||$2||'%' OR shortcut::text ILIKE '%'||$2||'%')`
+	args := []any{workspaceID, strings.TrimSpace(query)}
+	if beforeName != "" {
+		sql += ` AND (name,id) > ($3,$4)`
+		args = append(args, beforeName, beforeID)
+	}
+	sql += ` ORDER BY name,id LIMIT $` + fmt.Sprint(len(args)+1)
+	args = append(args, limit)
+	rows, err := s.pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
