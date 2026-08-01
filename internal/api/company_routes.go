@@ -229,12 +229,24 @@ func handleSetCompanyAttributes(deps Deps) http.HandlerFunc {
 func handleListCompanyCustomers(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
-		customers, err := deps.Customer.CompanyCustomers(r.Context(), actor.WorkspaceID, r.PathValue("id"), 50)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		customers, err := deps.Customer.CompanyCustomersPage(r.Context(), actor.WorkspaceID, r.PathValue("id"), cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			writeCustomerError(w, r, err)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": customerJSONList(r, deps, actor.WorkspaceID, customers)})
+		page := NewPage(customers, limit, func(item customer.Customer) Cursor {
+			at := item.FirstSeenAt
+			if item.LastSeenAt != nil {
+				at = *item.LastSeenAt
+			}
+			return Cursor{At: at, ID: item.ID}
+		})
+		httpserver.WriteJSON(w, http.StatusOK, Page[map[string]any]{Data: customerJSONList(r, deps, actor.WorkspaceID, page.Data), NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
 }
 

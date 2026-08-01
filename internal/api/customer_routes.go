@@ -470,16 +470,24 @@ func handleCustomerTimeline(deps Deps) http.HandlerFunc {
 func handleCustomerSessions(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor := actorFromRequest(r)
-		sessions, err := deps.Customer.Sessions(r.Context(), actor.WorkspaceID, r.PathValue("id"), 20)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		sessions, err := deps.Customer.SessionsPage(r.Context(), actor.WorkspaceID, r.PathValue("id"), cursor.At, cursor.ID, limit+1)
 		if err != nil {
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load sessions.")
 			return
 		}
-		out := make([]map[string]any, len(sessions))
-		for i, s := range sessions {
+		page := NewPage(sessions, limit, func(s customer.ContactSession) Cursor {
+			return Cursor{At: s.StartedAt, ID: s.ID}
+		})
+		out := make([]map[string]any, len(page.Data))
+		for i, s := range page.Data {
 			out[i] = contactSessionJSON(s)
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": out})
+		httpserver.WriteJSON(w, http.StatusOK, Page[map[string]any]{Data: out, NextCursor: page.NextCursor, HasMore: page.HasMore})
 	}
 }
 

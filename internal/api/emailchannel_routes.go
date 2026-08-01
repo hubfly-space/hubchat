@@ -130,12 +130,20 @@ func handleListEmailSuppressions(deps Deps) http.HandlerFunc {
 				return
 			}
 		}
-		items, err := deps.EmailChannel.ListSuppressions(r.Context(), actor.WorkspaceID, 200)
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		items, err := deps.EmailChannel.ListSuppressionsPage(r.Context(), actor.WorkspaceID, cursor.At, cursor.Value, limit+1)
 		if err != nil {
 			writeEmailChannelInternal(w, r)
 			return
 		}
-		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": items})
+		page := NewPage(items, limit, func(item emailchannel.Suppression) Cursor {
+			return Cursor{At: item.UpdatedAt, Value: item.Address}
+		})
+		httpserver.WriteJSON(w, http.StatusOK, page)
 	}
 }
 
