@@ -118,6 +118,60 @@ func TestStartCreatesConversationWithOpeningMessage(t *testing.T) {
 	}
 }
 
+func TestBulkUpdateIsAtomicAndWorkspaceScoped(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+
+	svc := newTestService(t, pool)
+	workspaceA := seedWorkspace(t, ctx, pool)
+	workspaceB := seedWorkspace(t, ctx, pool)
+	secondMember := seedMember(t, ctx, pool, workspaceA.WorkspaceID)
+	first, _, err := svc.Start(ctx, workspaceA.WorkspaceID, workspaceA.InboxID, "widget", nil, nil, nil, "Visitor", "First")
+	if err != nil {
+		t.Fatalf("start first: %v", err)
+	}
+	second, _, err := svc.Start(ctx, workspaceA.WorkspaceID, workspaceA.InboxID, "widget", nil, nil, nil, "Visitor", "Second")
+	if err != nil {
+		t.Fatalf("start second: %v", err)
+	}
+	foreign, _, err := svc.Start(ctx, workspaceB.WorkspaceID, workspaceB.InboxID, "widget", nil, nil, nil, "Visitor", "Foreign")
+	if err != nil {
+		t.Fatalf("start foreign: %v", err)
+	}
+
+	items, err := svc.BulkUpdate(ctx, workspaceA.WorkspaceID, workspaceA.MemberID, []string{second.ID, first.ID, first.ID}, conversation.BulkActionAssign, &secondMember, "")
+	if err != nil || len(items) != 2 {
+		t.Fatalf("bulk assign = %#v, err=%v", items, err)
+	}
+	for _, item := range items {
+		if item.AssigneeID == nil || *item.AssigneeID != secondMember {
+			t.Fatalf("bulk assignment for %s = %v, want %s", item.ID, item.AssigneeID, secondMember)
+		}
+	}
+
+	if _, err := svc.BulkUpdate(ctx, workspaceA.WorkspaceID, workspaceA.MemberID, []string{first.ID, foreign.ID}, conversation.BulkActionAssign, &workspaceA.MemberID, ""); !errors.Is(err, conversation.ErrNotFound) {
+		t.Fatalf("cross-workspace bulk error = %v, want ErrNotFound", err)
+	}
+	unchanged, err := svc.Get(ctx, workspaceA.WorkspaceID, first.ID)
+	if err != nil {
+		t.Fatalf("reload unchanged conversation: %v", err)
+	}
+	if unchanged.AssigneeID == nil || *unchanged.AssigneeID != secondMember {
+		t.Fatalf("cross-workspace failure partially changed assignment to %v", unchanged.AssigneeID)
+	}
+
+	items, err = svc.BulkUpdate(ctx, workspaceA.WorkspaceID, workspaceA.MemberID, []string{first.ID, second.ID}, conversation.BulkActionState, nil, "resolved")
+	if err != nil || len(items) != 2 {
+		t.Fatalf("bulk resolve = %#v, err=%v", items, err)
+	}
+	for _, item := range items {
+		if item.State != "resolved" {
+			t.Fatalf("bulk state for %s = %s, want resolved", item.ID, item.State)
+		}
+	}
+}
+
 func TestLargeInboxListRemainsTenantScopedUnderConcurrentReads(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.Reset(t, pool)
@@ -319,6 +373,82 @@ func TestPostMessageMentionsAreWorkspaceScopedAndDurable(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("message event did not preserve the validated mentioned member")
+	}
+}
+
+func TestListAndCountsExposeMentionAndSLAQueues(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+
+	svc := newTestService(t, pool)
+	ws := seedWorkspace(t, ctx, pool)
+	approaching, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "Approaching")
+	if err != nil {
+		t.Fatalf("start approaching: %v", err)
+	}
+	breached, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "Breached")
+	if err != nil {
+		t.Fatalf("start breached: %v", err)
+	}
+	ordinary, _, err := svc.Start(ctx, ws.WorkspaceID, ws.InboxID, "widget", nil, nil, nil, "Visitor", "Ordinary")
+	if err != nil {
+		t.Fatalf("start ordinary: %v", err)
+	}
+
+	policyID := ids.New("sla")
+	if _, err := pool.Exec(ctx, `INSERT INTO sla_policies (id,workspace_id,name) VALUES ($1,$2,'Queue filter policy')`, policyID, ws.WorkspaceID); err != nil {
+		t.Fatalf("seed SLA policy: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO sla_instances (id,workspace_id,policy_id,conversation_id,kind,state,target_minutes,deadline_at,warned_at)
+		VALUES
+			($3,$2,$1,$4,'first_response','active',30,now()+interval '5 minutes',now()),
+			($5,$2,$1,$6,'resolution','breached',60,now()-interval '5 minutes',now()-interval '5 minutes')
+	`, policyID, ws.WorkspaceID, ids.New("sla"), approaching.ID, ids.New("sla"), breached.ID); err != nil {
+		t.Fatalf("seed SLA instances: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO notifications (id,workspace_id,member_id,type,title,body,entity_type,entity_id,url)
+		VALUES ($1,$2,$3,'mention','Mentioned','You were mentioned.','conversation',$4,'/inbox')
+	`, ids.New("ntf"), ws.WorkspaceID, ws.MemberID, approaching.ID); err != nil {
+		t.Fatalf("seed mention notification: %v", err)
+	}
+	if _, err := svc.SetState(ctx, ws.WorkspaceID, ws.MemberID, ordinary.ID, "resolved"); err != nil {
+		t.Fatalf("resolve ordinary conversation: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO sla_instances (id,workspace_id,policy_id,conversation_id,kind,state,target_minutes,deadline_at,warned_at)
+		VALUES ($1,$2,$3,$4,'resolution','breached',60,now()-interval '5 minutes',now()-interval '5 minutes')
+	`, ids.New("sla"), ws.WorkspaceID, policyID, ordinary.ID); err != nil {
+		t.Fatalf("seed resolved SLA instance: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO notifications (id,workspace_id,member_id,type,title,body,entity_type,entity_id,url)
+		VALUES ($1,$2,$3,'mention','Mentioned','You were mentioned.','conversation',$4,'/inbox')
+	`, ids.New("ntf"), ws.WorkspaceID, ws.MemberID, ordinary.ID); err != nil {
+		t.Fatalf("seed resolved mention notification: %v", err)
+	}
+
+	items, err := svc.List(ctx, ws.WorkspaceID, conversation.ListFilter{SLAState: "approaching", Limit: 10})
+	if err != nil || len(items) != 1 || items[0].ID != approaching.ID {
+		t.Fatalf("approaching queue = %+v, err=%v", items, err)
+	}
+	items, err = svc.List(ctx, ws.WorkspaceID, conversation.ListFilter{SLAState: "breached", Limit: 10})
+	if err != nil || len(items) != 1 || items[0].ID != breached.ID {
+		t.Fatalf("breached queue = %+v, err=%v", items, err)
+	}
+	items, err = svc.List(ctx, ws.WorkspaceID, conversation.ListFilter{MentionedMemberID: ws.MemberID, Limit: 10})
+	if err != nil || len(items) != 1 || items[0].ID != approaching.ID {
+		t.Fatalf("mentioned queue = %+v, err=%v", items, err)
+	}
+
+	counts, err := svc.Counts(ctx, ws.WorkspaceID, ws.MemberID)
+	if err != nil {
+		t.Fatalf("counts: %v", err)
+	}
+	if counts.Mentioned != 1 || counts.SLAApproaching != 1 || counts.SLABreached != 1 {
+		t.Fatalf("queue counts = %+v", counts)
 	}
 }
 

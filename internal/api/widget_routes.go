@@ -424,7 +424,7 @@ func handleWidgetIdentitySecret(deps Deps) http.HandlerFunc {
 
 func publicConfigJSON(c *widget.PublicConfig) map[string]any {
 	return map[string]any{
-		"enabled": c.Enabled, "online": c.Online, "modes": c.Modes,
+		"enabled": c.Enabled, "online": c.Online, "language": c.Language, "modes": c.Modes,
 		"appearance": c.Appearance, "content": c.Content, "behavior": c.Behavior,
 		"articles": c.Articles,
 	}
@@ -433,7 +433,7 @@ func publicConfigJSON(c *widget.PublicConfig) map[string]any {
 func handleWidgetConfig(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
-		config, err := deps.Widget.ResolveConfig(r.Context(), query.Get("key"), query.Get("url"), r.Header.Get("Origin"))
+		config, err := deps.Widget.ResolveConfigForLanguage(r.Context(), query.Get("key"), query.Get("url"), r.Header.Get("Origin"), query.Get("language"))
 		if err != nil {
 			writeWidgetError(w, r, err)
 			return
@@ -444,7 +444,7 @@ func handleWidgetConfig(deps Deps) http.HandlerFunc {
 				writeWidgetError(w, r, lookupErr)
 				return
 			}
-			articles, searchErr := deps.Knowledgebase.ListPublished(r.Context(), widgetRecord.WorkspaceID, "", 8)
+			articles, searchErr := deps.Knowledgebase.ListPublished(r.Context(), widgetRecord.WorkspaceID, r.URL.Query().Get("language"), 8)
 			if searchErr != nil {
 				writeKnowledgebaseInternal(w, r)
 				return
@@ -543,7 +543,7 @@ func handleWidgetArticle(deps Deps) http.HandlerFunc {
 			writeWidgetError(w, r, err)
 			return
 		}
-		article, err := deps.Knowledgebase.GetPublishedBySlugSurface(r.Context(), item.WorkspaceID, r.PathValue("slug"), "widget")
+		article, err := deps.Knowledgebase.GetPublishedBySlugSurfaceLanguage(r.Context(), item.WorkspaceID, r.PathValue("slug"), "widget", r.URL.Query().Get("language"))
 		if err != nil {
 			if errors.Is(err, knowledgebase.ErrNotFound) {
 				httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Article not found.")
@@ -564,14 +564,19 @@ func handleWidgetArticleFeedback(deps Deps) http.HandlerFunc {
 			return
 		}
 		var input struct {
-			Helpful bool   `json:"helpful"`
-			Comment string `json:"comment"`
+			Helpful  bool   `json:"helpful"`
+			Comment  string `json:"comment"`
+			Language string `json:"language"`
 		}
 		if err := httpserver.DecodeJSON(r, &input); err != nil {
 			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed article feedback.")
 			return
 		}
-		article, err := deps.Knowledgebase.GetPublishedBySlugSurface(r.Context(), item.WorkspaceID, r.PathValue("slug"), "widget")
+		language := strings.TrimSpace(r.URL.Query().Get("language"))
+		if language == "" {
+			language = input.Language
+		}
+		article, err := deps.Knowledgebase.GetPublishedBySlugSurfaceLanguage(r.Context(), item.WorkspaceID, r.PathValue("slug"), "widget", language)
 		if err != nil {
 			writeKnowledgebaseError(w, r, err)
 			return

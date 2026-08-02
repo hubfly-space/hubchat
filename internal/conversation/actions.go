@@ -2,6 +2,9 @@ package conversation
 
 import (
 	"context"
+	"errors"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -11,6 +14,148 @@ import (
 	"github.com/hubchat/hubchat/internal/events"
 	"github.com/hubchat/hubchat/internal/ids"
 )
+
+const (
+	BulkActionAssign     = "assign"
+	BulkActionState      = "state"
+	maxBulkConversations = 100
+)
+
+var (
+	ErrInvalidBulkAction = errors.New("conversation: bulk action is not recognised")
+	ErrBulkTooLarge      = errors.New("conversation: bulk operation contains too many conversations")
+)
+
+// BulkUpdate applies one deterministic mutation to a bounded set of
+// conversations. All rows are validated and locked in ID order before the
+// first write, so a mixed-workspace request cannot partially succeed and two
+// overlapping bulk operations cannot deadlock by acquiring rows in opposite
+// orders.
+func (s *Service) BulkUpdate(
+	ctx context.Context,
+	workspaceID, actorMemberID string,
+	conversationIDs []string,
+	action string,
+	assigneeID *string,
+	state string,
+) ([]Conversation, error) {
+	if len(conversationIDs) == 0 {
+		return nil, ErrNotFound
+	}
+	if len(conversationIDs) > maxBulkConversations {
+		return nil, ErrBulkTooLarge
+	}
+	uniqueIDs := make([]string, 0, len(conversationIDs))
+	seen := make(map[string]struct{}, len(conversationIDs))
+	for _, id := range conversationIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return nil, ErrNotFound
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniqueIDs = append(uniqueIDs, id)
+	}
+	if len(uniqueIDs) == 0 {
+		return nil, ErrNotFound
+	}
+	sort.Strings(uniqueIDs)
+
+	switch action {
+	case BulkActionAssign:
+		if assigneeID != nil {
+			ok, err := s.repo.memberInWorkspace(ctx, workspaceID, *assigneeID)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				return nil, ErrInvalidAssignee
+			}
+		}
+	case BulkActionState:
+		if !validStates[state] {
+			return nil, ErrInvalidState
+		}
+	default:
+		return nil, ErrInvalidBulkAction
+	}
+
+	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		for _, conversationID := range uniqueIDs {
+			conv, err := s.repo.lockAndLoadFull(ctx, tx, workspaceID, conversationID)
+			if err != nil {
+				return err
+			}
+
+			switch action {
+			case BulkActionAssign:
+				if err := s.repo.setAssignee(ctx, tx, conversationID, assigneeID); err != nil {
+					return err
+				}
+				if err := s.recordAudit(ctx, tx, audit.Entry{
+					WorkspaceID: workspaceID, ActorType: audit.ActorUser, ActorID: actorMemberID,
+					Action: "conversation.assigned", EntityType: entityConversation, EntityID: conversationID,
+					Metadata: map[string]any{"assignee_id": derefOr(assigneeID, ""), "previous_assignee_id": derefOr(conv.AssigneeID, ""), "bulk": true},
+				}); err != nil {
+					return err
+				}
+				if err := s.appendEvent(ctx, tx, events.Event{
+					WorkspaceID: workspaceID, Type: events.ConversationAssigned,
+					EntityType: entityConversation, EntityID: conversationID,
+					ActorType: events.ActorUser, ActorID: actorMemberID,
+					Data: map[string]any{"conversation_id": conversationID, "team_id": conv.TeamID, "assignee_id": assigneeID, "bulk": true},
+				}); err != nil {
+					return err
+				}
+			case BulkActionState:
+				if conv.State == state {
+					continue
+				}
+				if err := s.repo.setState(ctx, tx, conversationID, state); err != nil {
+					return err
+				}
+				if err := s.repo.insertStatusHistory(ctx, tx, ids.New(ids.PrefixStatusHistory), conversationID, conv.State, state, "member", actorMemberID); err != nil {
+					return err
+				}
+				if err := s.recordAudit(ctx, tx, audit.Entry{
+					WorkspaceID: workspaceID, ActorType: audit.ActorUser, ActorID: actorMemberID,
+					Action: "conversation.state_changed", EntityType: entityConversation, EntityID: conversationID,
+					Metadata: map[string]any{"from": conv.State, "to": state, "bulk": true},
+				}); err != nil {
+					return err
+				}
+				eventType := events.ConversationStateSet
+				if state == "resolved" {
+					eventType = events.ConversationResolved
+				}
+				if err := s.appendEvent(ctx, tx, events.Event{
+					WorkspaceID: workspaceID, Type: eventType,
+					EntityType: entityConversation, EntityID: conversationID,
+					ActorType: events.ActorUser, ActorID: actorMemberID,
+					Data: map[string]any{"conversation_id": conversationID, "from": conv.State, "to": state, "bulk": true},
+				}); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]Conversation, 0, len(uniqueIDs))
+	for _, id := range uniqueIDs {
+		item, err := s.repo.byID(ctx, workspaceID, id)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, *item)
+	}
+	return result, nil
+}
 
 // SetAssignee assigns a conversation to a member, or clears the assignee when
 // assigneeID is nil. Assigning is not itself a state transition — a

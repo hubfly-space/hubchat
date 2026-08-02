@@ -82,6 +82,7 @@ const (
 	// (§12 audit on reveal).
 	SensitiveRevealed  Action = "customer.sensitive_revealed"
 	DataExported       Action = "data.exported"
+	DataFileDownloaded Action = "data.file_downloaded"
 	OpsTestEmailQueued Action = "ops.test_email_queued"
 	LegalHoldCreated   Action = "legal_hold.created"
 	LegalHoldReleased  Action = "legal_hold.released"
