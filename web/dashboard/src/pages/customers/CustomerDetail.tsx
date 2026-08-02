@@ -72,10 +72,20 @@ type ContactSession = {
   started_at: string;
   last_seen_at: string;
   ended_at: string | null;
+  ip_country?: string | null;
   browser: string | null;
   os: string | null;
   device: string;
   current_url: string | null;
+  referrer?: string | null;
+  landing_url?: string | null;
+  current_title?: string | null;
+  language?: string | null;
+  timezone?: string | null;
+  platform?: string | null;
+  user_agent?: string | null;
+  viewport?: { width?: number; height?: number; device_pixel_ratio?: number } | null;
+  page_views: number;
 };
 
 /** Customer profile (§6.9) — the full record behind the inbox context panel. */
@@ -435,12 +445,19 @@ function CustomerDetailBody({ customer }: { customer: Customer }) {
                           {sessions.map((session) => (
                             <li key={session.id} className="flex items-center gap-3 px-4 py-3">
                               <span className="min-w-0 flex-1">
-                                <span className="block truncate text-sm text-fg">{session.current_url ?? "No page recorded"}</span>
+                                <span className="block truncate text-sm text-fg">{session.current_title || session.current_url || "No page recorded"}</span>
                                 <span className="block text-xs text-fg-muted">
                                   {[session.browser, session.os, session.device].filter(Boolean).join(" · ") || "Unknown device"}
                                 </span>
+                                <span className="mt-1 block truncate text-2xs text-fg-muted">
+                                  {[session.platform, session.language, session.timezone, formatViewport(session.viewport)].filter(Boolean).join(" · ") || "No additional device context"}
+                                </span>
+                                {session.current_url && <a className="mt-1 block truncate text-2xs text-accent-text hover:underline" href={session.current_url} target="_blank" rel="noreferrer">{session.current_url}</a>}
                               </span>
-                              <Badge tone={session.ended_at ? "neutral" : "success"}>{session.ended_at ? "Ended" : "Active"}</Badge>
+                              <span className="flex shrink-0 flex-col items-end gap-1">
+                                <Badge tone={session.ended_at ? "neutral" : "success"}>{session.ended_at ? "Ended" : "Active"}</Badge>
+                                <span className="text-2xs tabular text-fg-muted">{session.page_views} page views</span>
+                              </span>
                             </li>
                           ))}
                         </ul>
@@ -534,6 +551,32 @@ function Customer360Tab({ query, customerID }: { query: ReturnType<typeof useQue
         </Section>
       </div>
 
+      <Section title="Page journey" description="The ten most recent pages recorded by the widget, including the context available when each page was viewed.">
+        <Card>
+          <CardBody className="p-0">
+            {data.page_journey.length === 0 ? <EmptyState size="sm" title="No page visits" description="Page history appears after the widget records a page view." /> : (
+              <ul className="divide-y divide-line-subtle">
+                {data.page_journey.map((page) => (
+                  <li key={page.id} className="px-4 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm text-fg">{page.title || page.url || "Page visit"}</span>
+                        {page.url && <a className="mt-0.5 block truncate text-xs text-accent-text hover:underline" href={page.url} target="_blank" rel="noreferrer">{page.url}</a>}
+                      </span>
+                      <span className="shrink-0 text-2xs tabular text-fg-muted">{formatRelativeShort(page.occurred_at, new Date())} ago</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-2xs text-fg-muted">
+                      {[page.device, page.browser, page.os, page.platform, formatViewport(page.viewport), page.referrer_origin ? `from ${page.referrer_origin}` : ""].filter(Boolean).map((value) => <span key={value}>{value}</span>)}
+                    </div>
+                    {page.user_agent && <p className="mt-1 break-all font-mono text-2xs text-fg-muted">{page.user_agent}</p>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardBody>
+        </Card>
+      </Section>
+
       <Section title="Feedback" description="Ideas this customer submitted, voted on, or follows.">
         <Card><CardBody className="p-0">
           {data.feedback.length === 0 ? <EmptyState size="sm" title="No feedback activity" /> : <ul className="divide-y divide-line-subtle">{data.feedback.map((item) => <li key={item.id}><Link to={`/feedback/${item.id}`} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-hover"><span className="min-w-0 flex-1"><span className="block truncate text-sm text-fg">{item.title}</span><span className="block text-xs text-fg-muted">{item.board_name} · {item.vote_count} votes · {item.comment_count} comments · {formatRelativeShort(item.created_at, new Date())} ago</span></span><Badge tone="neutral">{item.status.replaceAll("_", " ")}</Badge></Link></li>)}</ul>}
@@ -565,6 +608,11 @@ function Customer360Tab({ query, customerID }: { query: ReturnType<typeof useQue
 
 function MetricCard({ label, value, truncated }: { label: string; value: number; truncated: boolean }) {
   return <Card><CardBody><p className="text-2xs font-semibold uppercase tracking-caps text-fg-muted">{label}</p><p className="mt-2 text-xl font-semibold tabular text-fg">{value}{truncated ? "+" : ""}</p>{truncated && <p className="mt-1 text-2xs text-fg-muted">Recent records shown</p>}</CardBody></Card>;
+}
+
+function formatViewport(viewport: { width?: number; height?: number; device_pixel_ratio?: number } | null | undefined): string {
+  if (!viewport?.width || !viewport.height) return "";
+  return `${viewport.width} × ${viewport.height}${viewport.device_pixel_ratio ? ` · ${viewport.device_pixel_ratio}× DPR` : ""}`;
 }
 
 function AttributesTab({ customer }: { customer: Customer }) {

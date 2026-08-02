@@ -19,6 +19,7 @@ import {
   MenuTrigger,
   PriorityIndicator,
   TagChip,
+  Textarea,
   Tooltip,
   idempotencyKey,
   invalidate,
@@ -37,6 +38,7 @@ import {
 } from "@hubchat/shared";
 import {
   AlertOctagon,
+  Braces as BracesIcon,
   Ban,
   BellOff,
   BellRing,
@@ -87,6 +89,9 @@ export function ConversationPanel({
   const [linking, setLinking] = useState(false);
   const [linkingFeedback, setLinkingFeedback] = useState(false);
   const [blocking, setBlocking] = useState(false);
+  const [commandBinding, setCommandBinding] = useState<{ id: string; name: string; description: string; enabled: boolean } | null>(null);
+  const [commandPayload, setCommandPayload] = useState("{}");
+  const [commandPayloadError, setCommandPayloadError] = useState<string | null>(null);
 
   const assignee = memberById(conversation.assignee_id);
   const viewers = conversation.viewers.map(memberById).filter(Boolean);
@@ -112,6 +117,14 @@ export function ConversationPanel({
     ["conversation-feedback-links", conversation.id],
     (signal) => api.get(`/feedback/items?conversation_id=${encodeURIComponent(conversation.id)}&link_state=linked&sort=recent&limit=25`, { signal }),
     { enabled: can("feedback.moderate") },
+  );
+  const commandBindings = useAllPages<{ id: string; name: string; description: string; enabled: boolean }>(
+    ["customer-command-bindings"],
+    (cursor, signal) => api.get<Paginated<{ id: string; name: string; description: string; enabled: boolean }>>(`/customer-command-bindings?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }),
+    { enabled: can("integration.manage") },
+  );
+  const invokeCommand = useMutation<{ bindingID: string; payload: Record<string, unknown> }, unknown>(
+    ({ bindingID, payload }) => api.post(`/conversations/${conversation.id}/customer-commands`, { binding_id: bindingID, payload }, { idempotencyKey: idempotencyKey() }),
   );
 
   const markRead = useMutation<void, unknown>(() => api.post(`/conversations/${conversation.id}/read`));
@@ -284,6 +297,13 @@ export function ConversationPanel({
             />
           </Tooltip>
 
+          {can("conversation.reply") && can("integration.manage") && commandBindings.items.length > 0 && (
+            <Menu>
+              <MenuTrigger asChild><Button variant="ghost" size="sm" leading={<BracesIcon />}>Command</Button></MenuTrigger>
+              <MenuContent><MenuLabel>Run customer command</MenuLabel>{commandBindings.items.filter((item) => item.enabled).map((item) => <MenuItem key={item.id} onSelect={() => { setCommandPayload("{}"); setCommandPayloadError(null); setCommandBinding(item); }}>{item.name}</MenuItem>)}</MenuContent>
+            </Menu>
+          )}
+
           <span className="mx-1 h-4 w-px bg-line" aria-hidden="true" />
 
           <Button
@@ -428,6 +448,11 @@ export function ConversationPanel({
       {blocking && customer.data && (
         <BlockVisitorDialog customer={customer.data} onClose={() => setBlocking(false)} />
       )}
+      <Dialog open={Boolean(commandBinding)} onOpenChange={(open) => { if (!open) setCommandBinding(null); }}>
+        <DialogContent title={commandBinding ? `Run ${commandBinding.name}` : "Run customer command"} description={commandBinding?.description || "Send a bounded payload to the host page handler."} footer={<><DialogClose asChild><Button variant="ghost">Cancel</Button></DialogClose><Button loading={invokeCommand.isPending} onClick={() => { try { const payload = JSON.parse(commandPayload) as unknown; if (!payload || typeof payload !== "object" || Array.isArray(payload)) { setCommandPayloadError("Payload must be a JSON object."); return; } setCommandPayloadError(null); void invokeCommand.mutate({ bindingID: commandBinding?.id ?? "", payload: payload as Record<string, unknown> }).then(() => setCommandBinding(null)).catch(() => {}); } catch { setCommandPayloadError("Payload must be valid JSON."); } }}>Send command</Button></>}>
+          <div className="space-y-2"><Textarea rows={7} value={commandPayload} onChange={(event) => setCommandPayload(event.target.value)} aria-label="Command payload" className="font-mono text-xs" placeholder='{"reason":"diagnostics"}' />{commandPayloadError && <p className="text-xs text-danger">{commandPayloadError}</p>}{invokeCommand.error !== undefined && <p className="text-xs text-danger">Could not deliver this command. The visitor may be offline.</p>}</div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

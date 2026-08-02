@@ -280,7 +280,10 @@ export const NAV_SECTIONS: NavSection[] = [
       },
       {
         label: "Reference",
-        items: [{ label: "SDK & install", to: "/developers/sdk", icon: Code2 }],
+        items: [
+          { label: "SDK & install", to: "/developers/sdk", icon: Code2 },
+          { label: "Customer commands", to: "/developers/commands", icon: Braces },
+        ],
       },
     ],
   },
