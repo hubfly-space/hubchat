@@ -50,7 +50,7 @@ func (s *Service) SetAssignee(
 			WorkspaceID: workspaceID, Type: events.ConversationAssigned,
 			EntityType: entityConversation, EntityID: conversationID,
 			ActorType: events.ActorUser, ActorID: actorMemberID,
-			Data: map[string]any{"conversation_id": conversationID, "assignee_id": assigneeID},
+			Data: map[string]any{"conversation_id": conversationID, "team_id": conv.TeamID, "assignee_id": assigneeID},
 		})
 	})
 	if err != nil {
@@ -74,7 +74,8 @@ func (s *Service) SetTeam(
 	}
 
 	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if _, err := s.repo.lockAndLoadFull(ctx, tx, workspaceID, conversationID); err != nil {
+		conv, err := s.repo.lockAndLoadFull(ctx, tx, workspaceID, conversationID)
+		if err != nil {
 			return err
 		}
 		if err := s.repo.setTeam(ctx, tx, conversationID, teamID); err != nil {
@@ -88,10 +89,10 @@ func (s *Service) SetTeam(
 			return err
 		}
 		return s.appendEvent(ctx, tx, events.Event{
-			WorkspaceID: workspaceID, Type: events.ConversationUpdated,
+			WorkspaceID: workspaceID, Type: events.ConversationAssigned,
 			EntityType: entityConversation, EntityID: conversationID,
 			ActorType: events.ActorUser, ActorID: actorMemberID,
-			Data: map[string]any{"conversation_id": conversationID, "team_id": teamID},
+			Data: map[string]any{"conversation_id": conversationID, "team_id": teamID, "assignee_id": conv.AssigneeID},
 		})
 	})
 	if err != nil {

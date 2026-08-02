@@ -1276,7 +1276,7 @@ func writeWidgetError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Not found.")
 	case errors.Is(err, widget.ErrOriginNotAllowed):
 		httpserver.WriteError(w, r, http.StatusForbidden, httpserver.CodeForbidden, "This origin is not allowed to use this widget.")
-	case errors.Is(err, widget.ErrVisitorInvalid), errors.Is(err, widget.ErrIdentityTokenInvalid), errors.Is(err, widget.ErrIdentityTokenExpired):
+	case errors.Is(err, widget.ErrVisitorInvalid), errors.Is(err, widget.ErrIdentityTokenInvalid), errors.Is(err, widget.ErrIdentityTokenExpired), errors.Is(err, widget.ErrIdentityTokenReplayed):
 		httpserver.WriteError(w, r, http.StatusUnauthorized, httpserver.CodeUnauthorized, "Your session has expired.")
 	case errors.Is(err, widget.ErrConversationOwner):
 		httpserver.WriteError(w, r, http.StatusForbidden, httpserver.CodeForbidden, "This conversation does not belong to you.")
