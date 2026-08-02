@@ -42,6 +42,15 @@ export type WidgetFeedbackBoard = { id: string; name: string; slug: string; desc
 export type WidgetFeedbackItem = { id: string; title: string; description: string; status: string; vote_count: number; viewer_has_voted: boolean; viewer_subscribed: boolean };
 export type WidgetArticle = { slug: string; title: string; excerpt: string; body?: string; language?: string; helpful_count?: number; unhelpful_count?: number };
 
+export function isRTL(language: string): boolean {
+  const base = language.trim().toLowerCase().replaceAll("_", "-").split("-", 1)[0] ?? "";
+  return ["ar", "dv", "fa", "he", "ku", "ps", "ur", "yi"].includes(base);
+}
+
+function preferredLanguage(): string {
+  return typeof navigator !== "undefined" ? (navigator.language || "").trim().toLowerCase().replaceAll("_", "-") : "";
+}
+
 export type StartConversationResponse = {
   conversation_id: string;
   token: string;
@@ -184,7 +193,7 @@ export async function unsubscribeFeedbackItem(host: string, publicKey: string, t
 export type WidgetArticlesPage = { data: WidgetArticle[]; next_cursor: string | null; has_more: boolean };
 
 export async function searchArticles(host: string, publicKey: string, query: string, cursor?: string | null): Promise<WidgetArticlesPage> {
-  const params = new URLSearchParams({ key: publicKey, url: location.href, limit: "20" });
+  const params = new URLSearchParams({ key: publicKey, url: location.href, language: preferredLanguage(), limit: "20" });
   if (query.trim()) params.set("q", query.trim());
   if (cursor) params.set("cursor", cursor);
   const response = await fetch(`${endpoint(host, "/articles")}?${params.toString()}`, { credentials: "omit" });
@@ -192,12 +201,12 @@ export async function searchArticles(host: string, publicKey: string, query: str
 }
 
 export function getArticle(host: string, publicKey: string, slug: string): Promise<WidgetArticle> {
-  const params = new URLSearchParams({ key: publicKey, url: location.href });
+  const params = new URLSearchParams({ key: publicKey, url: location.href, language: preferredLanguage() });
   return fetch(`${endpoint(host, `/articles/${encodeURIComponent(slug)}`)}?${params.toString()}`, { credentials: "omit" }).then(parse<WidgetArticle>);
 }
 
 export function submitArticleFeedback(host: string, publicKey: string, slug: string, helpful: boolean, comment: string): Promise<{ status: string }> {
-  return post(host, `/articles/${encodeURIComponent(slug)}/feedback`, { public_key: publicKey, url: location.href, helpful, comment });
+  return post(host, `/articles/${encodeURIComponent(slug)}/feedback`, { public_key: publicKey, url: location.href, helpful, comment, language: preferredLanguage() });
 }
 
 export async function uploadFile(

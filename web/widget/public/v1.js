@@ -99,7 +99,9 @@
       "/api/v1/widget/config?key=" +
       encodeURIComponent(state.config.key) +
       "&url=" +
-      encodeURIComponent(location.href);
+      encodeURIComponent(location.href) +
+      "&language=" +
+      encodeURIComponent((navigator.language || "").toLowerCase());
 
     fetch(url, { credentials: "omit" })
       .then(function (response) {

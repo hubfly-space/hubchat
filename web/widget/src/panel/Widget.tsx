@@ -17,6 +17,7 @@ import {
   createFeedbackItem,
   getArticle,
   identify as apiIdentify,
+  isRTL,
   issueVisitor,
   listFeedbackBoards,
   listFeedbackItems,
@@ -43,6 +44,8 @@ import {
 } from "../lib/api";
 import { VisitorSocket, type WireEvent } from "../lib/socket";
 import type { WidgetConfig, WidgetMessage } from "../types";
+import { formConditionApplies } from "@hubchat/shared";
+import { WidgetLocaleProvider, useWidgetText, widgetText } from "./i18n";
 
 type Screen = "home" | "chat" | "articles" | "article" | "form" | "feedback";
 
@@ -366,7 +369,7 @@ export function Widget({
     const message: WidgetMessage = {
       id: clientId,
       from: "visitor",
-      author: "You",
+      author: widgetText(config.language, "you", "You"),
       body,
       at: new Date().toISOString(),
       delivery: "sending",
@@ -413,7 +416,7 @@ export function Widget({
             } : item));
             setAttachments([]);
           } catch {
-            setAttachmentError("Your message was sent, but an attachment could not be uploaded.");
+            setAttachmentError(widgetText(config.language, "attachment_sent_error", "Your message was sent, but an attachment could not be uploaded."));
           } finally {
             setUploading(false);
           }
@@ -486,8 +489,11 @@ export function Widget({
   const right = appearance.position === "bottom-right";
 
   return (
-    <div
+    <WidgetLocaleProvider language={config.language}>
+      <div
+      data-hubchat-widget-root
       data-theme={theme}
+      dir={isRTL(config.language ?? "") ? "rtl" : "ltr"}
       data-branded
       style={
         {
@@ -506,6 +512,7 @@ export function Widget({
       {open && (
         <section
           role="dialog"
+          data-hubchat-widget-panel
           aria-label={content.title}
           className="flex flex-col overflow-hidden border border-line bg-surface shadow-4"
           style={{
@@ -525,7 +532,7 @@ export function Widget({
             onClose={hide}
           />
 
-          <div ref={timelineRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <div data-hubchat-widget-timeline ref={timelineRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             {screen === "home" && (
               <HomeScreen
                 config={config}
@@ -574,7 +581,7 @@ export function Widget({
               <div className="p-4">
                 <h2 className="text-md font-semibold tracking-tight text-fg">{article.title}</h2>
                 <p className="mt-2 text-sm leading-relaxed text-fg-secondary">{article.excerpt}</p>
-                {articleLoading ? <p className="mt-4 text-xs text-fg-muted">Loading guide…</p> : article.body && <div className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-fg-secondary">{article.body}</div>}
+                {articleLoading ? <p className="mt-4 text-xs text-fg-muted">{widgetText(config.language, "guide_loading", "Loading guide…")}</p> : article.body && <div className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-fg-secondary">{article.body}</div>}
                 <a href={`${host}/portal/kb/article/${article.slug}`} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-1.5 text-sm text-accent" style={{ pointerEvents: "auto" }}>
                   Open in help centre <ChevronRight className="size-3.5" />
                 </a>
@@ -603,7 +610,7 @@ export function Widget({
               </div>
             )}
             {screen === "article" && !article && (
-              <div className="p-6 text-center text-xs text-fg-muted">{articleLoading ? "Loading guide…" : "This guide is no longer available."}</div>
+              <div className="p-6 text-center text-xs text-fg-muted">{articleLoading ? widgetText(config.language, "guide_loading", "Loading guide…") : widgetText(config.language, "guide_unavailable", "This guide is no longer available.")}</div>
             )}
 
             {screen === "form" && <FormScreen host={host} publicKey={publicKey} token={tokenRef.current} initialSlug={activeArticle} onToken={(token) => { tokenRef.current = token; saveSession(publicKey, { token, conversationId: conversationRef.current }); }} onDone={() => setScreen("home")} />}
@@ -629,19 +636,20 @@ export function Widget({
 
           {!appearance.hide_branding && (
             <p className="shrink-0 border-t border-line-subtle bg-surface py-1.5 text-center text-[10px] text-fg-disabled">
-              Powered by Hubchat
+              {widgetText(config.language, "powered_by", "Powered by Hubchat")}
             </p>
           )}
         </section>
       )}
 
-      <Launcher
-        appearance={appearance}
-        open={open}
-        unread={unread}
-        onClick={() => (open ? hide() : show())}
-      />
-    </div>
+        <Launcher
+          appearance={appearance}
+          open={open}
+          unread={unread}
+          onClick={() => (open ? hide() : show())}
+        />
+      </div>
+    </WidgetLocaleProvider>
   );
 }
 
@@ -659,12 +667,14 @@ function Launcher({
   onClick: () => void;
 }) {
   const size = appearance.launcher_size === "sm" ? 44 : appearance.launcher_size === "lg" ? 60 : 52;
+  const t = useWidgetText();
 
   return (
     <button
       type="button"
+      data-hubchat-widget-launcher
       onClick={onClick}
-      aria-label={open ? "Close support" : "Open support"}
+      aria-label={open ? t("close_support", "Close support") : t("open_support", "Open support")}
       aria-expanded={open}
       className="relative flex items-center justify-center gap-2 text-white shadow-3 transition-transform hover:scale-105 active:scale-95"
       style={{
@@ -714,9 +724,11 @@ function Header({
   onClose: () => void;
 }) {
   const minimal = appearance.header_style === "minimal";
+  const t = useWidgetText();
 
   return (
     <header
+      data-hubchat-widget-header
       className={minimal ? "shrink-0 border-b border-line bg-surface px-4 py-3" : "shrink-0 px-4 py-3.5"}
       style={
         minimal
@@ -734,7 +746,7 @@ function Header({
           <button
             type="button"
             onClick={onBack}
-            aria-label="Back"
+            aria-label={t("back", "Back")}
             className={minimal ? "mt-0.5 text-fg-muted" : "mt-0.5 opacity-80"}
           >
             <ArrowLeft className="size-4" />
@@ -743,7 +755,7 @@ function Header({
 
         <div className="min-w-0 flex-1">
           <p className={minimal ? "truncate text-sm font-semibold text-fg" : "truncate text-sm font-semibold"}>
-            {screen === "articles" ? "Help articles" : content.title}
+            {screen === "articles" ? t("help_articles", "Help articles") : content.title}
           </p>
           <p
             className={
@@ -757,14 +769,14 @@ function Header({
               className="size-1.5 rounded-full"
               style={{ backgroundColor: online ? "var(--hc-success)" : "var(--hc-text-disabled)" }}
             />
-            {online ? content.subtitle : "Offline"}
+            {online ? content.subtitle : t("offline", "Offline")}
           </p>
         </div>
 
         <button
           type="button"
           onClick={onClose}
-          aria-label="Minimise"
+          aria-label={t("minimise", "Minimise")}
           className={minimal ? "mt-0.5 text-fg-muted" : "mt-0.5 opacity-70 hover:opacity-100"}
         >
           <Minus className="size-4" />
@@ -789,6 +801,8 @@ function HomeScreen({
   onFeedback: () => void;
   onArticle: (slug: string) => void;
 }) {
+  const t = useWidgetText();
+
   return (
     <div className="p-3">
       <div className="rounded-lg border border-line bg-inset p-3.5">
@@ -804,7 +818,7 @@ function HomeScreen({
           style={{ backgroundColor: config.appearance.accent }}
         >
           <MessageSquarePlus className="size-4" />
-          {config.online ? "Start a conversation" : "Leave a message"}
+          {config.online ? t("start_conversation", "Start a conversation") : t("leave_message", "Leave a message")}
         </button>
       </div>
 
@@ -816,7 +830,7 @@ function HomeScreen({
             className="flex w-full items-center gap-2 rounded-md border border-line bg-inset px-3 py-2.5 text-left"
           >
             <Search className="size-3.5 shrink-0 text-fg-muted" />
-            <span className="flex-1 text-xs text-fg-disabled">Search for help</span>
+            <span className="flex-1 text-xs text-fg-disabled">{t("search_help", "Search for help")}</span>
           </button>
 
           <ul className="mt-2">
@@ -846,7 +860,7 @@ function HomeScreen({
           className="mt-3 flex w-full items-center gap-2 rounded-md border border-line px-3 py-2.5 text-left transition-colors hover:bg-fill"
         >
           <Ticket className="size-3.5 shrink-0 text-fg-muted" />
-          <span className="flex-1 text-xs text-fg-secondary">Submit a detailed request</span>
+          <span className="flex-1 text-xs text-fg-secondary">{t("submit_request", "Submit a detailed request")}</span>
           <ChevronRight className="size-3 shrink-0 text-fg-disabled" />
         </button>
       )}
@@ -854,7 +868,7 @@ function HomeScreen({
       {config.modes.includes("feedback") && (
         <button type="button" onClick={onFeedback} className="mt-3 flex w-full items-center gap-2 rounded-md border border-line px-3 py-2.5 text-left transition-colors hover:bg-fill">
           <MessageSquarePlus className="size-3.5 shrink-0 text-fg-muted" />
-          <span className="flex-1 text-xs text-fg-secondary">Share feedback</span>
+          <span className="flex-1 text-xs text-fg-secondary">{t("share_feedback", "Share feedback")}</span>
           <ChevronRight className="size-3 shrink-0 text-fg-disabled" />
         </button>
       )}
@@ -878,6 +892,7 @@ function ChatScreen({
   token: string | null;
 }) {
   const square = config.appearance.bubble_style === "square";
+  const t = useWidgetText();
 
   return (
     <div className="flex flex-col gap-2.5 p-3">
@@ -925,10 +940,10 @@ function ChatScreen({
               {mine && (
                 <p className="mt-0.5 text-right text-[10px] text-fg-disabled">
                   {message.delivery === "sending"
-                    ? "Sending…"
+                    ? t("sending", "Sending…")
                     : message.delivery === "failed"
-                      ? "Failed — tap to retry"
-                      : "Sent"}
+                      ? t("failed_retry", "Failed — tap to retry")
+                      : t("sent", "Sent")}
                 </p>
               )}
             </div>
@@ -952,7 +967,7 @@ function ChatScreen({
                 }}
               />
             ))}
-            <span className="sr-only">Agent is typing</span>
+            <span className="sr-only">{t("agent_typing", "Agent is typing")}</span>
           </div>
         </div>
       )}
@@ -979,6 +994,8 @@ function ArticlesScreen({
   error: boolean;
   onLoadMore: () => void;
 }) {
+  const t = useWidgetText();
+
   return (
     <div className="p-3">
       <div className="flex items-center gap-2 rounded-md border border-line bg-inset px-2.5 py-2">
@@ -986,19 +1003,19 @@ function ArticlesScreen({
         <input
           value={query}
           onChange={(event) => onQuery(event.target.value)}
-          placeholder="Search articles"
-          aria-label="Search articles"
+          placeholder={t("search_articles", "Search articles")}
+          aria-label={t("search_articles", "Search articles")}
           className="min-w-0 flex-1 text-xs text-fg outline-none"
         />
       </div>
 
       {error && results.length === 0 ? (
         <p className="px-2 py-8 text-center text-xs text-danger">
-          Articles are unavailable right now. Try again in a moment.
+          {t("articles_unavailable", "Articles are unavailable right now. Try again in a moment.")}
         </p>
       ) : results.length === 0 ? (
         <p className="px-2 py-8 text-center text-xs text-fg-muted">
-          Nothing matched. Try fewer words, or start a conversation.
+          {t("nothing_matched", "Nothing matched. Try fewer words, or start a conversation.")}
         </p>
       ) : (
         <ul className="mt-2">
@@ -1026,7 +1043,7 @@ function ArticlesScreen({
           disabled={loading}
           className="mt-2 w-full rounded-md border border-line px-3 py-2 text-xs text-fg-secondary disabled:opacity-50"
         >
-          {loading ? "Loading…" : "Load more articles"}
+          {loading ? t("loading", "Loading…") : t("load_more_articles", "Load more articles")}
         </button>
       )}
     </div>
@@ -1041,6 +1058,7 @@ function FeedbackScreen({ host, publicKey, token, initialSlug, onToken, onDone }
   onToken: (token: string) => void;
   onDone: () => void;
 }) {
+  const t = useWidgetText();
   const [boards, setBoards] = useState<WidgetFeedbackBoard[]>([]);
   const [board, setBoard] = useState<WidgetFeedbackBoard | null>(null);
   const [nextBoardCursor, setNextBoardCursor] = useState<string | null>(null);
@@ -1063,9 +1081,9 @@ function FeedbackScreen({ host, publicKey, token, initialSlug, onToken, onDone }
       setNextBoardCursor(page.next_cursor);
       setHasMoreBoards(page.has_more);
       setBoard(page.data.find((item) => item.slug === initialSlug) ?? page.data[0] ?? null);
-    }).catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : "Feedback is unavailable."); }).finally(() => { if (!cancelled) setLoadingBoards(false); });
+    }).catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : t("feedback_unavailable", "Feedback is unavailable.")); }).finally(() => { if (!cancelled) setLoadingBoards(false); });
     return () => { cancelled = true; };
-  }, [host, publicKey, initialSlug]);
+  }, [host, publicKey, initialSlug, t]);
   const loadMoreBoards = async () => {
     if (!nextBoardCursor || loadingBoards) return;
     setLoadingBoards(true);
@@ -1075,7 +1093,7 @@ function FeedbackScreen({ host, publicKey, token, initialSlug, onToken, onDone }
       setNextBoardCursor(page.next_cursor);
       setHasMoreBoards(page.has_more);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not load more feedback boards.");
+      setError(reason instanceof Error ? reason.message : t("could_not_load_feedback", "Could not load more feedback boards."));
     } finally {
       setLoadingBoards(false);
     }
@@ -1090,8 +1108,8 @@ function FeedbackScreen({ host, publicKey, token, initialSlug, onToken, onDone }
       setItems(page.data);
       setNextCursor(page.next_cursor);
       setHasMoreItems(page.has_more);
-    }).catch(() => setError("Could not load feedback items.")).finally(() => setLoadingItems(false));
-  }, [host, publicKey, token, board]);
+    }).catch(() => setError(t("could_not_load_feedback", "Could not load feedback items."))).finally(() => setLoadingItems(false));
+  }, [host, publicKey, token, board, t]);
   const loadMoreItems = async () => {
     if (!board || !nextCursor || loadingItems) return;
     setLoadingItems(true);
@@ -1101,7 +1119,7 @@ function FeedbackScreen({ host, publicKey, token, initialSlug, onToken, onDone }
       setNextCursor(page.next_cursor);
       setHasMoreItems(page.has_more);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not load more feedback.");
+      setError(reason instanceof Error ? reason.message : t("could_not_load_feedback", "Could not load more feedback."));
     } finally {
       setLoadingItems(false);
     }
@@ -1114,25 +1132,25 @@ function FeedbackScreen({ host, publicKey, token, initialSlug, onToken, onDone }
       const result = await createFeedbackItem(host, publicKey, token, board.slug, title.trim(), description.trim());
       if (result.token) onToken(result.token);
       setItems((current) => [result.item, ...current]); setTitle(""); setDescription("");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not submit feedback."); }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : t("feedback_unavailable", "Could not submit feedback.")); }
     finally { setSending(false); }
   };
   const vote = async (item: WidgetFeedbackItem) => {
-    if (!token) { setError("Identify yourself before voting."); return; }
+    if (!token) { setError(t("identify_to_vote", "Identify yourself before voting.")); return; }
     try { await voteFeedbackItem(host, publicKey, token, item.id); setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, vote_count: entry.vote_count + 1, viewer_has_voted: true } : entry)); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Could not record vote."); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : t("feedback_unavailable", "Could not record vote.")); }
   };
   const follow = async (item: WidgetFeedbackItem) => {
-    if (!token) { setError("Identify yourself before following feedback."); return; }
+    if (!token) { setError(t("identify_to_follow", "Identify yourself before following feedback.")); return; }
     try {
       if (item.viewer_subscribed) await unsubscribeFeedbackItem(host, publicKey, token, item.id);
       else await subscribeFeedbackItem(host, publicKey, token, item.id);
       setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, viewer_subscribed: !item.viewer_subscribed } : entry));
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not update feedback subscription."); }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : t("feedback_unavailable", "Could not update feedback subscription.")); }
   };
-  if (loadingBoards && !board) return <p className="p-6 text-center text-xs text-fg-muted">Loading feedback boards…</p>;
-  if (!board) return <div className="p-6 text-center"><p className="text-sm font-medium text-fg">No public feedback boards</p>{error && <p className="mt-2 text-xs text-danger">{error}</p>}<button type="button" onClick={onDone} className="mt-4 rounded-md border border-line px-3 py-1.5 text-xs text-fg-secondary">Back</button></div>;
-  return <div className="p-3"><div className="mb-3 flex items-center gap-2">{boards.length > 1 ? <select value={board.slug} onChange={(event) => setBoard(boards.find((item) => item.slug === event.target.value) ?? board)} className="min-w-0 flex-1 rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg">{boards.map((item) => <option key={item.id} value={item.slug}>{item.name}</option>)}</select> : <p className="text-sm font-medium text-fg">{board.name}</p>}</div>{board.description && <p className="mb-3 text-xs text-fg-muted">{board.description}</p>}<form className="space-y-2 border-b border-line pb-3" onSubmit={(event) => void submit(event)}><input required value={title} onChange={(event) => setTitle(event.target.value)} placeholder="What should we improve?" className="w-full rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" /><textarea required rows={3} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Tell us why this matters…" className="w-full resize-none rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" /><button type="submit" disabled={sending} className="w-full rounded-md bg-accent px-3 py-2 text-sm font-medium text-accent-fg disabled:opacity-50">{sending ? "Sending…" : "Submit feedback"}</button></form>{error && <p className="mt-2 text-xs text-danger">{error}</p>}<div className="mt-3 space-y-2">{items.length === 0 ? <p className="py-4 text-center text-xs text-fg-muted">No feedback here yet.</p> : items.map((item) => <div key={item.id} className="rounded-md border border-line bg-inset p-2.5"><p className="text-xs font-medium text-fg">{item.title}</p><p className="mt-1 line-clamp-2 text-[11px] text-fg-muted">{item.description}</p><div className="mt-2 flex items-center justify-between gap-2"><span className="text-[11px] text-fg-disabled">{item.status.replaceAll("_", " ")}</span><div className="flex items-center gap-1.5"><button type="button" disabled={item.viewer_has_voted} onClick={() => void vote(item)} className="rounded border border-line px-2 py-1 text-[11px] text-fg-secondary disabled:opacity-50">{item.viewer_has_voted ? "Voted" : `Vote · ${item.vote_count}`}</button><button type="button" onClick={() => void follow(item)} className="rounded border border-line px-2 py-1 text-[11px] text-fg-secondary">{item.viewer_subscribed ? "Following" : "Follow"}</button></div></div></div>)}</div>{hasMoreBoards && <button type="button" disabled={loadingBoards} onClick={() => void loadMoreBoards()} className="mt-3 w-full rounded-md border border-line px-3 py-2 text-xs text-fg-secondary disabled:opacity-50">{loadingBoards ? "Loading boards…" : "Load more boards"}</button>}{hasMoreItems && <button type="button" disabled={loadingItems} onClick={() => void loadMoreItems()} className="mt-3 w-full rounded-md border border-line px-3 py-2 text-xs text-fg-secondary disabled:opacity-50">{loadingItems ? "Loading…" : "Load more feedback"}</button>}</div>;
+  if (loadingBoards && !board) return <p className="p-6 text-center text-xs text-fg-muted">{t("loading", "Loading feedback boards…")}</p>;
+  if (!board) return <div className="p-6 text-center"><p className="text-sm font-medium text-fg">{t("no_public_feedback", "No public feedback boards")}</p>{error && <p className="mt-2 text-xs text-danger">{error}</p>}<button type="button" onClick={onDone} className="mt-4 rounded-md border border-line px-3 py-1.5 text-xs text-fg-secondary">{t("back", "Back")}</button></div>;
+  return <div className="p-3"><div className="mb-3 flex items-center gap-2">{boards.length > 1 ? <select value={board.slug} onChange={(event) => setBoard(boards.find((item) => item.slug === event.target.value) ?? board)} className="min-w-0 flex-1 rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg">{boards.map((item) => <option key={item.id} value={item.slug}>{item.name}</option>)}</select> : <p className="text-sm font-medium text-fg">{board.name}</p>}</div>{board.description && <p className="mb-3 text-xs text-fg-muted">{board.description}</p>}<form className="space-y-2 border-b border-line pb-3" onSubmit={(event) => void submit(event)}><input required value={title} onChange={(event) => setTitle(event.target.value)} placeholder={t("improve", "What should we improve?")} className="w-full rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" /><textarea required rows={3} value={description} onChange={(event) => setDescription(event.target.value)} placeholder={t("feedback_why", "Tell us why this matters…")} className="w-full resize-none rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" /><button type="submit" disabled={sending} className="w-full rounded-md bg-accent px-3 py-2 text-sm font-medium text-accent-fg disabled:opacity-50">{sending ? t("sending", "Sending…") : t("submit_feedback", "Submit feedback")}</button></form>{error && <p className="mt-2 text-xs text-danger">{error}</p>}<div className="mt-3 space-y-2">{items.length === 0 ? <p className="py-4 text-center text-xs text-fg-muted">{t("no_feedback", "No feedback here yet")}</p> : items.map((item) => <div key={item.id} className="rounded-md border border-line bg-inset p-2.5"><p className="text-xs font-medium text-fg">{item.title}</p><p className="mt-1 line-clamp-2 text-[11px] text-fg-muted">{item.description}</p><div className="mt-2 flex items-center justify-between gap-2"><span className="text-[11px] text-fg-disabled">{item.status.replaceAll("_", " ")}</span><div className="flex items-center gap-1.5"><button type="button" disabled={item.viewer_has_voted} onClick={() => void vote(item)} className="rounded border border-line px-2 py-1 text-[11px] text-fg-secondary disabled:opacity-50">{item.viewer_has_voted ? t("voted", "Voted") : t("vote", "Vote · {count}", { count: item.vote_count })}</button><button type="button" onClick={() => void follow(item)} className="rounded border border-line px-2 py-1 text-[11px] text-fg-secondary">{item.viewer_subscribed ? t("following", "Following") : t("follow", "Follow")}</button></div></div></div>)}</div>{hasMoreBoards && <button type="button" disabled={loadingBoards} onClick={() => void loadMoreBoards()} className="mt-3 w-full rounded-md border border-line px-3 py-2 text-xs text-fg-secondary disabled:opacity-50">{loadingBoards ? t("loading", "Loading boards…") : t("load_more_feedback_boards", "Load more boards")}</button>}{hasMoreItems && <button type="button" disabled={loadingItems} onClick={() => void loadMoreItems()} className="mt-3 w-full rounded-md border border-line px-3 py-2 text-xs text-fg-secondary disabled:opacity-50">{loadingItems ? t("loading", "Loading…") : t("load_more_feedback", "Load more feedback")}</button>}</div>;
 }
 
 function FormScreen({ host, publicKey, token, initialSlug, onToken, onDone }: {
@@ -1143,6 +1161,7 @@ function FormScreen({ host, publicKey, token, initialSlug, onToken, onDone }: {
   onToken: (token: string) => void;
   onDone: () => void;
 }) {
+  const t = useWidgetText();
   const [forms, setForms] = useState<WidgetForm[]>([]);
   const [form, setForm] = useState<WidgetForm | null>(null);
   const [nextFormCursor, setNextFormCursor] = useState<string | null>(null);
@@ -1165,10 +1184,10 @@ function FormScreen({ host, publicKey, token, initialSlug, onToken, onDone }: {
       setHasMoreForms(page.has_more);
       setForm(page.data.find((item) => item.slug === initialSlug) ?? page.data[0] ?? null);
     }).catch((reason: unknown) => {
-      if (!cancelled) setError(reason instanceof Error ? reason.message : "Forms are unavailable.");
+      if (!cancelled) setError(reason instanceof Error ? reason.message : t("request_forms_unavailable", "Forms are unavailable."));
     }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [host, publicKey, initialSlug]);
+  }, [host, publicKey, initialSlug, t]);
 
   const loadMoreForms = async () => {
     if (!nextFormCursor || loading) return;
@@ -1179,19 +1198,14 @@ function FormScreen({ host, publicKey, token, initialSlug, onToken, onDone }: {
       setNextFormCursor(page.next_cursor);
       setHasMoreForms(page.has_more);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not load more request forms.");
+      setError(reason instanceof Error ? reason.message : t("request_forms_unavailable", "Could not load more request forms."));
     } finally {
       setLoading(false);
     }
   };
 
   const visible = (field: WidgetForm["fields"][number]) => {
-    const condition = field.condition ?? {};
-    const key = typeof condition.field === "string" ? condition.field : typeof condition.key === "string" ? condition.key : "";
-    if (!key) return true;
-    if ("equals" in condition) return values[key] === condition.equals;
-    if ("not_equals" in condition) return values[key] !== condition.not_equals;
-    return true;
+    return formConditionApplies(field.condition, values);
   };
   const setValue = (key: string, value: unknown) => setValues((current) => ({ ...current, [key]: value }));
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -1199,17 +1213,24 @@ function FormScreen({ host, publicKey, token, initialSlug, onToken, onDone }: {
     if (!form) return;
     setSending(true); setError("");
     try {
-      const result = await submitForm(host, publicKey, token, form.slug, values, fileIDs);
+      // Do not send answers or staged uploads for fields that became hidden
+      // after an earlier answer changed. The server applies the same rule,
+      // but filtering here keeps conditional fields from leaking stale values
+      // into target tickets and conversations.
+      const visibleKeys = new Set(form.fields.filter(visible).map((field) => field.key));
+      const submittedValues = Object.fromEntries(Object.entries(values).filter(([key]) => visibleKeys.has(key)));
+      const submittedFiles = Object.fromEntries(Object.entries(fileIDs).filter(([key]) => visibleKeys.has(key)));
+      const result = await submitForm(host, publicKey, token, form.slug, submittedValues, submittedFiles);
       if (result.token) onToken(result.token);
       setSent(true);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The form could not be sent.");
+      setError(reason instanceof Error ? reason.message : t("request_forms_unavailable", "The form could not be sent."));
     } finally { setSending(false); }
   };
 
-  if (loading) return <p className="p-6 text-center text-xs text-fg-muted">Loading request forms…</p>;
-  if (sent) return <div className="p-6 text-center"><p className="text-sm font-medium text-fg">Request received</p><p className="mt-1.5 text-xs leading-normal text-fg-muted">Your submission was sent to the support team.</p><button type="button" onClick={onDone} className="mt-4 rounded-md border border-line px-3 py-1.5 text-xs text-fg-secondary transition-colors hover:bg-fill">Back</button></div>;
-  if (!form) return <div className="p-6 text-center"><p className="text-sm font-medium text-fg">No request forms are available</p><p className="mt-1.5 text-xs text-fg-muted">Start a conversation instead and a person will help you there.</p>{error && <p className="mt-2 text-xs text-danger">{error}</p>}<button type="button" onClick={onDone} className="mt-4 rounded-md border border-line px-3 py-1.5 text-xs text-fg-secondary">Back</button></div>;
+  if (loading) return <p className="p-6 text-center text-xs text-fg-muted">{t("loading", "Loading request forms…")}</p>;
+  if (sent) return <div className="p-6 text-center"><p className="text-sm font-medium text-fg">{t("request_received", "Request received")}</p><p className="mt-1.5 text-xs leading-normal text-fg-muted">{t("request_sent", "Your submission was sent to the support team.")}</p><button type="button" onClick={onDone} className="mt-4 rounded-md border border-line px-3 py-1.5 text-xs text-fg-secondary transition-colors hover:bg-fill">{t("back", "Back")}</button></div>;
+  if (!form) return <div className="p-6 text-center"><p className="text-sm font-medium text-fg">{t("no_request_forms", "No request forms are available")}</p><p className="mt-1.5 text-xs text-fg-muted">{t("start_conversation_instead", "Start a conversation instead and a person will help you there.")}</p>{error && <p className="mt-2 text-xs text-danger">{error}</p>}<button type="button" onClick={onDone} className="mt-4 rounded-md border border-line px-3 py-1.5 text-xs text-fg-secondary">{t("back", "Back")}</button></div>;
 
   const chooseFile = async (fieldKey: string, file: File | undefined) => {
     if (!file || !token) return;
@@ -1219,11 +1240,11 @@ function FormScreen({ host, publicKey, token, initialSlug, onToken, onDone }: {
       setFileIDs((current) => ({ ...current, [fieldKey]: uploaded.id }));
       if (uploaded.token) onToken(uploaded.token);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The file could not be uploaded.");
+      setError(reason instanceof Error ? reason.message : t("attachment_upload_error", "The file could not be uploaded."));
     } finally { setUploadingField(null); }
   };
 
-  return <div className="p-3"><div className="mb-3 flex items-center gap-2">{forms.length > 1 && <select value={form.slug} onChange={(event) => { setForm(forms.find((item) => item.slug === event.target.value) ?? form); setValues({}); setFileIDs({}); }} className="min-w-0 flex-1 rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg"><option value={form.slug}>{form.name}</option>{forms.filter((item) => item.slug !== form.slug).map((item) => <option key={item.slug} value={item.slug}>{item.name}</option>)}</select>}{forms.length === 1 && <p className="text-sm font-medium text-fg">{form.name}</p>}</div>{form.description && <p className="mb-3 text-xs leading-normal text-fg-muted">{form.description}</p>}<form className="flex flex-col gap-3" onSubmit={(event) => void submit(event)}>{form.fields.filter(visible).map((field) => <label key={field.key} className="flex flex-col gap-1"><span className="text-xs font-medium text-fg-secondary">{field.label}{field.required && <span className="text-danger"> *</span>}</span>{field.description && <span className="text-[11px] text-fg-muted">{field.description}</span>}{field.type === "file" ? <><input required={field.required} type="file" onChange={(event) => void chooseFile(field.key, event.target.files?.[0])} className="text-xs text-fg-muted" />{uploadingField === field.key ? <span className="text-[11px] text-fg-muted">Uploading…</span> : fileIDs[field.key] ? <span className="text-[11px] text-success-text">File ready</span> : null}</> : field.type === "text" ? <textarea required={field.required} rows={4} value={String(values[field.key] ?? "")} placeholder={field.placeholder ?? ""} onChange={(event) => setValue(field.key, event.target.value)} className="resize-none rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" /> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(values[field.key])} onChange={(event) => setValue(field.key, event.target.checked)} className="size-4 accent-accent" /> : field.type === "enum" ? <select required={field.required} value={String(values[field.key] ?? "")} onChange={(event) => setValue(field.key, event.target.value)} className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent"><option value="">Choose…</option>{(field.options ?? []).map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input required={field.required} type={field.type === "email" ? "email" : field.type === "integer" || field.type === "decimal" ? "number" : "text"} value={String(values[field.key] ?? "")} placeholder={field.placeholder ?? ""} onChange={(event) => setValue(field.key, field.type === "integer" || field.type === "decimal" ? Number(event.target.value) : event.target.value)} className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" />}</label>)}{error && <p className="text-xs text-danger">{error}</p>}{hasMoreForms && <button type="button" disabled={loading} onClick={() => void loadMoreForms()} className="rounded-md border border-line px-3 py-2 text-xs text-fg-secondary disabled:opacity-50">{loading ? "Loading forms…" : "Load more forms"}</button>}<button type="submit" disabled={sending || uploadingField !== null} className="rounded-md bg-accent px-3 py-2 text-sm font-medium text-accent-fg disabled:opacity-50">{sending || uploadingField ? "Sending…" : "Send request"}</button></form></div>;
+  return <div className="p-3"><div className="mb-3 flex items-center gap-2">{forms.length > 1 && <select value={form.slug} onChange={(event) => { setForm(forms.find((item) => item.slug === event.target.value) ?? form); setValues({}); setFileIDs({}); }} className="min-w-0 flex-1 rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg"><option value={form.slug}>{form.name}</option>{forms.filter((item) => item.slug !== form.slug).map((item) => <option key={item.slug} value={item.slug}>{item.name}</option>)}</select>}{forms.length === 1 && <p className="text-sm font-medium text-fg">{form.name}</p>}</div>{form.description && <p className="mb-3 text-xs leading-normal text-fg-muted">{form.description}</p>}<form className="flex flex-col gap-3" onSubmit={(event) => void submit(event)}>{form.fields.filter(visible).map((field) => <label key={field.key} className="flex flex-col gap-1"><span className="text-xs font-medium text-fg-secondary">{field.label}{field.required && <span className="text-danger"> *</span>}</span>{field.description && <span className="text-[11px] text-fg-muted">{field.description}</span>}{field.type === "file" ? <><input required={field.required} type="file" onChange={(event) => void chooseFile(field.key, event.target.files?.[0])} className="text-xs text-fg-muted" />{uploadingField === field.key ? <span className="text-[11px] text-fg-muted">{t("uploading", "Uploading…")}</span> : fileIDs[field.key] ? <span className="text-[11px] text-success-text">{t("file_ready", "File ready")}</span> : null}</> : field.type === "text" ? <textarea required={field.required} rows={4} value={String(values[field.key] ?? "")} placeholder={field.placeholder ?? ""} onChange={(event) => setValue(field.key, event.target.value)} className="resize-none rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" /> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(values[field.key])} onChange={(event) => setValue(field.key, event.target.checked)} className="size-4 accent-accent" /> : field.type === "enum" ? <select required={field.required} value={String(values[field.key] ?? "")} onChange={(event) => setValue(field.key, event.target.value)} className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent"><option value="">{t("choose", "Choose…")}</option>{(field.options ?? []).map((option) => <option key={option} value={option}>{option}</option>)}</select> : <input required={field.required} type={field.type === "email" ? "email" : field.type === "integer" || field.type === "decimal" ? "number" : "text"} value={String(values[field.key] ?? "")} placeholder={field.placeholder ?? ""} onChange={(event) => setValue(field.key, field.type === "integer" || field.type === "decimal" ? Number(event.target.value) : event.target.value)} className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg outline-none focus:border-accent" />}</label>)}{error && <p className="text-xs text-danger">{error}</p>}{hasMoreForms && <button type="button" disabled={loading} onClick={() => void loadMoreForms()} className="rounded-md border border-line px-3 py-2 text-xs text-fg-secondary disabled:opacity-50">{loading ? t("loading", "Loading forms…") : t("load_more_forms", "Load more forms")}</button>}<button type="submit" disabled={sending || uploadingField !== null} className="rounded-md bg-accent px-3 py-2 text-sm font-medium text-accent-fg disabled:opacity-50">{sending || uploadingField ? t("sending", "Sending…") : t("send_request", "Send request")}</button></form></div>;
 }
 
 /** React 19 passes `ref` as an ordinary prop, so no forwardRef wrapper. */
@@ -1254,14 +1275,15 @@ function Composer({
   error: string;
   onChooseFiles: (files: File[]) => void;
 }) {
+  const t = useWidgetText();
   return (
-    <div className="shrink-0 border-t border-line bg-surface p-2">
+    <div data-hubchat-widget-composer className="shrink-0 border-t border-line bg-surface p-2">
       {disabled && (
         <p className="mb-2 rounded-md bg-fill px-2.5 py-1.5 text-[11px] leading-normal text-fg-muted">
           {offlineMessage}
         </p>
       )}
-      {files.length > 0 && <p className="mb-2 truncate rounded-md bg-fill px-2.5 py-1.5 text-[11px] text-fg-muted">{uploading ? "Uploading…" : files.map((file) => file.name).join(", ")}</p>}
+      {files.length > 0 && <p className="mb-2 truncate rounded-md bg-fill px-2.5 py-1.5 text-[11px] text-fg-muted">{uploading ? t("uploading", "Uploading…") : files.map((file) => file.name).join(", ")}</p>}
       {error && <p className="mb-2 rounded-md bg-danger-subtle px-2.5 py-1.5 text-[11px] text-danger-text">{error}</p>}
 
       <div className="flex items-end gap-2 rounded-md border border-line bg-inset px-2.5 py-1.5 focus-within:border-accent">
@@ -1282,11 +1304,11 @@ function Composer({
             }
           }}
           placeholder={placeholder}
-          aria-label="Message"
+          aria-label={t("message", "Message")}
           className="max-h-24 min-w-0 flex-1 resize-none bg-transparent py-1 text-sm leading-normal text-fg outline-none"
         />
 
-        <label aria-label="Attach a file" className="cursor-pointer pb-1.5 text-fg-muted">
+        <label aria-label={t("attach_file", "Attach a file")} className="cursor-pointer pb-1.5 text-fg-muted">
           <Paperclip className="size-4" />
           <input type="file" multiple className="sr-only" onChange={(event) => { onChooseFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
         </label>
@@ -1295,7 +1317,7 @@ function Composer({
           type="button"
           onClick={onSend}
           disabled={!value.trim()}
-          aria-label="Send"
+          aria-label={t("send_request", "Send")}
           className="pb-1.5 transition-opacity disabled:opacity-30"
           style={{ color: accent }}
         >

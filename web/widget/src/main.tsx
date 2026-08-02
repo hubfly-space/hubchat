@@ -29,6 +29,51 @@ let container: HTMLElement | null = null;
 
 const listeners = new Map<string, ((payload: unknown) => void)[]>();
 
+// Keep the widget usable when a host CSP blocks the inline stylesheet, a
+// browser cannot adopt a constructable sheet, or a legacy CSS parser drops
+// part of the generated utility layer. The compiled sheet remains the normal
+// design system; this is intentionally limited to the reset and geometry that
+// prevent the unstyled serif/default-controls failure mode.
+const criticalStyles = `
+:host {
+  all: initial;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+[data-hubchat-widget-root], [data-hubchat-widget-root] * { box-sizing: border-box; }
+[data-hubchat-widget-root] {
+  color: #0a0b0d;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+[data-hubchat-widget-root][data-theme="dark"] { color: #f7f8fa; background: #0f1114; }
+[data-hubchat-widget-root] button,
+[data-hubchat-widget-root] input,
+[data-hubchat-widget-root] textarea,
+[data-hubchat-widget-root] select { font: inherit; }
+[data-hubchat-widget-root] button { cursor: pointer; }
+[data-hubchat-widget-panel] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid rgba(10, 11, 13, .12);
+  box-shadow: 0 8px 24px rgba(16, 20, 28, .18);
+}
+[data-hubchat-widget-root][data-theme="dark"] [data-hubchat-widget-panel] {
+  background: #171a20;
+  border-color: rgba(255, 255, 255, .12);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .5);
+}
+[data-hubchat-widget-header] { flex: 0 0 auto; }
+[data-hubchat-widget-timeline] { min-height: 0; flex: 1 1 auto; overflow-y: auto; }
+[data-hubchat-widget-composer] { flex: 0 0 auto; }
+[data-hubchat-widget-launcher] { display: flex; align-items: center; justify-content: center; }
+[data-hubchat-widget-composer] textarea { min-width: 0; resize: none; border: 0; outline: 0; }
+`;
+
 export function mount({
   host,
   config,
@@ -58,7 +103,12 @@ export function mount({
   // based fallback without allowing host-page CSS to cross the shadow root.
   const externalStyles = document.createElement("link");
   externalStyles.rel = "stylesheet";
-  externalStyles.href = `${host}/widget/app.css`;
+  // The production binary serves the compiled stable asset. Vite's dev
+  // harness serves source modules instead; asking it for /widget/app.css
+  // falls through to index.html, which the browser rejects as a stylesheet
+  // and makes CSP/older-browser fallback testing look like an unstyled widget.
+  const stylesheetPath = import.meta.env.DEV ? "/widget/src/styles.css?direct" : "/widget/app.css";
+  externalStyles.href = new URL(stylesheetPath, host).href;
   externalStyles.setAttribute("data-hubchat-widget-external-styles", "true");
   shadow.appendChild(externalStyles);
 
@@ -68,7 +118,7 @@ export function mount({
   // failed stylesheet must never turn into an unstyled widget.
   const style = document.createElement("style");
   style.setAttribute("data-hubchat-widget-styles", "true");
-  style.textContent = styles;
+  style.textContent = `${styles}\n${criticalStyles}`;
   shadow.appendChild(style);
 
   // A host page with `style-src 'self'` can block the inline style element even
@@ -84,7 +134,7 @@ export function mount({
   ) {
     try {
       const sheet = new CSSStyleSheet();
-      sheet.replaceSync(styles);
+      sheet.replaceSync(`${styles}\n${criticalStyles}`);
       shadow.adoptedStyleSheets = [...shadow.adoptedStyleSheets, sheet];
     } catch {
       // The style tag remains the only portable option on older browsers.
