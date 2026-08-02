@@ -16,12 +16,14 @@ import {
   useMutation,
   useQuery,
   cn,
+  formatDateTime,
   type Paginated,
 } from "@hubchat/shared";
 import { ArrowRight, Check, Copy, Mail, MessageSquare, Radio, Ticket } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { Wordmark } from "../../components/Wordmark";
+import { useWorkspace, workspaceFormatOptions } from "../../app/workspace-context";
 
 type Step = "usecase" | "inbox" | "surface" | "install" | "invite";
 
@@ -172,6 +174,8 @@ function InstallStep({
   refreshWidgets: () => void;
   onNext: () => void;
 }) {
+  const { workspace } = useWorkspace();
+  const dateFormat = workspaceFormatOptions(workspace);
   const [createdWidget, setCreatedWidget] = useState<LiveWidget | null>(null);
   const [name, setName] = useState("Website support");
   const [domain, setDomain] = useState("");
@@ -242,7 +246,7 @@ function InstallStep({
       {active && (
         <>
           <Card variant="sunken"><CardBody className="space-y-4">
-            <div className="flex items-center gap-3"><span className={cn("grid size-8 shrink-0 place-items-center rounded-full", active.last_seen_at ? "bg-success-subtle text-success-text" : "bg-fill text-fg-muted")}>{active.last_seen_at ? <Check className="size-4" strokeWidth={3} /> : <span className="size-2 animate-pulse rounded-full bg-current" />}</span><div className="min-w-0"><p className="text-sm font-medium text-fg">{active.last_seen_at ? "Widget detected" : "Waiting for the first widget load"}</p><p className="text-xs text-fg-muted">{active.last_seen_at ? `Last seen ${new Date(active.last_seen_at).toLocaleString()}` : "Install the snippet on an allowlisted hostname, then this check will update automatically."}</p></div><Badge className="ml-auto" tone={active.last_seen_at ? "success" : "warning"}>{active.last_seen_at ? "Connected" : "Not detected"}</Badge></div>
+            <div className="flex items-center gap-3"><span className={cn("grid size-8 shrink-0 place-items-center rounded-full", active.last_seen_at ? "bg-success-subtle text-success-text" : "bg-fill text-fg-muted")}>{active.last_seen_at ? <Check className="size-4" strokeWidth={3} /> : <span className="size-2 animate-pulse rounded-full bg-current" />}</span><div className="min-w-0"><p className="text-sm font-medium text-fg">{active.last_seen_at ? "Widget detected" : "Waiting for the first widget load"}</p><p className="text-xs text-fg-muted">{active.last_seen_at ? `Last seen ${formatDateTime(active.last_seen_at, dateFormat)}` : "Install the snippet on an allowlisted hostname, then this check will update automatically."}</p></div><Badge className="ml-auto" tone={active.last_seen_at ? "success" : "warning"}>{active.last_seen_at ? "Connected" : "Not detected"}</Badge></div>
             <div className="flex flex-wrap items-end gap-2"><Field className="min-w-[16rem] flex-1" label="Allowed hostname" htmlFor="onboarding-widget-domain" description="Use a hostname, for example app.example.com."><Input id="onboarding-widget-domain" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="app.example.com" /></Field><Button variant="secondary" size="md" disabled={!normalizedDomain || addDomain.isPending || active.domains.includes(normalizedDomain)} loading={addDomain.isPending} onClick={() => void addDomain.mutate({ domain: normalizedDomain }).catch(() => {})}>{active.domains.includes(normalizedDomain) ? "Allowlisted" : "Allow hostname"}</Button></div>
             {Boolean(addDomain.error) && <p className="text-sm text-danger">{addDomain.error instanceof ApiError ? addDomain.error.message : "Could not allowlist that hostname."}</p>}
           </CardBody></Card>

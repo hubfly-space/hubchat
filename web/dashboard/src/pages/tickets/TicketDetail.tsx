@@ -56,7 +56,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useWorkspace } from "../../app/workspace-context";
+import { useWorkspace, workspaceFormatOptions } from "../../app/workspace-context";
 import { NewTicketDialog } from "./NewTicketDialog";
 
 /**
@@ -268,6 +268,8 @@ function NarrativeCard({ ticket, customer }: { ticket: Ticket; customer: Custome
 }
 
 function ActivitySection({ ticketId }: { ticketId: string }) {
+  const { workspace } = useWorkspace();
+  const dateFormat = workspaceFormatOptions(workspace);
   const activity = useQuery<{ data: ActivityEntry[] }>(
     ["ticket-activity", ticketId],
     (signal) => api.get(`/tickets/${ticketId}/activity`, { signal }),
@@ -293,7 +295,7 @@ function ActivitySection({ ticketId }: { ticketId: string }) {
                       <span className="font-medium text-fg">{entry.actor_name || "Automation"}</span>{" "}
                       {describeAction(entry)}
                     </span>
-                    <Tooltip content={formatDateTime(entry.occurred_at)}>
+                    <Tooltip content={formatDateTime(entry.occurred_at, dateFormat)}>
                       <span className="ml-1.5 text-fg-muted">{formatRelativeShort(entry.occurred_at, new Date())} ago</span>
                     </Tooltip>
                   </span>
@@ -619,16 +621,18 @@ function RequesterCard({ customer }: { customer: Customer | undefined }) {
 }
 
 function TimestampsCard({ ticket }: { ticket: Ticket }) {
+  const { workspace } = useWorkspace();
+  const dateFormat = workspaceFormatOptions(workspace);
   return (
     <Card>
       <CardHeader title="Timestamps" />
       <CardBody>
         <dl>
-          <DetailRow label="Created">{formatDateTime(ticket.created_at)}</DetailRow>
-          <DetailRow label="Updated">{formatDateTime(ticket.updated_at)}</DetailRow>
-          <DetailRow label="Due">{ticket.due_at ? formatDateTime(ticket.due_at) : "No due date"}</DetailRow>
-          {ticket.resolved_at && <DetailRow label="Resolved">{formatDateTime(ticket.resolved_at)}</DetailRow>}
-          {ticket.closed_at && <DetailRow label="Closed">{formatDateTime(ticket.closed_at)}</DetailRow>}
+          <DetailRow label="Created">{formatDateTime(ticket.created_at, dateFormat)}</DetailRow>
+          <DetailRow label="Updated">{formatDateTime(ticket.updated_at, dateFormat)}</DetailRow>
+          <DetailRow label="Due">{ticket.due_at ? formatDateTime(ticket.due_at, dateFormat) : "No due date"}</DetailRow>
+          {ticket.resolved_at && <DetailRow label="Resolved">{formatDateTime(ticket.resolved_at, dateFormat)}</DetailRow>}
+          {ticket.closed_at && <DetailRow label="Closed">{formatDateTime(ticket.closed_at, dateFormat)}</DetailRow>}
         </dl>
       </CardBody>
     </Card>

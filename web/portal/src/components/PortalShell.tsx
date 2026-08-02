@@ -15,15 +15,19 @@ import {
   type ThemeMode,
 } from "@hubchat/shared";
 import { LogOut, Monitor, Moon, Sun, TicketCheck, UserRound } from "lucide-react";
+import { useEffect } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   portalAccent,
   portalAssetURL,
+  portalDirection,
   portalErrorMessage,
   portalFeatureEnabled,
+  portalLanguage,
   portalNavigationItems,
   usePortal,
 } from "../portal-context";
+import { portalText } from "../i18n";
 
 /**
  * Portal chrome.
@@ -38,10 +42,26 @@ export function PortalShell() {
   const { pathname } = useLocation();
   const { mode, setMode } = useTheme();
   const onHome = pathname === "/";
+  const language = portalLanguage(data);
+  const t = (key: string, fallback: string, values?: Record<string, string | number>) => portalText(data, key, fallback, values);
 
-  if (isLoading) return <div className="grid min-h-dvh place-items-center bg-canvas text-sm text-fg-muted">Loading portal…</div>;
+  useEffect(() => {
+    const root = document.documentElement;
+    const previousLanguage = root.getAttribute("lang");
+    const previousDirection = root.getAttribute("dir");
+    root.lang = language;
+    root.dir = portalDirection(language);
+    return () => {
+      if (previousLanguage === null) root.removeAttribute("lang");
+      else root.lang = previousLanguage;
+      if (previousDirection === null) root.removeAttribute("dir");
+      else root.dir = previousDirection;
+    };
+  }, [language]);
+
+  if (isLoading) return <div className="grid min-h-dvh place-items-center bg-canvas text-sm text-fg-muted">{t("loading_portal", "Loading portal…")}</div>;
   if (error || !data) {
-    return <div className="grid min-h-dvh place-items-center bg-canvas px-4 text-center text-sm text-fg-muted"><div><p>{portalErrorMessage(error)}</p><Button className="mt-4" variant="secondary" size="sm" onClick={refetch}>Try again</Button></div></div>;
+    return <div className="grid min-h-dvh place-items-center bg-canvas px-4 text-center text-sm text-fg-muted"><div><p>{portalErrorMessage(error)}</p><Button className="mt-4" variant="secondary" size="sm" onClick={refetch}>{t("try_again", "Try again")}</Button></div></div>;
   }
 
   const { portal, viewer } = data;
@@ -54,6 +74,8 @@ export function PortalShell() {
   return (
     <div
       data-branded
+      lang={language}
+      dir={portalDirection(language)}
       style={{ ["--hc-accent-brand" as string]: accent }}
       className="flex min-h-dvh flex-col bg-canvas text-fg"
     >
@@ -61,7 +83,7 @@ export function PortalShell() {
         href="#content"
         className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:rounded-md focus:bg-accent focus:px-3 focus:py-2 focus:text-sm focus:text-accent-fg"
       >
-        Skip to content
+        {t("skip_to_content", "Skip to content")}
       </a>
 
       <header className="sticky top-0 z-[var(--z-nav)] border-b border-line bg-surface/85 backdrop-blur-md">
@@ -71,7 +93,7 @@ export function PortalShell() {
             <span className="text-sm font-semibold tracking-tight">{portal.name}</span>
           </NavLink>
 
-          <nav aria-label="Portal" className="hc-no-scrollbar hidden flex-1 gap-1 overflow-x-auto sm:flex">
+          <nav aria-label={t("portal_navigation", "Portal")} className="hc-no-scrollbar hidden flex-1 gap-1 overflow-x-auto sm:flex">
             {navigation.map((item) => {
               const external = item.external || /^https?:\/\//i.test(item.href);
               const className = "rounded-md px-2.5 py-1.5 text-sm text-fg-secondary transition-colors hover:bg-fill hover:text-fg";
@@ -90,15 +112,15 @@ export function PortalShell() {
                   variant="ghost"
                   size="sm"
                   iconOnly
-                  aria-label="Appearance"
+                  aria-label={t("appearance", "Appearance")}
                   leading={mode === "dark" ? <Moon /> : mode === "light" ? <Sun /> : <Monitor />}
                 />
               </MenuTrigger>
               <MenuContent align="end">
                 <MenuRadioGroup value={mode} onValueChange={(value) => setMode(value as ThemeMode)}>
-                  <MenuRadioItem value="light">Light</MenuRadioItem>
-                  <MenuRadioItem value="dark">Dark</MenuRadioItem>
-                  <MenuRadioItem value="system">Match system</MenuRadioItem>
+                  <MenuRadioItem value="light">{t("light", "Light")}</MenuRadioItem>
+                  <MenuRadioItem value="dark">{t("dark", "Dark")}</MenuRadioItem>
+                  <MenuRadioItem value="system">{t("match_system", "Match system")}</MenuRadioItem>
                 </MenuRadioGroup>
               </MenuContent>
             </Menu>
@@ -120,19 +142,19 @@ export function PortalShell() {
                     <p className="truncate text-xs text-fg-muted">{viewer.email}</p>
                   </div>
                   <MenuSeparator />
-                  {portalFeatureEnabled(portal, "tickets") && <MenuItem icon={<TicketCheck />}><NavLink to="/tickets">My requests</NavLink></MenuItem>}
+                  {portalFeatureEnabled(portal, "tickets") && <MenuItem icon={<TicketCheck />}><NavLink to="/tickets">{t("my_requests", "My requests")}</NavLink></MenuItem>}
                   <MenuItem icon={<UserRound />}>
-                    <NavLink to="/account">Profile & preferences</NavLink>
+                    <NavLink to="/account">{t("profile_preferences", "Profile & preferences")}</NavLink>
                   </MenuItem>
                   <MenuSeparator />
                   <MenuItem icon={<LogOut />} destructive onSelect={() => { void logout.mutate(undefined); window.location.assign("/portal/sign-in"); }}>
-                    Sign out
+                    {t("sign_out", "Sign out")}
                   </MenuItem>
                 </MenuContent>
               </Menu>
             ) : (
               <Button variant="secondary" size="sm" asChild>
-                <Link to={`/sign-in?portal=${encodeURIComponent(portal.id)}&next=${encodeURIComponent(pathname)}`}>Sign in</Link>
+                <Link to={`/sign-in?portal=${encodeURIComponent(portal.id)}&next=${encodeURIComponent(pathname)}`}>{t("sign_in", "Sign in")}</Link>
               </Button>
             )}
           </div>
@@ -146,7 +168,7 @@ export function PortalShell() {
       <footer className="border-t border-line bg-surface">
         <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-6 text-xs text-fg-muted sm:flex-row sm:items-center sm:px-6">
           <p>© {currentYear} {portal.name}</p>
-          <nav aria-label="Footer" className="flex gap-4 sm:ml-auto">
+          <nav aria-label={t("footer", "Footer")} className="flex gap-4 sm:ml-auto">
             {Array.isArray(portal.theme.footer_links) &&
               portal.theme.footer_links.map((link) => {
                 if (!link || typeof link !== "object") return null;
