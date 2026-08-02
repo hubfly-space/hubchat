@@ -245,6 +245,7 @@ export async function runBrowserJourney({
   publicKey,
   portalID,
   portalCookie,
+  portalFormSlug,
   viewerName = "Journey Customer",
   dashboardCookie,
   workspaceName = "Production Journey Workspace",
@@ -315,6 +316,7 @@ export async function runBrowserJourney({
     assert(dialogState?.label, "widget dialog has no accessible label");
     assert(dialogState.closeFocusable, "widget close control is not keyboard-focusable");
 
+    let portalFormsChecked = false;
     if (portalID && portalCookie) {
       const cookieResult = await browser.page.send("Network.setCookie", {
         name: "hubchat_portal_session",
@@ -352,6 +354,29 @@ export async function runBrowserJourney({
       const portalState = await browser.page.evaluate("({ main: Boolean(document.querySelector('#content')), body: document.body.innerText })");
       assert(portalState.main, "portal tickets route did not render its main content");
       assert(/request|ticket/i.test(portalState.body), "portal tickets route rendered no ticket/request content");
+
+      if (portalFormSlug) {
+        await browser.page.navigate(new URL(`/portal/forms?portal=${encodeURIComponent(portalID)}`, baseURL).href);
+        await waitFor(() => browser.page.evaluate("location.pathname.endsWith('/portal/forms') && Boolean(document.querySelector('#content'))"), "portal forms navigation");
+        await waitFor(() => browser.page.evaluate("document.body.innerText.includes('Production journey request form')"), "live portal forms directory");
+        const formsState = await browser.page.evaluate("({ main: Boolean(document.querySelector('#content')), body: document.body.innerText })");
+        assert(formsState.main, "portal forms route did not render its main content");
+        assert(formsState.body.includes("Production journey request form"), "portal forms directory did not render the live journey form");
+
+        const detailHref = `/forms/${encodeURIComponent(portalFormSlug)}`;
+        await browser.page.evaluate(`(() => {
+          const link = [...document.querySelectorAll("a")].find((item) => item.getAttribute("href")?.includes(${JSON.stringify(detailHref)}));
+          if (!link) throw new Error("portal form detail link is missing");
+          link.click();
+        })()`);
+        await waitFor(() => browser.page.evaluate(`location.pathname.endsWith(${JSON.stringify(`/portal${detailHref}`)}) && Boolean(document.querySelector('#content'))`), "portal form detail navigation");
+        await waitFor(() => browser.page.evaluate("document.body.innerText.includes('Request type') && document.body.innerText.includes('Attachment')"), "live portal form detail");
+        const formState = await browser.page.evaluate("({ body: document.body.innerText, hasAttachmentInput: Boolean(document.querySelector('input[type=file]')), hasSendButton: [...document.querySelectorAll('button')].some((item) => item.textContent?.includes('Send response')) })");
+        assert(formState.body.includes("Request type") && formState.body.includes("Attachment"), "portal form detail did not render its live fields");
+        assert(formState.hasAttachmentInput, "portal form detail did not render the attachment input");
+        assert(formState.hasSendButton, "portal form detail did not render its submit action");
+        portalFormsChecked = true;
+      }
     }
 
     let dashboardChecked = false;
@@ -394,7 +419,7 @@ export async function runBrowserJourney({
       dashboardChecked = true;
     }
 
-    return { widgetState, dialogState, portalChecked: Boolean(portalID && portalCookie), dashboardChecked };
+    return { widgetState, dialogState, portalChecked: Boolean(portalID && portalCookie), portalFormsChecked: Boolean(portalID && portalCookie && portalFormSlug), dashboardChecked };
   } finally {
     await browser.close();
     await host.close();
@@ -409,6 +434,7 @@ if (isMain) {
       publicKey: process.env.HUBCHAT_BROWSER_PUBLIC_KEY,
       portalID: process.env.HUBCHAT_BROWSER_PORTAL_ID,
       portalCookie: process.env.HUBCHAT_BROWSER_PORTAL_COOKIE,
+      portalFormSlug: process.env.HUBCHAT_BROWSER_PORTAL_FORM_SLUG,
       viewerName: process.env.HUBCHAT_BROWSER_VIEWER_NAME ?? "Journey Customer",
       dashboardCookie: process.env.HUBCHAT_BROWSER_DASHBOARD_COOKIE,
       workspaceName: process.env.HUBCHAT_BROWSER_WORKSPACE_NAME ?? "Production Journey Workspace",

@@ -1,4 +1,4 @@
-import { api, useHotkey, useQuery, type Paginated, type Conversation } from "@hubchat/shared";
+import { api, useDashboardPreferences, useHotkey, useQuery, type Paginated, type Conversation } from "@hubchat/shared";
 import { useEffect, useRef, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useWorkspace } from "../workspace-context";
@@ -24,7 +24,13 @@ export function AppShell() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const { isLive } = useWorkspace();
+  const { preferences } = useDashboardPreferences();
   const conversations = useQuery<Paginated<Conversation>>(["shell", "conversations"], (signal) => api.get("/conversations?limit=50", { signal }));
+
+  useEffect(() => {
+    document.documentElement.toggleAttribute("data-reduce-motion", preferences.reduceMotion);
+    return () => document.documentElement.removeAttribute("data-reduce-motion");
+  }, [preferences.reduceMotion]);
 
   const section = sectionForPath(pathname);
   const unreadCount = conversations.data?.data.filter((conversation) => conversation.unread).length ?? 0;

@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { createServer } from "node:http";
 import { runBrowserJourney } from "./check-browser-journey.mjs";
 
@@ -116,6 +116,17 @@ async function downloadText(path, expected = 200) {
   return text;
 }
 
+async function downloadBytes(path, expected = 200) {
+  const headers = new Headers({ Accept: "application/octet-stream" });
+  if (cookieHeader()) headers.set("Cookie", cookieHeader());
+  const response = await fetch(new URL(path, baseURL), { headers });
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (response.status !== expected) {
+    throw new Error(`GET ${path}: status ${response.status}, expected ${expected}: ${bytes.toString("utf8").slice(0, 1200)}`);
+  }
+  return bytes;
+}
+
 async function openVisitorSocket({ publicKey, token, pageURL, conversationID }) {
   const socketURL = new URL("/ws/visitor", baseURL);
   socketURL.protocol = socketURL.protocol === "https:" ? "wss:" : "ws:";
@@ -228,6 +239,67 @@ if (portalBootstrap?.portal?.id !== portalID || portalBootstrap?.portal?.workspa
   throw new Error("public portal bootstrap did not return the created portal and workspace");
 }
 log("portal creation and public bootstrap");
+
+const publicForm = await request("/api/v1/forms", {
+  method: "POST",
+  body: {
+    name: "Production journey request form",
+    slug: `journey-form-${suffix}`,
+    purpose: "ticket",
+    access: "public",
+    confirmation: { message: "Your request form was received." },
+    enabled: true,
+    fields: [
+      { key: "kind", label: "Request type", type: "enum", options: ["question", "bug"], required: true, position: 0 },
+      { key: "details", label: "Bug details", type: "text", required: true, condition: { field: "kind", operator: "is", value: "bug" }, position: 1 },
+      { key: "attachment", label: "Attachment", type: "file", required: true, position: 2 },
+    ],
+  },
+  expected: 201,
+});
+const publicFormSlug = requireValue(publicForm?.slug, "public form slug");
+const authenticatedForm = await request("/api/v1/forms", {
+  method: "POST",
+  body: {
+    name: "Production journey authenticated form",
+    slug: `journey-auth-form-${suffix}`,
+    purpose: "customer",
+    access: "authenticated",
+    enabled: true,
+    fields: [{ key: "email", label: "Email", type: "email", required: true, position: 0 }],
+  },
+  expected: 201,
+});
+const authenticatedFormSlug = requireValue(authenticatedForm?.slug, "authenticated form slug");
+const anonymousPortalForms = await request(`/api/v1/portal/forms?portal=${encodeURIComponent(portalID)}`);
+if (!Array.isArray(anonymousPortalForms?.data) || anonymousPortalForms.data.length !== 1 || anonymousPortalForms.data[0]?.slug !== publicFormSlug) {
+  throw new Error("anonymous portal form list exposed an authenticated form or omitted the public form");
+}
+const publicPortalForm = await request(`/api/v1/portal/forms/${encodeURIComponent(publicFormSlug)}?portal=${encodeURIComponent(portalID)}`);
+if (publicPortalForm?.slug !== publicFormSlug || publicPortalForm?.workspace_id !== undefined) {
+  throw new Error("portal form detail did not return the public form without internal workspace data");
+}
+await request(`/api/v1/portal/forms/${encodeURIComponent(authenticatedFormSlug)}?portal=${encodeURIComponent(portalID)}`, { expected: 401 });
+const formAttachment = await uploadFile(`/api/v1/portal/forms/${encodeURIComponent(publicFormSlug)}/files?portal=${encodeURIComponent(portalID)}`, {
+  fields: {},
+  filename: `journey-form-${suffix}.txt`,
+  contents: "Portal form attachment payload.",
+});
+const formSubmission = await request(`/api/v1/portal/forms/${encodeURIComponent(publicFormSlug)}/submissions?portal=${encodeURIComponent(portalID)}`, {
+  method: "POST",
+  body: {
+    // Selecting question leaves the required bug-details field hidden. The
+    // server must apply the same conditional rule as the portal UI.
+    values: { kind: "question" },
+    file_ids: { attachment: requireValue(formAttachment?.id, "form attachment id") },
+    source_url: `${origin}/portal/forms/${publicFormSlug}`,
+  },
+  expected: 201,
+});
+if (formSubmission?.status !== "accepted" || formSubmission?.confirmation?.message !== "Your request form was received.") {
+  throw new Error("portal form submission did not preserve its accepted status and confirmation");
+}
+log("portal forms, conditional answers, and staged attachment submission");
 
 const weeklyHours = Array.from({ length: 7 }, () => [{ start: "09:00", end: "17:00" }]);
 const calendar = await request("/api/v1/sla/calendars", {
@@ -450,6 +522,12 @@ if (portalSession?.session?.portal_id !== portalID || portalSession?.viewer?.id 
 }
 const portalMe = await request(`/api/v1/portal/me?portal=${encodeURIComponent(portalID)}`);
 if (portalMe?.viewer?.id !== customerID) throw new Error("portal session did not resolve the customer profile");
+const authenticatedPortalForms = await request(`/api/v1/portal/forms?portal=${encodeURIComponent(portalID)}`);
+if (!Array.isArray(authenticatedPortalForms?.data) || !authenticatedPortalForms.data.some((item) => item?.slug === authenticatedFormSlug)) {
+  throw new Error("authenticated portal form list did not include the signed-in form");
+}
+const authenticatedPortalForm = await request(`/api/v1/portal/forms/${encodeURIComponent(authenticatedFormSlug)}?portal=${encodeURIComponent(portalID)}`);
+if (authenticatedPortalForm?.access !== "authenticated") throw new Error("authenticated portal form detail did not enforce its access mode");
 log("portal magic-link delivery and authenticated session");
 
 if (process.env.HUBCHAT_JOURNEY_BROWSER === "1") {
@@ -459,13 +537,15 @@ if (process.env.HUBCHAT_JOURNEY_BROWSER === "1") {
     publicKey,
     portalID,
     portalCookie,
+    portalFormSlug: publicFormSlug,
     viewerName: "Journey Customer",
     dashboardCookie: cookies.get("hubchat_session"),
     workspaceName: "Production Journey Workspace",
   });
   if (!browserResult.portalChecked) throw new Error("browser journey did not receive the authenticated portal session");
+  if (!browserResult.portalFormsChecked) throw new Error("browser journey did not render the authenticated portal forms flow");
   if (!browserResult.dashboardChecked) throw new Error("browser journey did not receive the authenticated dashboard session");
-  log("browser widget CSS isolation, accessible dialog, portal navigation, and dashboard navigation");
+  log("browser widget CSS isolation, accessible dialog, portal forms/navigation, and dashboard navigation");
 }
 
 const feedbackBoard = await request("/api/v1/feedback/boards", {
@@ -539,6 +619,29 @@ const posted = await request(`/api/v1/widget/conversations/${conversationID}/mes
 });
 if (!posted?.id || posted.author_type !== "customer") throw new Error("widget reply was not created as a customer message");
 log("visitor conversation and reply");
+
+const bulkAssigneeID = requireValue(bootstrap?.viewer?.id, "bootstrap viewer member id");
+const bulkUpdate = await request("/api/v1/conversations/bulk", {
+  method: "POST",
+  body: { ids: [conversationID], action: "assign", assignee_id: bulkAssigneeID },
+  expected: 200,
+});
+if (bulkUpdate?.count !== 1 || bulkUpdate?.data?.[0]?.assignee_id !== bulkAssigneeID) {
+  throw new Error("bulk conversation assignment did not return the assigned conversation");
+}
+log("transactional conversation bulk assignment");
+
+const customer360 = await request(`/api/v1/customers/${encodeURIComponent(customerID)}/360`);
+if (!Array.isArray(customer360?.conversations) || !customer360.conversations.some((item) => item?.id === conversationID)) {
+  throw new Error("customer 360 did not include the identified visitor conversation");
+}
+if (!Array.isArray(customer360?.feedback) || !customer360.feedback.some((item) => item?.id === feedbackItemID)) {
+  throw new Error("customer 360 did not include the identified visitor feedback");
+}
+if (customer360.events?.some((item) => Object.prototype.hasOwnProperty.call(item, "payload"))) {
+  throw new Error("customer 360 exposed a raw event payload instead of redacted event metadata");
+}
+log("unified customer 360 context and redacted event metadata");
 
 const ticket = await request(`/api/v1/conversations/${conversationID}/ticket`, {
   method: "POST",
@@ -698,6 +801,15 @@ const exportManifest = await request(`/api/v1/portability/exports/${encodeURICom
 if (exportManifest?.export_id !== exportID || exportManifest?.file_id !== completedExport.file_id || !exportManifest?.checksum) {
   throw new Error("workspace export manifest did not verify the completed archive");
 }
+const exportBytes = await downloadBytes(`/api/v1/files/${encodeURIComponent(completedExport.file_id)}`);
+const exportChecksum = createHash("sha256").update(exportBytes).digest("hex");
+if (exportBytes.length !== exportManifest.size_bytes || exportChecksum !== exportManifest.checksum) {
+  throw new Error(`workspace export download failed integrity verification: ${exportBytes.length} bytes, ${exportChecksum}`);
+}
+const downloadAudit = await request(`/api/v1/audit-logs?action=data.file_downloaded&entity_type=file&entity_id=${encodeURIComponent(completedExport.file_id)}&limit=20`);
+if (!downloadAudit?.data?.some((entry) => entry.action === "data.file_downloaded" && entry.entity_id === completedExport.file_id && entry.request_id)) {
+  throw new Error("workspace export download was not recorded in the audit log");
+}
 const importRequest = await request("/api/v1/portability/imports", {
   method: "POST",
   body: { file_id: completedExport.file_id, kind: "workspace", auto_start: false },
@@ -725,6 +837,6 @@ for (let attempt = 0; attempt < 60; attempt += 1) {
 if (completedImport?.state !== "completed" || completedImport?.processed_rows !== completedImport?.total_rows) {
   throw new Error(`workspace import did not complete: ${completedImport?.state ?? "unknown"}`);
 }
-log("workspace export, manifest verification, and validated import");
+log("workspace export, byte checksum verification, download audit, and validated import");
 
-console.log("Production HTTP/realtime journey OK (setup, portal, SLA, webhook, knowledge base, survey, widget, feedback, conversation, realtime, ticket, portal reply, attachments, automation, export/import)");
+console.log("Production HTTP/realtime journey OK (setup, portal, SLA, webhook, knowledge base, survey, widget, feedback, conversation, realtime, bulk actions, customer 360, ticket, portal reply, attachments, automation, export/import)");
