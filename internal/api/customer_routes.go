@@ -588,7 +588,7 @@ func customerEventJSON(e customer.CustomerEvent, redactPayload bool) map[string]
 	}
 	return map[string]any{
 		"id": e.ID, "workspace_id": e.WorkspaceID, "customer_id": e.CustomerID, "session_id": e.SessionID,
-		"type": e.Type, "source": e.Source, "url": e.URL, "payload": payload, "occurred_at": e.OccurredAt,
+		"type": e.Type, "source": e.Source, "url": e.URL, "request_id": e.RequestID, "payload": payload, "occurred_at": e.OccurredAt,
 	}
 }
 
@@ -674,7 +674,7 @@ func handleIngestEvents(deps Deps) http.HandlerFunc {
 			if source == "" {
 				source = "rest_api"
 			}
-			evt, err := deps.Customer.IngestEvent(r.Context(), actor.WorkspaceID, req.CustomerID, item.Type, source, item.URL, item.Payload)
+			evt, err := deps.Customer.IngestEventWithRequestID(r.Context(), actor.WorkspaceID, req.CustomerID, item.Type, source, item.URL, httpserver.RequestIDFrom(r.Context()), item.Payload)
 			if err != nil {
 				writeCustomerError(w, r, err)
 				return

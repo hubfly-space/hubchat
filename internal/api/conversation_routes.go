@@ -26,6 +26,9 @@ func registerConversationRoutes(mux *http.ServeMux, deps Deps) {
 		requireCapability(deps, authorization.ConversationRead, handleListConversations(deps)))
 	mux.HandleFunc("GET /v1/conversations/counts",
 		requireCapability(deps, authorization.ConversationRead, handleConversationCounts(deps)))
+	mux.HandleFunc("POST /v1/conversations/bulk",
+		requireCapability(deps, authorization.ConversationAssign,
+			idempotent(handleBulkConversationUpdate(deps))))
 
 	// Starting a conversation has no natural idempotency key of its own — two
 	// identical bodies are two legitimate conversations — so the header is the
@@ -165,12 +168,49 @@ func handleConversationCounts(deps Deps) http.HandlerFunc {
 			"unassigned":          counts.Unassigned,
 			"mine":                counts.Mine,
 			"following":           counts.Following,
+			"mentioned":           counts.Mentioned,
 			"waiting_on_us":       counts.WaitingOnUs,
 			"waiting_on_customer": counts.WaitingOnCustomer,
 			"snoozed":             counts.Snoozed,
 			"resolved":            counts.Resolved,
 			"spam":                counts.Spam,
+			"sla_approaching":     counts.SLAApproaching,
+			"sla_breached":        counts.SLABreached,
 		})
+	}
+}
+
+type bulkConversationUpdateRequest struct {
+	IDs        []string `json:"ids"`
+	Action     string   `json:"action"`
+	AssigneeID *string  `json:"assignee_id"`
+	State      string   `json:"state"`
+}
+
+// handleBulkConversationUpdate deliberately exposes only the two operations
+// used by the inbox selection toolbar. Keeping the action vocabulary narrow
+// prevents a generic bulk endpoint from becoming an authorization bypass for
+// mutations that have different invariants (snooze, merge, or ticket links).
+func handleBulkConversationUpdate(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		actor := actorFromRequest(r)
+		var req bulkConversationUpdateRequest
+		if err := httpserver.DecodeJSON(r, &req); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed request body.")
+			return
+		}
+		items, err := deps.Conversation.BulkUpdate(r.Context(), actor.WorkspaceID, actor.MemberID, req.IDs, req.Action, req.AssigneeID, req.State)
+		if err != nil {
+			writeConversationError(w, r, err)
+			return
+		}
+		updated := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			updated = append(updated, map[string]any{
+				"id": item.ID, "state": item.State, "assignee_id": item.AssigneeID,
+			})
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": updated, "count": len(updated)})
 	}
 }
 
@@ -193,6 +233,7 @@ func handleListConversations(deps Deps) http.HandlerFunc {
 			TagID:      query.Get("tag_id"),
 			FollowerID: query.Get("follower_id"),
 			CustomerID: query.Get("customer_id"),
+			SLAState:   query.Get("sla"),
 			Before:     cursor.At,
 			BeforeID:   cursor.ID,
 			// Queried at limit+1 so NewPage can tell "there is another page"
@@ -201,6 +242,20 @@ func handleListConversations(deps Deps) http.HandlerFunc {
 		}
 		if state := query.Get("state"); state != "" {
 			filter.States = strings.Split(state, ",")
+		}
+		if filter.SLAState != "" && filter.SLAState != "approaching" && filter.SLAState != "breached" {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "sla must be approaching or breached.")
+			return
+		}
+		if raw := query.Get("mentioned"); raw != "" {
+			mentioned, parseErr := strconv.ParseBool(raw)
+			if parseErr != nil {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "mentioned must be true or false.")
+				return
+			}
+			if mentioned {
+				filter.MentionedMemberID = actor.MemberID
+			}
 		}
 
 		conversations, err := deps.Conversation.List(r.Context(), actor.WorkspaceID, filter)
@@ -684,6 +739,8 @@ func writeConversationError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, conversation.ErrNotMessageAuthor):
 		httpserver.WriteError(w, r, http.StatusForbidden, httpserver.CodeForbidden, err.Error())
 	case errors.Is(err, conversation.ErrInvalidState),
+		errors.Is(err, conversation.ErrInvalidBulkAction),
+		errors.Is(err, conversation.ErrBulkTooLarge),
 		errors.Is(err, conversation.ErrInvalidPriority),
 		errors.Is(err, conversation.ErrInvalidAssignee),
 		errors.Is(err, conversation.ErrInvalidTeam),

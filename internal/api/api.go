@@ -28,6 +28,7 @@ import (
 	"github.com/hubchat/hubchat/internal/customer"
 	"github.com/hubchat/hubchat/internal/database"
 	"github.com/hubchat/hubchat/internal/emailchannel"
+	"github.com/hubchat/hubchat/internal/emailtemplate"
 	"github.com/hubchat/hubchat/internal/events"
 	"github.com/hubchat/hubchat/internal/feedback"
 	"github.com/hubchat/hubchat/internal/file"
@@ -55,32 +56,33 @@ import (
 // cmd/hubchat and passed down — nothing in this package opens its own
 // database connection.
 type Deps struct {
-	Pool          *database.Pool
-	Logger        *slog.Logger
-	Auth          *auth.Service
-	Workspace     *workspace.Service
-	Conversation  *conversation.Service
-	Inbox         *inbox.Service
-	Customer      *customer.Service
-	Search        *search.Service
-	Ticket        *ticket.Service
-	Widget        *widget.Service
-	File          *file.Service
-	Portal        *portal.Service
-	Notification  *notification.Service
-	Form          *form.Service
-	APIKeys       *apikey.Service
-	Webhook       *webhook.Service
-	Knowledgebase *knowledgebase.Service
-	Feedback      *feedback.Service
-	Survey        *survey.Service
-	SLA           *sla.Service
-	Task          *task.Service
-	Automation    *automation.Service
-	SavedView     *savedview.Service
-	Analytics     *analytics.Service
-	EmailChannel  *emailchannel.Service
-	Portability   *portability.Service
+	Pool           *database.Pool
+	Logger         *slog.Logger
+	Auth           *auth.Service
+	Workspace      *workspace.Service
+	Conversation   *conversation.Service
+	Inbox          *inbox.Service
+	Customer       *customer.Service
+	Search         *search.Service
+	Ticket         *ticket.Service
+	Widget         *widget.Service
+	File           *file.Service
+	Portal         *portal.Service
+	Notification   *notification.Service
+	Form           *form.Service
+	APIKeys        *apikey.Service
+	Webhook        *webhook.Service
+	Knowledgebase  *knowledgebase.Service
+	Feedback       *feedback.Service
+	Survey         *survey.Service
+	SLA            *sla.Service
+	Task           *task.Service
+	Automation     *automation.Service
+	SavedView      *savedview.Service
+	Analytics      *analytics.Service
+	EmailChannel   *emailchannel.Service
+	EmailTemplates *emailtemplate.Service
+	Portability    *portability.Service
 
 	// Hub answers "who is viewing this conversation right now" for the
 	// Conversation DTO's presence field. Read-only from here — writes to
@@ -161,6 +163,7 @@ func New(deps Deps) http.Handler {
 	registerAutomationRoutes(mux, deps)
 	registerAnalyticsRoutes(mux, deps)
 	registerEmailChannelRoutes(mux, deps)
+	registerEmailTemplateRoutes(mux, deps)
 	registerJobRoutes(mux, deps)
 	registerOpsRoutes(mux, deps)
 	registerPortabilityRoutes(mux, deps)
