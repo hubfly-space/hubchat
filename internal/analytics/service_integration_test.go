@@ -293,7 +293,7 @@ func TestReportSchedulesAreWorkspaceScopedAndClaimedOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	schedule, err := service.CreateSchedule(ctx, "wrk_schedule_one", ScheduleInput{
-		ReportID: report.ID, Cadence: "daily", Recipients: []string{"ops@example.com"}, Options: map[string]any{"hour": 9, "minute": 0},
+		ReportID: report.ID, Cadence: "daily", Recipients: []string{"ops@example.com", "alerts@example.com"}, Options: map[string]any{"hour": 9, "minute": 0},
 	}, time.Date(2026, time.July, 31, 8, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
@@ -310,7 +310,7 @@ func TestReportSchedulesAreWorkspaceScopedAndClaimedOnce(t *testing.T) {
 	}
 	queue := &scheduleQueue{}
 	processed, err := service.RunScheduledReports(ctx, time.Now().UTC(), queue)
-	if err != nil || processed != 1 || len(queue.specs) != 1 {
+	if err != nil || processed != 1 || len(queue.specs) != 2 {
 		t.Fatalf("scheduled reports processed=%d jobs=%d err=%v", processed, len(queue.specs), err)
 	}
 	processed, err = service.RunScheduledReports(ctx, time.Now().UTC(), queue)

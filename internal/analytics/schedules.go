@@ -20,6 +20,8 @@ import (
 
 const JobScheduledReports = "analytics.report_schedules"
 
+const maxScheduleRecipients = 20
+
 var (
 	ErrInvalidScheduleReport     = errors.New("analytics: report is required")
 	ErrInvalidScheduleCadence    = errors.New("analytics: cadence must be daily, weekly, or monthly")
@@ -215,6 +217,9 @@ func normalizeScheduleInput(input ScheduleInput) (map[string]any, []string, stri
 		}
 		seen[address] = struct{}{}
 		recipients = append(recipients, address)
+		if len(recipients) > maxScheduleRecipients {
+			return nil, nil, "", false, ErrInvalidScheduleRecipients
+		}
 	}
 	if len(recipients) == 0 {
 		return nil, nil, "", false, ErrInvalidScheduleRecipients

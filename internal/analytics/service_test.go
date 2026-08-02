@@ -2,6 +2,7 @@ package analytics
 
 import (
 	"encoding/json"
+	"strconv"
 	"testing"
 	"time"
 
@@ -20,6 +21,32 @@ func TestNextScheduleRunUsesDeterministicUTCBoundaries(t *testing.T) {
 	}
 	if _, err := nextScheduleRun(now, "monthly", map[string]any{"day": 29}); err != ErrInvalidScheduleOptions {
 		t.Fatalf("invalid monthly day error = %v", err)
+	}
+}
+
+func TestNormalizeScheduleRecipientsDeduplicatesAndBounds(t *testing.T) {
+	options, recipients, format, enabled, err := normalizeScheduleInput(ScheduleInput{
+		Cadence:    "weekly",
+		Recipients: []string{" Ops@example.com ", "ops@example.com", "alerts@example.com"},
+		Format:     "csv",
+	})
+	if err != nil {
+		t.Fatalf("normalize recipients: %v", err)
+	}
+	if len(recipients) != 2 || recipients[0] != "ops@example.com" || recipients[1] != "alerts@example.com" {
+		t.Fatalf("recipients = %#v", recipients)
+	}
+	// Defaults are applied when the schedule is calculated, not persisted in
+	// the input normalization result.
+	if format != "csv" || !enabled || len(options) != 0 {
+		t.Fatalf("format=%q enabled=%v options=%#v", format, enabled, options)
+	}
+	tooMany := make([]string, maxScheduleRecipients+1)
+	for index := range tooMany {
+		tooMany[index] = "recipient-" + strconv.Itoa(index) + "@example.com"
+	}
+	if _, _, _, _, err := normalizeScheduleInput(ScheduleInput{Cadence: "daily", Recipients: tooMany}); err != ErrInvalidScheduleRecipients {
+		t.Fatalf("too many recipients error = %v", err)
 	}
 }
 
