@@ -185,6 +185,8 @@ const commands = new Set([
   "context",
   "update",
   "track",
+  "bind",
+  "unbind",
   "startConversation",
   "openArticle",
   "openForm",

@@ -57,8 +57,24 @@ export type StartConversationResponse = {
   message: WireMessage;
 };
 
+export type PendingWidgetCommand = {
+  command_id: string;
+  binding_id: string;
+  name: string;
+  conversation_id: string;
+  payload: unknown;
+  expires_at: string;
+};
+
 function endpoint(host: string, path: string): string {
   return `${host}/api/v1/widget${path}`;
+}
+
+export class WidgetApiError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = "WidgetApiError";
+  }
 }
 
 async function parse<T>(response: Response): Promise<T> {
@@ -70,7 +86,7 @@ async function parse<T>(response: Response): Promise<T> {
     } catch {
       /* non-JSON error body — keep the generic message */
     }
-    throw new Error(message);
+    throw new WidgetApiError(response.status, message);
   }
   return response.json() as Promise<T>;
 }
@@ -235,12 +251,44 @@ export async function listMessages(
   conversationId: string,
   after = 0,
 ): Promise<WireMessage[]> {
-  const params = new URLSearchParams({ key: publicKey, url: location.href, token, after: String(after) });
+  const params = new URLSearchParams({ key: publicKey, url: location.href, token });
+  // The API treats an omitted cursor as the initial history window. Sending
+  // `after=0` is not equivalent: numeric cursors are deliberately positive
+  // so malformed resume requests cannot silently broaden a read.
+  if (after > 0) params.set("after", String(after));
   const response = await fetch(`${endpoint(host, `/conversations/${conversationId}/messages`)}?${params.toString()}`, {
     credentials: "omit",
   });
   const parsed = await parse<{ data: WireMessage[] }>(response);
   return parsed.data;
+}
+
+// Reconnect fallback for commands sent while the visitor had no active
+// socket. The server claims only unexpired commands owned by this visitor;
+// the widget still deduplicates command IDs because a live event and a
+// reconnect response can cross in flight.
+export async function listPendingCommands(
+  host: string,
+  publicKey: string,
+  token: string,
+  conversationId: string,
+): Promise<PendingWidgetCommand[]> {
+  const commands: PendingWidgetCommand[] = [];
+  let cursor: string | null = null;
+  // Each page claims at most 32 commands. Keep following the opaque cursor so
+  // a reconnect cannot strand a larger offline queue; the hard page bound is
+  // still enforced server-side and the guard prevents a broken server from
+  // creating an unbounded browser loop.
+  for (let page = 0; page < 32; page += 1) {
+    const params = new URLSearchParams({ key: publicKey, url: location.href, token, limit: "32" });
+    if (cursor) params.set("cursor", cursor);
+    const response = await fetch(`${endpoint(host, `/conversations/${encodeURIComponent(conversationId)}/commands`)}?${params.toString()}`, { credentials: "omit" });
+    const parsed = await parse<{ data: PendingWidgetCommand[]; next_cursor: string | null; has_more: boolean }>(response);
+    commands.push(...parsed.data);
+    if (!parsed.has_more || !parsed.next_cursor) break;
+    cursor = parsed.next_cursor;
+  }
+  return commands;
 }
 
 export function identify(
@@ -260,6 +308,10 @@ export function track(
   payload: Record<string, unknown>,
 ): Promise<void> {
   return post(host, "/events", { public_key: publicKey, url: location.href, token, type, page_url: location.href, payload });
+}
+
+export function acknowledgeCommand(host: string, publicKey: string, token: string, conversationId: string, commandId: string, status: "acknowledged" | "ignored" | "failed"): Promise<void> {
+  return post(host, `/conversations/${encodeURIComponent(conversationId)}/commands/${encodeURIComponent(commandId)}/ack`, { public_key: publicKey, url: location.href, token, status });
 }
 
 /* --------------------------------------------------------------- session */

@@ -28,13 +28,15 @@ export type HubchatLifecycleEvent =
   | "close"
   | "message:received"
   | "conversation:started"
-  | "unread:changed";
+  | "unread:changed"
+  | "command";
 
 export type HubchatLifecyclePayload =
   | undefined
   | { count: number }
   | { id: string; body: string }
-  | { id: string };
+  | { id: string }
+  | { name: string; payload: unknown; command_id?: string };
 
 export interface HubchatSDK {
   (method: "boot", options: HubchatBootOptions): void;
@@ -43,6 +45,8 @@ export interface HubchatSDK {
   (method: "context", context: HubchatAttributes): void;
   (method: "update", options: { attributes: HubchatAttributes }): void;
   (method: "track", options: HubchatTrackOptions): void;
+  (method: "bind", options: { name: string; handler: (payload: unknown) => void | Promise<void> }): void;
+  (method: "unbind", options: { name: string }): void;
   (method: "startConversation", options?: { message?: string }): void;
   (method: "openArticle", options: { slug: string }): void;
   (method: "openForm" | "openTicketForm" | "openFeedback" | "openFeedbackForm", options?: { slug?: string }): void;

@@ -227,9 +227,10 @@ export type Conversation = {
   channel: ChannelType;
   subject: string | null;
   state: ConversationState;
-  priority: Priority;
-  customer_id: Id | null;
-  assignee_id: Id | null;
+	priority: Priority;
+	customer_id: Id | null;
+	visitor_id?: Id | null;
+	assignee_id: Id | null;
   team_id: Id | null;
   tag_ids: Id[];
   ticket_id: Id | null;
@@ -471,6 +472,7 @@ export type Customer = {
   owner_id: Id | null;
   presence: PresenceState;
   current_url: string | null;
+  landing_url?: string | null;
   first_seen_at: Timestamp;
   last_seen_at: Timestamp | null;
   last_contacted_at: Timestamp | null;
@@ -506,7 +508,14 @@ export type ContactSession = {
   os: string | null;
   device: "desktop" | "mobile" | "tablet" | "unknown";
   referrer: string | null;
+  landing_url?: string | null;
   current_url: string | null;
+  current_title?: string | null;
+  language?: string | null;
+  timezone?: string | null;
+  platform?: string | null;
+  user_agent?: string | null;
+  viewport?: { width?: number; height?: number; device_pixel_ratio?: number } | null;
   page_views: number;
 };
 
@@ -520,6 +529,48 @@ export type CustomerEvent = {
   url: string | null;
   payload: Record<string, unknown>;
   occurred_at: Timestamp;
+};
+
+export type CustomerPageVisit = {
+  id: Id;
+  url: string | null;
+  title?: string;
+  device?: string;
+  browser?: string;
+  os?: string;
+  platform?: string;
+  referrer_origin?: string;
+  user_agent?: string;
+  viewport?: { width?: number; height?: number; device_pixel_ratio?: number };
+  occurred_at: Timestamp;
+};
+
+export type VisitorContext = {
+  visitor_id: Id;
+  customer_id: Id | null;
+  presence: PresenceState;
+  first_seen_at: Timestamp;
+  last_seen_at: Timestamp;
+  current_page?: CustomerPageVisit;
+  page_journey: CustomerPageVisit[];
+  page_journey_truncated: boolean;
+  context_metadata?: Record<string, unknown>;
+  device?: {
+    device?: string;
+    browser?: string;
+    os?: string;
+    language?: string;
+    timezone?: string;
+    platform?: string;
+    referrer_origin?: string;
+    user_agent?: string;
+    viewport?: { width?: number; height?: number; device_pixel_ratio?: number };
+  };
+  session?: Pick<ContactSession, "id" | "referrer" | "landing_url" | "current_url" | "current_title" | "language" | "timezone" | "platform" | "user_agent" | "viewport" | "page_views" | "started_at" | "last_seen_at" | "ended_at"> & {
+    device?: string;
+    browser?: string;
+    os?: string;
+  };
 };
 
 // ---------------------------------------------------------------- tags & views
