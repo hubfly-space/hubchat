@@ -707,13 +707,14 @@ func (s *Service) IngestDelivery(ctx context.Context, mailboxID, provider string
 	if !json.Valid(payload) {
 		payload, _ = json.Marshal(event)
 	}
+	var deliveryEventID string
 	err = s.pool.QueryRow(ctx, `
 		INSERT INTO email_delivery_events
 			(id,workspace_id,mailbox_id,provider,provider_event_id,event_type,recipient,bounce_type,reason,hard,payload,occurred_at)
 		VALUES($1,$2,$3,$4,$5,$6,NULLIF($7,''),NULLIF($8,''),NULLIF($9,''),$10,$11::jsonb,$12)
 		ON CONFLICT (workspace_id,mailbox_id,provider,provider_event_id) DO NOTHING
 		RETURNING id`, ids.New(ids.PrefixEmailDelivery), mailbox.WorkspaceID, mailbox.ID, provider,
-		event.ProviderEventID, event.Type, event.Recipient, event.BounceType, event.Reason, event.Hard, payload, event.OccurredAt).Scan(new(string))
+		event.ProviderEventID, event.Type, event.Recipient, event.BounceType, event.Reason, event.Hard, payload, event.OccurredAt).Scan(&deliveryEventID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -724,6 +725,15 @@ func (s *Service) IngestDelivery(ctx context.Context, mailboxID, provider string
 	messageID, err := s.matchOutboundMessage(ctx, mailbox.WorkspaceID, event)
 	if err != nil {
 		return err
+	}
+	if messageID != "" {
+		if _, err := s.pool.Exec(ctx, `
+			UPDATE email_delivery_events
+			SET email_message_id=$3
+			WHERE workspace_id=$1 AND id=$2
+		`, mailbox.WorkspaceID, deliveryEventID, messageID); err != nil {
+			return fmt.Errorf("emailchannel: link delivery event: %w", err)
+		}
 	}
 	status := event.Type
 	if status == "bounced" {

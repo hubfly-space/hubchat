@@ -61,6 +61,7 @@ const (
 	CustomerMerged     Type = "customer.merged"
 
 	EventReceived     Type = "event.received"
+	CustomerCommand   Type = "customer.command"
 	FormSubmitted     Type = "form.submitted"
 	MemberJoined      Type = "member.joined"
 	MemberProvisioned Type = "member.provisioned"
