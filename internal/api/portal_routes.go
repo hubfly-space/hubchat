@@ -18,8 +18,8 @@ import (
 	"github.com/hubchat/hubchat/internal/conversation"
 	"github.com/hubchat/hubchat/internal/customer"
 	"github.com/hubchat/hubchat/internal/file"
+	"github.com/hubchat/hubchat/internal/form"
 	"github.com/hubchat/hubchat/internal/httpserver"
-	"github.com/hubchat/hubchat/internal/mailer"
 	"github.com/hubchat/hubchat/internal/portal"
 	"github.com/hubchat/hubchat/internal/ticket"
 )
@@ -39,6 +39,10 @@ func registerPortalRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/portal/tickets/{id}", handlePortalTicket(deps))
 	mux.HandleFunc("POST /v1/portal/tickets/{id}/files", Idempotency(deps)(handlePortalTicketFileUpload(deps)))
 	mux.HandleFunc("POST /v1/portal/tickets/{id}/replies", idempotent(handlePortalTicketReply(deps)))
+	mux.HandleFunc("GET /v1/portal/forms", handlePortalForms(deps))
+	mux.HandleFunc("GET /v1/portal/forms/{slug}", handlePortalForm(deps))
+	mux.HandleFunc("POST /v1/portal/forms/{slug}/files", idempotent(handlePortalFormFileUpload(deps)))
+	mux.HandleFunc("POST /v1/portal/forms/{slug}/submissions", idempotent(handlePortalFormSubmission(deps)))
 	mux.HandleFunc("GET /v1/portal/files/{id}", handlePortalFileDownload(deps))
 }
 
@@ -94,8 +98,9 @@ func handlePortalMagicLink(deps Deps) http.HandlerFunc {
 		if err == nil {
 			link, issueErr := deps.Portal.IssueMagicLink(r.Context(), p.ID, req.Email)
 			if issueErr == nil {
-				deps.sendMailForWorkspace(r, p.WorkspaceID, link.Customer.Email, "Your Hubchat portal sign-in link", "magic_link", mailer.Data{
-					Name: link.Customer.Name, Link: portalMagicLink(deps, p.ID, link.Token, safePortalNext(req.Next)), ExpiresIn: "15 minutes",
+				portalLink := portalMagicLink(deps, p.ID, link.Token, safePortalNext(req.Next))
+				deps.sendCustomerTemplateMailForWorkspace(r, p.WorkspaceID, link.Customer.Email, "portal_magic_link", "Your Hubchat portal sign-in link", "Use this link to sign in to your Hubchat portal:\n\n"+portalLink, map[string]string{
+					"CustomerName": link.Customer.Name, "PortalLink": portalLink, "ExpiresIn": "15 minutes",
 				})
 			} else if !errors.Is(issueErr, portal.ErrCustomerNotFound) && !errors.Is(issueErr, portal.ErrForbidden) {
 				deps.Logger.Error("issuing portal magic link failed", "error", issueErr)
@@ -530,6 +535,154 @@ func handlePortalTicketFileUpload(deps Deps) http.HandlerFunc {
 			}
 		}
 		httpserver.WriteJSON(w, http.StatusCreated, portalFileJSON(*created))
+	}
+}
+
+// portalFormAccess resolves the portal and treats an invalid/missing session
+// as anonymous. Public forms remain readable in that state; the form service
+// and the handlers below turn authenticated-only forms into a 401 instead of
+// ever trusting a customer id supplied by the browser.
+func portalFormAccess(deps Deps, r *http.Request) (*portal.Portal, *portal.Session, bool, error) {
+	p, err := resolvePortal(deps, r)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	token := httpserver.PortalSessionToken(r)
+	if token == "" || deps.Portal == nil {
+		return p, nil, false, nil
+	}
+	session, sessionErr := deps.Portal.Session(r.Context(), token, p.ID)
+	if sessionErr != nil || session.WorkspaceID != p.WorkspaceID {
+		return p, nil, false, nil
+	}
+	return p, session, true, nil
+}
+
+func handlePortalForms(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, _, authenticated, err := portalFormAccess(deps, r)
+		if err != nil {
+			writePortalError(w, r, err)
+			return
+		}
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed cursor.")
+			return
+		}
+		items, err := deps.Form.ListPortalPage(r.Context(), p.WorkspaceID, authenticated, cursor.At, cursor.ID, limit+1)
+		if err != nil {
+			writeFormInternalError(w, r)
+			return
+		}
+		page := NewPage(items, limit, func(item form.Form) Cursor {
+			return Cursor{At: item.CreatedAt, ID: item.ID}
+		})
+		out := make([]map[string]any, 0, len(page.Data))
+		for _, item := range page.Data {
+			out = append(out, formJSON(item, false))
+		}
+		httpserver.WriteJSON(w, http.StatusOK, Page[map[string]any]{Data: out, NextCursor: page.NextCursor, HasMore: page.HasMore})
+	}
+}
+
+func handlePortalForm(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, _, authenticated, err := portalFormAccess(deps, r)
+		if err != nil {
+			writePortalError(w, r, err)
+			return
+		}
+		item, err := deps.Form.GetPortal(r.Context(), p.WorkspaceID, r.PathValue("slug"), authenticated)
+		if errors.Is(err, form.ErrAuthenticationRequired) {
+			httpserver.WriteError(w, r, http.StatusUnauthorized, httpserver.CodeUnauthorized, "Sign in to view this form.")
+			return
+		}
+		if err != nil {
+			writePublicFormNotFound(w, r)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, formJSON(*item, false))
+	}
+}
+
+func handlePortalFormFileUpload(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, session, authenticated, err := portalFormAccess(deps, r)
+		if err != nil {
+			writePortalError(w, r, err)
+			return
+		}
+		item, err := deps.Form.GetPortal(r.Context(), p.WorkspaceID, r.PathValue("slug"), authenticated)
+		if errors.Is(err, form.ErrAuthenticationRequired) {
+			httpserver.WriteError(w, r, http.StatusUnauthorized, httpserver.CodeUnauthorized, "Sign in to attach files to this form.")
+			return
+		}
+		if err != nil {
+			writePublicFormNotFound(w, r)
+			return
+		}
+		if deps.File == nil {
+			writeFormInternalError(w, r)
+			return
+		}
+		uploaderType, uploaderID := "visitor", ""
+		if session != nil {
+			uploaderType, uploaderID = "customer", session.CustomerID
+		}
+		uploaded, uploadErr := uploadFormFile(r, deps.File, p.WorkspaceID, uploaderType, uploaderID)
+		if uploadErr != nil {
+			writeFileError(w, r, uploadErr)
+			return
+		}
+		// Keep the form lookup above as the authorization boundary. The returned
+		// file is staged until the matching submission claims it.
+		_ = item
+		httpserver.WriteJSON(w, http.StatusCreated, portalFileJSON(*uploaded))
+	}
+}
+
+func handlePortalFormSubmission(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, session, authenticated, err := portalFormAccess(deps, r)
+		if err != nil {
+			writePortalError(w, r, err)
+			return
+		}
+		definition, err := deps.Form.GetPortal(r.Context(), p.WorkspaceID, r.PathValue("slug"), authenticated)
+		if errors.Is(err, form.ErrAuthenticationRequired) {
+			httpserver.WriteError(w, r, http.StatusUnauthorized, httpserver.CodeUnauthorized, "Sign in to submit this form.")
+			return
+		}
+		if err != nil {
+			writePublicFormNotFound(w, r)
+			return
+		}
+		var input form.SubmissionInput
+		if err := httpserver.DecodeJSON(r, &input); err != nil {
+			writeFormValidationError(w, r, err)
+			return
+		}
+		input.CustomerID = ""
+		if session != nil {
+			input.CustomerID = session.CustomerID
+		}
+		input.SourceURL = strings.TrimSpace(input.SourceURL)
+		if input.SourceURL != "" {
+			parsed, parseErr := url.Parse(input.SourceURL)
+			if parseErr != nil || parsed.Scheme == "" || parsed.Host == "" {
+				writeFormValidationError(w, r, errors.New("source_url must be an absolute URL"))
+				return
+			}
+		}
+		input.IP = clientIP(r)
+		input.UserAgent = r.UserAgent()
+		id, submitErr := deps.Form.SubmitPortal(r.Context(), p.WorkspaceID, r.PathValue("slug"), authenticated, input)
+		if submitErr != nil {
+			writeFormError(w, r, submitErr)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, map[string]any{"id": id, "status": "accepted", "confirmation": definition.Confirmation})
 	}
 }
 

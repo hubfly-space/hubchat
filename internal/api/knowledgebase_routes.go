@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hubchat/hubchat/internal/authorization"
@@ -353,7 +354,7 @@ func handlePublicArticle(deps Deps) http.HandlerFunc {
 		if surface == "" {
 			surface = "portal"
 		}
-		item, err := deps.Knowledgebase.GetPublishedBySlugSurface(r.Context(), r.PathValue("workspaceID"), r.PathValue("slug"), surface)
+		item, err := deps.Knowledgebase.GetPublishedBySlugSurfaceLanguage(r.Context(), r.PathValue("workspaceID"), r.PathValue("slug"), surface, r.URL.Query().Get("language"))
 		if errors.Is(err, knowledgebase.ErrNotFound) {
 			httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Article not found.")
 			return
@@ -369,14 +370,19 @@ func handlePublicArticle(deps Deps) http.HandlerFunc {
 func handlePublicArticleFeedback(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
-			Helpful bool   `json:"helpful"`
-			Comment string `json:"comment"`
+			Helpful  bool   `json:"helpful"`
+			Comment  string `json:"comment"`
+			Language string `json:"language"`
 		}
 		if err := httpserver.DecodeJSON(r, &input); err != nil {
 			writeKnowledgebaseValidation(w, r, err)
 			return
 		}
-		article, err := deps.Knowledgebase.GetPublishedBySlugSurface(r.Context(), r.PathValue("workspaceID"), r.PathValue("slug"), "portal")
+		language := strings.TrimSpace(r.URL.Query().Get("language"))
+		if language == "" {
+			language = input.Language
+		}
+		article, err := deps.Knowledgebase.GetPublishedBySlugSurfaceLanguage(r.Context(), r.PathValue("workspaceID"), r.PathValue("slug"), "portal", language)
 		if err != nil {
 			writeKnowledgebaseError(w, r, err)
 			return

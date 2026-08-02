@@ -139,20 +139,38 @@ func (d Deps) sendMailForWorkspace(r *http.Request, workspaceID, to, subject, te
 	}
 }
 
+// sendCustomerTemplateMailForWorkspace queues a workspace-customizable
+// customer message. Authentication mail deliberately continues through
+// sendMailForWorkspace and the fixed internal/mailer templates.
+func (d Deps) sendCustomerTemplateMailForWorkspace(r *http.Request, workspaceID, to, key, fallbackSubject, fallbackBody string, values map[string]string) {
+	if d.Jobs == nil {
+		return
+	}
+	_, err := d.Jobs.Enqueue(r.Context(), jobs.Spec{
+		WorkspaceID: workspaceID, Queue: "email", Type: JobEmailSend,
+		Payload: EmailPayload{To: to, Subject: fallbackSubject, Body: fallbackBody, WorkspaceID: workspaceID, TemplateKey: key, TemplateData: values},
+	})
+	if err != nil {
+		d.Logger.Error("queueing customer template email failed", "template", key, "error", err)
+	}
+}
+
 // JobEmailSend is the job type the worker registers for outbound mail.
 const JobEmailSend = "email.send"
 
 // EmailPayload is what the email.send job carries.
 type EmailPayload struct {
-	To             string   `json:"to"`
-	Subject        string   `json:"subject"`
-	Body           string   `json:"body"`
-	ReplyTo        string   `json:"reply_to,omitempty"`
-	MessageID      string   `json:"message_id,omitempty"`
-	InReplyTo      string   `json:"in_reply_to,omitempty"`
-	AttachmentIDs  []string `json:"attachment_ids,omitempty"`
-	WorkspaceID    string   `json:"workspace_id,omitempty"`
-	EmailMessageID string   `json:"email_message_id,omitempty"`
+	To             string            `json:"to"`
+	Subject        string            `json:"subject"`
+	Body           string            `json:"body"`
+	ReplyTo        string            `json:"reply_to,omitempty"`
+	MessageID      string            `json:"message_id,omitempty"`
+	InReplyTo      string            `json:"in_reply_to,omitempty"`
+	AttachmentIDs  []string          `json:"attachment_ids,omitempty"`
+	WorkspaceID    string            `json:"workspace_id,omitempty"`
+	EmailMessageID string            `json:"email_message_id,omitempty"`
+	TemplateKey    string            `json:"template_key,omitempty"`
+	TemplateData   map[string]string `json:"template_data,omitempty"`
 }
 
 // recordUserAudit writes an audit entry for an account-level action.
