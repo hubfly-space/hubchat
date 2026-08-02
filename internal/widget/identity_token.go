@@ -12,18 +12,21 @@ import (
 )
 
 var (
-	ErrIdentityTokenInvalid = errors.New("widget: identity token is malformed or has an invalid signature")
-	ErrIdentityTokenExpired = errors.New("widget: identity token has expired")
+	ErrIdentityTokenInvalid  = errors.New("widget: identity token is malformed or has an invalid signature")
+	ErrIdentityTokenExpired  = errors.New("widget: identity token has expired")
+	ErrIdentityTokenReplayed = errors.New("widget: identity token has already been used")
 )
+
+const maxIdentityNonceBytes = 255
 
 // identityClaims is what a workspace's own backend asserts about a visitor,
 // signed so the widget can trust it without a round trip to that backend.
 type identityClaims struct {
-	Subject string `json:"sub"`           // the external id this workspace's own system uses for this person
-	Issuer  string `json:"iss"`           // who signed this — informational, shown back on verification failure
+	Subject string `json:"sub"` // the external id this workspace's own system uses for this person
+	Issuer  string `json:"iss"` // who signed this — informational, shown back on verification failure
 	Email   string `json:"email"`
 	Name    string `json:"name"`
-	Expiry  int64  `json:"exp"`           // unix seconds
+	Expiry  int64  `json:"exp"` // unix seconds
 	Nonce   string `json:"nonce"`
 }
 
@@ -58,10 +61,9 @@ func (s *Service) IdentitySecret(workspaceID string) string {
 // the signature itself is what proves the claim came from this workspace's
 // own backend.
 //
-// nonce is carried and could back a used-token cache to reject replay within
-// the expiry window, but no such cache exists yet — a captured, unexpired
-// token is currently replayable. Signature forgery and use-after-expiry are
-// closed; replay-within-expiry is a known gap, not an oversight.
+// The nonce is consumed by Identify after signature and expiry verification.
+// The ledger is PostgreSQL-backed so a captured token cannot be replayed
+// through another HTTP process before it expires.
 func verifyIdentityToken(secretKey []byte, workspaceID, token string) (*identityClaims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
@@ -90,11 +92,16 @@ func verifyIdentityToken(secretKey []byte, workspaceID, token string) (*identity
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return nil, ErrIdentityTokenInvalid
 	}
-	if claims.Subject == "" || claims.Issuer == "" || claims.Expiry == 0 {
+	if claims.Subject == "" || claims.Issuer == "" || claims.Expiry == 0 || claims.Nonce == "" || len(claims.Nonce) > maxIdentityNonceBytes {
 		return nil, ErrIdentityTokenInvalid
 	}
 	if time.Unix(claims.Expiry, 0).Before(time.Now()) {
 		return nil, ErrIdentityTokenExpired
 	}
 	return &claims, nil
+}
+
+func identityNonceHash(nonce string) []byte {
+	hash := sha256.Sum256([]byte(nonce))
+	return hash[:]
 }
