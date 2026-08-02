@@ -58,6 +58,22 @@ export type ApiAttributeDefinitionPage = ApiPageOf & {
   "data"?: ApiAttributeDefinition[];
 };
 
+export type ApiBulkConversationUpdateRequest = {
+  "ids": ApiId[];
+  "action": "assign" | "state";
+  "assignee_id"?: ApiId | null;
+  "state"?: string;
+};
+
+export type ApiBulkConversationUpdateResult = {
+  "data": {
+  "id": ApiId;
+  "state": string;
+  "assignee_id": string | null;
+}[];
+  "count": number;
+};
+
 export type ApiConversation = {
   "id": ApiId;
   "workspace_id": ApiId;
@@ -81,6 +97,21 @@ export type ApiConversation = {
   "sla": ApiConversationSLA | null;
   "viewers": ApiId[];
   "created_at": ApiTimestamp;
+};
+
+export type ApiConversationCounts = {
+  "all": number;
+  "unassigned": number;
+  "mine": number;
+  "following": number;
+  "mentioned": number;
+  "waiting_on_us": number;
+  "waiting_on_customer": number;
+  "snoozed": number;
+  "resolved": number;
+  "spam": number;
+  "sla_approaching": number;
+  "sla_breached": number;
 };
 
 export type ApiConversationLink = {
@@ -179,6 +210,16 @@ export type ApiCustomer = {
 };
 
 export type ApiCustomer360 = {
+  "companies": ApiCustomer360Company[];
+  "companies_truncated": boolean;
+  "conversations": ApiCustomer360Conversation[];
+  "conversations_truncated": boolean;
+  "tickets": ApiCustomer360Ticket[];
+  "tickets_truncated": boolean;
+  "events": ApiCustomer360Event[];
+  "events_truncated": boolean;
+  "sessions": ApiCustomer360Session[];
+  "sessions_truncated": boolean;
   "feedback": ApiCustomer360Feedback[];
   "feedback_truncated": boolean;
   "surveys": ApiCustomer360Survey[];
@@ -199,6 +240,33 @@ export type ApiCustomer360Article = {
   "helpful": boolean;
   "comment"?: string;
   "created_at": ApiTimestamp;
+};
+
+export type ApiCustomer360Company = {
+  "id": ApiId;
+  "name": string;
+  "domain"?: string | null;
+  "tier"?: string | null;
+};
+
+export type ApiCustomer360Conversation = {
+  "id": ApiId;
+  "subject"?: string | null;
+  "state": string;
+  "channel": string;
+  "inbox_id": ApiId;
+  "last_message_preview": string;
+  "last_message_at"?: string | null;
+  "created_at": ApiTimestamp;
+};
+
+export type ApiCustomer360Event = {
+  "id": ApiId;
+  "type": string;
+  "source": string;
+  "url"?: string | null;
+  "request_id"?: string | null;
+  "occurred_at": ApiTimestamp;
 };
 
 export type ApiCustomer360Feedback = {
@@ -233,6 +301,18 @@ export type ApiCustomer360Merge = {
   "created_at": ApiTimestamp;
 };
 
+export type ApiCustomer360Session = {
+  "id": ApiId;
+  "device"?: string | null;
+  "browser"?: string | null;
+  "os"?: string | null;
+  "current_url"?: string | null;
+  "page_views": number;
+  "started_at": ApiTimestamp;
+  "last_seen_at": ApiTimestamp;
+  "ended_at"?: string | null;
+};
+
 export type ApiCustomer360Survey = {
   "id": ApiId;
   "survey_id": ApiId;
@@ -241,6 +321,18 @@ export type ApiCustomer360Survey = {
   "score"?: number | null;
   "comment"?: string;
   "submitted_at"?: string | null;
+};
+
+export type ApiCustomer360Ticket = {
+  "id": ApiId;
+  "number": number;
+  "prefix": string;
+  "title": string;
+  "status": string;
+  "priority": string;
+  "conversation_id"?: string | null;
+  "updated_at": ApiTimestamp;
+  "created_at": ApiTimestamp;
 };
 
 export type ApiCustomerPage = ApiPageOf & {
@@ -650,6 +742,7 @@ export type ApiWorkspace = {
 
 export type ApiOperationId =
   | "addPortalDomain"
+  | "bulkUpdateConversations"
   | "confirmImport"
   | "convertConversationToTicket"
   | "createAPIKey"
@@ -692,6 +785,7 @@ export type ApiOperationId =
   | "deleteCustomersId"
   | "deleteCustomersIdTagsTagID"
   | "deleteEmailMailbox"
+  | "deleteEmailTemplatesKey"
   | "deleteFieldDefinitionsId"
   | "deleteForm"
   | "deleteInboxesId"
@@ -749,6 +843,7 @@ export type ApiOperationId =
   | "getCustomersIdSessions"
   | "getCustomersIdTimeline"
   | "getEmailStatus"
+  | "getEmailTemplates"
   | "getExport"
   | "getExportManifest"
   | "getFeedbackBoardsId"
@@ -773,6 +868,7 @@ export type ApiOperationId =
   | "getOperationalSummary"
   | "getPortalBootstrap"
   | "getPortalFilesId"
+  | "getPortalForm"
   | "getPortalProfile"
   | "getPortals"
   | "getPortalsId"
@@ -855,6 +951,7 @@ export type ApiOperationId =
   | "listMailboxEmailSuppressions"
   | "listMetricDefinitions"
   | "listPortalDomains"
+  | "listPortalForms"
   | "listPublicChangelogEntries"
   | "listPublicFeedbackComments"
   | "listPublicFeedbackItems"
@@ -942,6 +1039,7 @@ export type ApiOperationId =
   | "postCustomersMerge"
   | "postCustomersMergePreview"
   | "postCustomersMergesIdReverse"
+  | "postEmailTemplatesKeyPreview"
   | "postFeedbackItemsIdComments"
   | "postFeedbackItemsIdVotes"
   | "postFieldDefinitions"
@@ -993,6 +1091,7 @@ export type ApiOperationId =
   | "publishChangelogEntry"
   | "putCompaniesIdCustomersCustomerID"
   | "putConversationsIdFollowersMe"
+  | "putEmailTemplatesKey"
   | "putFieldDefinitionsReorder"
   | "putInboxesIdDefault"
   | "putNotificationsPreferences"
@@ -1008,6 +1107,7 @@ export type ApiOperationId =
   | "removeEmailSuppression"
   | "searchPublicArticles"
   | "sendOperationalTestEmail"
+  | "submitPortalForm"
   | "submitPublicForm"
   | "submitSurveyResponse"
   | "subscribeToFeedbackItem"
@@ -1032,6 +1132,7 @@ export type ApiOperationId =
   | "updateTicket"
   | "uploadFile"
   | "uploadPortabilityImportFile"
+  | "uploadPortalFormFile"
   | "uploadPublicFormFile"
   | "useAutomationMacro"
   | "verifyPortalDomain";
@@ -1042,6 +1143,7 @@ export type ApiOperationCatalog = {
 }; response: {
   [key: string]: unknown;
 }; };
+  "bulkUpdateConversations": { method: "POST"; path: "/v1/conversations/bulk"; request: ApiBulkConversationUpdateRequest; response: ApiBulkConversationUpdateResult; };
   "confirmImport": { method: "POST"; path: "/v1/portability/imports/{id}/confirm"; request: {
   [key: string]: unknown;
 }; response: {
@@ -1192,6 +1294,9 @@ export type ApiOperationCatalog = {
   [key: string]: unknown;
 }; };
   "deleteEmailMailbox": { method: "DELETE"; path: "/v1/email/mailboxes/{id}"; request: unknown; response: unknown; };
+  "deleteEmailTemplatesKey": { method: "DELETE"; path: "/v1/email/templates/{key}"; request: unknown; response: {
+  [key: string]: unknown;
+}; };
   "deleteFieldDefinitionsId": { method: "DELETE"; path: "/v1/field-definitions/{id}"; request: unknown; response: {
   [key: string]: unknown;
 }; };
@@ -1310,9 +1415,7 @@ export type ApiOperationCatalog = {
   [key: string]: unknown;
 }; };
   "getConversation": { method: "GET"; path: "/v1/conversations/{id}"; request: unknown; response: ApiConversation; };
-  "getConversationsCounts": { method: "GET"; path: "/v1/conversations/counts"; request: unknown; response: {
-  [key: string]: unknown;
-}; };
+  "getConversationsCounts": { method: "GET"; path: "/v1/conversations/counts"; request: unknown; response: ApiConversationCounts; };
   "getConversationsIdFollowers": { method: "GET"; path: "/v1/conversations/{id}/followers"; request: unknown; response: {
   [key: string]: unknown;
 }; };
@@ -1331,6 +1434,9 @@ export type ApiOperationCatalog = {
   [key: string]: unknown;
 }; };
   "getEmailStatus": { method: "GET"; path: "/v1/email/status"; request: unknown; response: {
+  [key: string]: unknown;
+}; };
+  "getEmailTemplates": { method: "GET"; path: "/v1/email/templates"; request: unknown; response: {
   [key: string]: unknown;
 }; };
   "getExport": { method: "GET"; path: "/v1/portability/exports/{id}"; request: unknown; response: {
@@ -1399,6 +1505,9 @@ export type ApiOperationCatalog = {
   [key: string]: unknown;
 }; };
   "getPortalFilesId": { method: "GET"; path: "/v1/portal/files/{id}"; request: unknown; response: {
+  [key: string]: unknown;
+}; };
+  "getPortalForm": { method: "GET"; path: "/v1/portal/forms/{slug}"; request: unknown; response: {
   [key: string]: unknown;
 }; };
   "getPortalProfile": { method: "GET"; path: "/v1/portal/me"; request: unknown; response: {
@@ -1617,6 +1726,9 @@ export type ApiOperationCatalog = {
   [key: string]: unknown;
 }; };
   "listPortalDomains": { method: "GET"; path: "/v1/portals/{id}/domains"; request: unknown; response: {
+  [key: string]: unknown;
+}; };
+  "listPortalForms": { method: "GET"; path: "/v1/portal/forms"; request: unknown; response: {
   [key: string]: unknown;
 }; };
   "listPublicChangelogEntries": { method: "GET"; path: "/v1/public/changelog/{workspaceID}"; request: unknown; response: {
@@ -2018,6 +2130,11 @@ export type ApiOperationCatalog = {
 }; response: {
   [key: string]: unknown;
 }; };
+  "postEmailTemplatesKeyPreview": { method: "POST"; path: "/v1/email/templates/{key}/preview"; request: {
+  [key: string]: unknown;
+}; response: {
+  [key: string]: unknown;
+}; };
   "postFeedbackItemsIdComments": { method: "POST"; path: "/v1/feedback/items/{id}/comments"; request: {
   [key: string]: unknown;
 }; response: {
@@ -2273,6 +2390,11 @@ export type ApiOperationCatalog = {
 }; response: {
   [key: string]: unknown;
 }; };
+  "putEmailTemplatesKey": { method: "PUT"; path: "/v1/email/templates/{key}"; request: {
+  [key: string]: unknown;
+}; response: {
+  [key: string]: unknown;
+}; };
   "putFieldDefinitionsReorder": { method: "PUT"; path: "/v1/field-definitions/reorder"; request: {
   [key: string]: unknown;
 }; response: {
@@ -2334,6 +2456,11 @@ export type ApiOperationCatalog = {
   [key: string]: unknown;
 }; };
   "sendOperationalTestEmail": { method: "POST"; path: "/v1/ops/test-email"; request: {
+  [key: string]: unknown;
+}; response: {
+  [key: string]: unknown;
+}; };
+  "submitPortalForm": { method: "POST"; path: "/v1/portal/forms/{slug}/submissions"; request: {
   [key: string]: unknown;
 }; response: {
   [key: string]: unknown;
@@ -2422,6 +2549,9 @@ export type ApiOperationCatalog = {
   [key: string]: unknown;
 }; };
   "uploadPortabilityImportFile": { method: "POST"; path: "/v1/portability/import-files"; request: unknown; response: {
+  [key: string]: unknown;
+}; };
+  "uploadPortalFormFile": { method: "POST"; path: "/v1/portal/forms/{slug}/files"; request: unknown; response: {
   [key: string]: unknown;
 }; };
   "uploadPublicFormFile": { method: "POST"; path: "/v1/public/forms/{workspaceID}/{slug}/files"; request: unknown; response: {

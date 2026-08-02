@@ -629,7 +629,7 @@ export type WidgetAppearance = {
   custom_css_vars: Record<string, string>;
 };
 
-export type WidgetContent = {
+export type WidgetContentFields = {
   title: string;
   subtitle: string;
   welcome_message: string;
@@ -638,6 +638,10 @@ export type WidgetContent = {
   offline_message: string;
   response_time_text: string;
   consent_text: string | null;
+};
+
+export type WidgetContent = WidgetContentFields & {
+  translations?: Record<string, Partial<WidgetContentFields>>;
 };
 
 export type WidgetBehavior = {
