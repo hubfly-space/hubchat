@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   clearSession,
+  acknowledgeCommand,
   createFeedbackItem,
   getArticle,
   identify as apiIdentify,
@@ -23,6 +24,7 @@ import {
   listFeedbackItems,
   listForms,
   listMessages,
+  listPendingCommands,
   loadSession,
   postMessage,
   saveSession,
@@ -36,6 +38,7 @@ import {
   track as apiTrack,
   uploadFile,
   voteFeedbackItem,
+  WidgetApiError,
   type WidgetFeedbackBoard,
   type WidgetFeedbackItem,
   type WidgetArticle,
@@ -105,9 +108,8 @@ export function Widget({
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // The visitor's own token and, once one exists, the conversation it owns —
-  // both persisted so a page reload (or a return visit, when
-  // behavior.persist_conversation is set) resumes the same thread instead of
-  // starting a new one. Refs, not state: reading the current value inside
+  // both persisted so a page reload or return visit resumes the same thread
+  // instead of starting a new one. Refs, not state: reading the current value inside
   // `send` must never race a stale render.
   const tokenRef = useRef<string | null>(null);
   const visitorTokenPromiseRef = useRef<Promise<string> | null>(null);
@@ -115,6 +117,8 @@ export function Widget({
   const socketRef = useRef<VisitorSocket | null>(null);
   const viewedArticlesRef = useRef(new Set<string>());
   const impressionTrackedRef = useRef(false);
+  const commandHandlersRef = useRef(new Map<string, (payload: unknown) => unknown | Promise<unknown>>());
+  const handledCommandIDsRef = useRef(new Set<string>());
 
   const { appearance, content } = config;
   const theme = useResolvedTheme(appearance.theme);
@@ -160,6 +164,28 @@ export function Widget({
 
   /* ------------------------------------------------------------- realtime */
 
+  const deliverCommand = useCallback((token: string, data: { command_id?: string; name?: string; payload?: unknown }, conversationID = conversationRef.current) => {
+    if (!data.command_id || !conversationID || handledCommandIDsRef.current.has(data.command_id)) return;
+    // A live event and the reconnect endpoint can cross in flight. Keep a
+    // bounded per-mount dedupe set so the host handler is not run twice.
+    if (handledCommandIDsRef.current.size >= 128) {
+      const oldest = handledCommandIDsRef.current.values().next().value;
+      if (typeof oldest === "string") handledCommandIDsRef.current.delete(oldest);
+    }
+    handledCommandIDsRef.current.add(data.command_id);
+
+    const handler = data.name ? commandHandlersRef.current.get(data.name) : undefined;
+    onEvent("command", { name: data.name, payload: data.payload, command_id: data.command_id });
+    if (!handler) {
+      void acknowledgeCommand(host, publicKey, token, conversationID, data.command_id, "ignored").catch(() => {});
+      return;
+    }
+    void Promise.resolve()
+      .then(() => handler(data.payload))
+      .then(() => acknowledgeCommand(host, publicKey, token, conversationID, data.command_id!, "acknowledged"))
+      .catch(() => acknowledgeCommand(host, publicKey, token, conversationID, data.command_id!, "failed").catch(() => {}));
+  }, [host, onEvent, publicKey]);
+
   // openSocket is called once a conversation exists — never before, because
   // the server computes a visitor's realtime grant from their conversations
   // at connect time (internal/realtime's Grant "only ever narrows", never
@@ -175,6 +201,18 @@ export function Widget({
         token,
         onStatusChange: () => {},
         onEvent: (event: WireEvent) => {
+          if (event.type === "customer.command") {
+            const data = event.data as { command_id?: string; name?: string; payload?: unknown };
+            // The visitor grant may cover more than one conversation. A live
+            // command is scoped by the event envelope's entity, not by the
+            // conversation currently rendered in this widget. Refuse an
+            // event without that boundary or for another owned thread; the
+            // reconnect endpoint will deliver it when that thread is opened.
+            const conversationID = event.entity_type === "conversation" ? event.entity_id : undefined;
+            if (!conversationID || conversationID !== conversationRef.current) return;
+            deliverCommand(token, data, conversationID);
+            return;
+          }
           if (event.type === "presence.typing") {
             const typing = event.data as { actor_type: string; typing: boolean };
             if (typing.actor_type === "agent") setAgentTyping(typing.typing);
@@ -198,7 +236,7 @@ export function Widget({
         },
       });
     },
-    [host, publicKey, onEvent],
+    [deliverCommand, host, onEvent, publicKey],
   );
 
   // Mirrors `open` into a ref so the socket callback above (created once per
@@ -210,21 +248,44 @@ export function Widget({
   }, [open]);
 
   // Resume a persisted session on mount: same visitor, same conversation,
-  // history reloaded and the socket reconnected — this is what makes a page
-  // reload (or a return visit, when persist_conversation is set) pick up
-  // exactly where the visitor left off rather than starting over.
+  // history reloaded and the socket reconnected. Conversation continuity is
+  // a core identity guarantee, not an optional visual preference, so this is
+  // intentionally independent of the appearance/behavior configuration.
   useEffect(() => {
-    if (!config.behavior.persist_conversation) return;
     const session = loadSession(publicKey);
     if (!session?.token) return;
     tokenRef.current = session.token;
 
     if (session.conversationId) {
       conversationRef.current = session.conversationId;
+      setScreen("chat");
       listMessages(host, publicKey, session.token, session.conversationId)
-        .then((wire) => setMessages(wire.filter((m) => m.kind !== "note").map(fromWire)))
-        .catch(() => {});
+        .then((wire) => {
+          const visible = wire.filter((m) => m.kind !== "note").map(fromWire);
+          setMessages((current) => {
+            const byID = new Map(current.map((message) => [message.id, message]));
+            for (const message of visible) byID.set(message.id, message);
+            return [...byID.values()].sort((a, b) => a.at.localeCompare(b.at));
+          });
+        })
+        .catch((error: unknown) => {
+          // Only an authoritative ownership/not-found response invalidates
+          // the saved thread. A timeout or temporary API outage must never
+          // destroy a visitor's ability to resume it later.
+          if (error instanceof WidgetApiError && [401, 403, 404].includes(error.status)) {
+            conversationRef.current = null;
+            clearSession(publicKey);
+            setMessages([]);
+            setScreen("home");
+          }
+        });
       openSocket(session.token);
+      void listPendingCommands(host, publicKey, session.token, session.conversationId)
+        .then((pending) => pending.forEach((command) => deliverCommand(session.token, command, command.conversation_id)))
+        .catch(() => {
+          // A temporary reconnect failure must not clear the saved visitor
+          // session. The socket or the next widget mount can retry it.
+        });
     }
 
     return () => socketRef.current?.close();
@@ -232,6 +293,53 @@ export function Widget({
     // different widget instance entirely, which React already remounts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Record the current page and lightweight client context. URLs are reduced
+  // to origin + path so query strings cannot accidentally persist credentials
+  // or personal data. History hooks are restored on unmount.
+  useEffect(() => {
+    const safePage = () => {
+      try {
+        const url = new URL(location.href);
+        return { origin: url.origin, path: url.pathname || "/" };
+      } catch {
+        return { origin: "", path: "/" };
+      }
+    };
+    const recordPage = () => {
+      const page = safePage();
+      const userAgent = navigator.userAgent || "";
+      const device = /iPad|Tablet|Android(?!.*Mobile)/i.test(userAgent) ? "tablet" : /Mobile|Android|iPhone/i.test(userAgent) ? "mobile" : "desktop";
+      const browser = /Edg\//.test(userAgent) ? "Edge" : /Chrome\//.test(userAgent) ? "Chrome" : /Firefox\//.test(userAgent) ? "Firefox" : /Safari\//.test(userAgent) && !/Chrome\//.test(userAgent) ? "Safari" : "Other";
+      const os = /Windows/i.test(userAgent) ? "Windows" : /Mac OS X/i.test(userAgent) ? "macOS" : /Android/i.test(userAgent) ? "Android" : /iPhone|iPad/i.test(userAgent) ? "iOS" : /Linux/i.test(userAgent) ? "Linux" : "Other";
+      void ensureVisitorToken().then((token) => apiTrack(host, publicKey, token, "page.viewed", {
+        page,
+        title: typeof document !== "undefined" ? document.title.slice(0, 200) : "",
+        referrer_origin: (() => { try { return document.referrer ? new URL(document.referrer).origin : ""; } catch { return ""; } })(),
+        viewport: { width: window.innerWidth, height: window.innerHeight, device_pixel_ratio: window.devicePixelRatio || 1 },
+        language: navigator.language || "",
+        timezone: (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { return ""; } })(),
+        platform: navigator.platform || "",
+        user_agent: userAgent,
+        device,
+        browser,
+        os,
+      })).catch(() => {});
+    };
+    const originalPushState = history.pushState;
+    const originalReplaceState = history.replaceState;
+    history.pushState = function (...args) { originalPushState.apply(this, args); recordPage(); };
+    history.replaceState = function (...args) { originalReplaceState.apply(this, args); recordPage(); };
+    window.addEventListener("popstate", recordPage);
+    window.addEventListener("hashchange", recordPage);
+    recordPage();
+    return () => {
+      history.pushState = originalPushState;
+      history.replaceState = originalReplaceState;
+      window.removeEventListener("popstate", recordPage);
+      window.removeEventListener("hashchange", recordPage);
+    };
+  }, [ensureVisitorToken, host, publicKey]);
 
   /* ---------------------------------------------------------------- SDK API */
 
@@ -323,11 +431,23 @@ export function Widget({
           void ensureVisitorToken().then((token) => apiTrack(host, publicKey, token, type, (payload?.payload as Record<string, unknown>) ?? {})).catch(() => {});
           break;
         }
+        case "bind": {
+          const name = typeof payload?.name === "string" ? payload.name : "";
+          const handler = (payload as { handler?: unknown } | undefined)?.handler;
+          if (name && typeof handler === "function") commandHandlersRef.current.set(name, handler as (value: unknown) => unknown);
+          break;
+        }
+        case "unbind": {
+          const name = typeof payload?.name === "string" ? payload.name : "";
+          if (name) commandHandlersRef.current.delete(name);
+          break;
+        }
         case "reset":
           socketRef.current?.close();
           socketRef.current = null;
           tokenRef.current = null;
           conversationRef.current = null;
+          handledCommandIDsRef.current.clear();
           clearSession(publicKey);
           setMessages([]);
           setScreen("home");
