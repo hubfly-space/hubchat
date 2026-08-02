@@ -77,7 +77,7 @@ export function ConversationPanel({
   onToggleContext: () => void;
 }) {
   const navigate = useNavigate();
-  const { memberById, tagById, viewer, can, workspace } = useWorkspace();
+  const { memberById, members, tagById, viewer, can, workspace } = useWorkspace();
   const [managingTags, setManagingTags] = useState(false);
   const [merging, setMerging] = useState(false);
   const [linking, setLinking] = useState(false);
@@ -148,8 +148,8 @@ export function ConversationPanel({
     },
   );
 
-  const sendMessage = async (body: string, kind: "reply" | "note", fileIDs: string[]) => {
-    await api.post(`/conversations/${conversation.id}/messages`, { body, kind, author_name: viewer.name, file_ids: fileIDs }, { idempotencyKey: idempotencyKey() });
+  const sendMessage = async (body: string, kind: "reply" | "note", fileIDs: string[], mentionedMemberIDs: string[]) => {
+    await api.post(`/conversations/${conversation.id}/messages`, { body, kind, author_name: viewer.name, file_ids: fileIDs, mentioned_member_ids: mentionedMemberIDs }, { idempotencyKey: idempotencyKey() });
     invalidate(["conversation-messages", conversation.id]);
     invalidate(["conversations"]);
   };
@@ -399,6 +399,7 @@ export function ConversationPanel({
         conversationId={conversation.id}
         customerName={customer.data?.name ?? "the visitor"}
         ticketNumber={linkedTicket.data ? `${linkedTicket.data.prefix}-${linkedTicket.data.number}` : undefined}
+        mentionMembers={members.filter((member) => member.id !== viewer.id && member.accepting_conversations)}
         onSend={sendMessage}
       />
 

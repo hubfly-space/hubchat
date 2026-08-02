@@ -101,6 +101,15 @@ export const NAV_SECTIONS: NavSection[] = [
   },
 
   {
+    id: "tasks",
+    label: "Tasks",
+    icon: ListChecks,
+    to: "/tasks",
+    match: "/tasks",
+    capability: "task.manage",
+  },
+
+  {
     id: "tickets",
     label: "Tickets",
     icon: TicketCheck,

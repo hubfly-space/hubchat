@@ -21,6 +21,7 @@ import {
 } from "@hubchat/shared";
 import {
   Lock,
+  AtSign,
   MessageSquare,
   MessageSquareReply,
   Paperclip,
@@ -44,7 +45,8 @@ export type ComposerProps = {
    * and saved replies are real API-backed actions.
    */
   conversationId: string;
-  onSend: (body: string, kind: ComposerMode, fileIDs: string[]) => Promise<void>;
+  mentionMembers?: Array<{ id: string; name: string; accepting_conversations?: boolean }>;
+  onSend: (body: string, kind: ComposerMode, fileIDs: string[], mentionedMemberIDs: string[]) => Promise<void>;
 };
 
 type PendingAttachment = { id: string; name: string };
@@ -61,7 +63,7 @@ function draftKey(conversationId: string) {
  * relabels the send button. There is no state in which "am I about to reply
  * publicly?" requires a second look.
  */
-export function Composer({ workspaceId, canUseMacros = false, customerName, ticketNumber, conversationId, onSend }: ComposerProps) {
+export function Composer({ workspaceId, canUseMacros = false, customerName, ticketNumber, conversationId, mentionMembers = [], onSend }: ComposerProps) {
   const [mode, setMode] = useState<ComposerMode>("reply");
   const [value, setValue] = useState(() => {
     try {
@@ -73,6 +75,7 @@ export function Composer({ workspaceId, canUseMacros = false, customerName, tick
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [mentions, setMentions] = useState<Array<{ id: string; name: string }>>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
@@ -89,7 +92,8 @@ export function Composer({ workspaceId, canUseMacros = false, customerName, tick
   // carrying over whatever was being typed for the last one.
   useEffect(() => {
     try {
-      setValue(localStorage.getItem(draftKey(conversationId)) ?? "");
+    setValue(localStorage.getItem(draftKey(conversationId)) ?? "");
+      setMentions([]);
     } catch {
       setValue("");
     }
@@ -132,10 +136,15 @@ export function Composer({ workspaceId, canUseMacros = false, customerName, tick
 
     const body = value;
     setSending(true);
-    onSend(body, mode, attachments.map((attachment) => attachment.id))
+    const normalizedBody = body.toLocaleLowerCase();
+    const mentionedMemberIDs = mentions
+      .filter((mention) => normalizedBody.includes(`@${mention.name.toLocaleLowerCase()}`))
+      .map((mention) => mention.id);
+    onSend(body, mode, attachments.map((attachment) => attachment.id), mentionedMemberIDs)
       .then(() => {
         setValue("");
         setAttachments([]);
+        setMentions([]);
         toast.success({
           title: isNote ? "Note added" : "Reply sent",
           description: isNote ? "Only your team can see this." : `Delivered to ${customerName}.`,
@@ -151,6 +160,12 @@ export function Composer({ workspaceId, canUseMacros = false, customerName, tick
         });
       })
       .finally(() => setSending(false));
+  };
+
+  const addMention = (member: { id: string; name: string }) => {
+    setMentions((current) => current.some((mention) => mention.id === member.id) ? current : [...current, member]);
+    setValue((current) => `${current.trimEnd()}${current.trim() ? " " : ""}@${member.name} `);
+    textareaRef.current?.focus();
   };
 
   const insertSavedReply = async (reply: SavedReply, shortcutToReplace?: string) => {
@@ -300,6 +315,24 @@ export function Composer({ workspaceId, canUseMacros = false, customerName, tick
                       <MenuItem icon={<Zap />} onSelect={() => void savedReplies.fetchNext()} description={savedReplies.isFetching ? "Loading…" : undefined}>Load more replies</MenuItem>
                     </>
                   )}
+                </MenuContent>
+              </Menu>
+            )}
+
+            {workspaceId && mentionMembers.length > 0 && (
+              <Menu>
+                <MenuTrigger asChild>
+                  <Button variant="ghost" size="xs" leading={<AtSign />} disabled={sending || uploading}>
+                    Mention
+                  </Button>
+                </MenuTrigger>
+                <MenuContent className="w-64">
+                  <MenuLabel>Mention a teammate</MenuLabel>
+                  {mentionMembers.map((member) => (
+                    <MenuItem key={member.id} onSelect={() => addMention(member)}>
+                      {member.name}
+                    </MenuItem>
+                  ))}
                 </MenuContent>
               </Menu>
             )}

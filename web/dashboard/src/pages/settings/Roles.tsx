@@ -59,6 +59,7 @@ const CAPABILITY_GROUPS: { group: string; items: { key: Capability; label: strin
       { key: "knowledgebase.manage", label: "Manage knowledge base", detail: "Write and publish articles." },
       { key: "feedback.moderate", label: "Moderate feedback", detail: "Approve, merge, set status." },
       { key: "automation.manage", label: "Manage automation", detail: "Rules, macros, saved replies." },
+      { key: "task.manage", label: "Manage tasks", detail: "Create, assign, and complete agent follow-ups." },
       { key: "sla.manage", label: "Manage SLAs", detail: "Policies and business hours." },
     ],
   },
