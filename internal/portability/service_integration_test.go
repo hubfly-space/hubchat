@@ -29,7 +29,7 @@ func TestExportManifestIncludesChecksumAndAttachmentTotals(t *testing.T) {
 		SourceWorkspaceID: "wrk_manifest_a",
 		ExportedAt:        time.Now().UTC(),
 		Tables: map[string][]json.RawMessage{
-			"files": {json.RawMessage(`{"size_bytes":42,"owner_type":"ticket"}`)},
+			"files": {json.RawMessage(`{"id":"fil_attachment_manifest","name":"report.txt","mime_type":"text/plain","checksum":"\\x0102","size_bytes":42,"owner_type":"ticket","owner_id":"tkt_manifest"}`)},
 		},
 	}
 	var compressed bytes.Buffer
@@ -60,8 +60,106 @@ func TestExportManifestIncludesChecksumAndAttachmentTotals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.Checksum == "" || manifest.SizeBytes != int64(compressed.Len()) || manifest.RowCount != 1 || manifest.AttachmentCount != 1 || manifest.AttachmentBytes != 42 {
+	if manifest.Checksum == "" || manifest.SizeBytes != int64(compressed.Len()) || manifest.RowCount != 1 || manifest.AttachmentCount != 1 || manifest.AttachmentBytes != 42 || len(manifest.Attachments) != 1 || manifest.Attachments[0].Checksum != "0102" {
 		t.Fatalf("manifest = %+v", manifest)
+	}
+}
+
+func TestCrossWorkspaceImportSkipsBinaryAttachmentRows(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspaces (id,name,slug) VALUES
+			('wrk_attachment_source','Attachment source','attachment-source'),
+			('wrk_attachment_target','Attachment target','attachment-target')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	archive := &Archive{
+		Version: CurrentVersion, SourceWorkspaceID: "wrk_attachment_source", ExportedAt: time.Now().UTC(),
+		Tables: map[string][]json.RawMessage{
+			"files":               {json.RawMessage(`{"id":"fil_source","workspace_id":"wrk_attachment_source","storage_key":"wrk_attachment_source/fil_source","name":"secret.txt","mime_type":"text/plain","size_bytes":6,"owner_type":"ticket","owner_id":"tkt_source","committed_at":"2026-08-02T00:00:00Z"}`)},
+			"message_attachments": {json.RawMessage(`{"message_id":"msg_source","file_id":"fil_source","position":0}`)},
+		},
+	}
+	summaries, err := Import(ctx, pool, archive, "wrk_attachment_target", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var skipped int
+	for _, summary := range summaries {
+		if summary.Name == "files" || summary.Name == "message_attachments" {
+			skipped += summary.Skipped
+		}
+	}
+	if skipped != 2 {
+		t.Fatalf("cross-workspace attachment preview skipped=%d, summaries=%+v", skipped, summaries)
+	}
+	fileIndex, attachmentIndex := -1, -1
+	for index, spec := range tableSpecs {
+		if spec.name == "files" {
+			fileIndex = index
+		}
+		if spec.name == "message_attachments" {
+			attachmentIndex = index
+		}
+	}
+	nextTable, nextRow, processed, done, err := ImportChunk(ctx, pool, archive, "wrk_attachment_target", fileIndex, 0, 10)
+	if err != nil || processed != 1 || done || nextTable != attachmentIndex {
+		t.Fatalf("file attachment chunk = table %d row %d processed %d done %t err %v", nextTable, nextRow, processed, done, err)
+	}
+	nextTable, nextRow, processed, done, err = ImportChunk(ctx, pool, archive, "wrk_attachment_target", nextTable, nextRow, 10)
+	if err != nil || processed != 1 || !done || nextTable != len(tableSpecs) || nextRow != 0 {
+		t.Fatalf("message attachment chunk = table %d row %d processed %d done %t err %v", nextTable, nextRow, processed, done, err)
+	}
+	var fileCount, linkCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM files WHERE workspace_id='wrk_attachment_target'`).Scan(&fileCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM message_attachments WHERE file_id='fil_source'`).Scan(&linkCount); err != nil {
+		t.Fatal(err)
+	}
+	if fileCount != 0 || linkCount != 0 {
+		t.Fatalf("cross-workspace attachment rows leaked: files=%d links=%d", fileCount, linkCount)
+	}
+}
+
+func TestCrossWorkspaceImportClearsFormFileReferences(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspaces (id,name,slug) VALUES ('wrk_form_attachment_target','Form attachment target','form-attachment-target');
+		INSERT INTO forms (id,workspace_id,name,slug) VALUES ('frm_attachment_target','wrk_form_attachment_target','Upload form','upload-form');
+		INSERT INTO form_fields (id,workspace_id,form_id,key,label,type) VALUES ('fld_attachment_target','wrk_form_attachment_target','frm_attachment_target','upload','Upload','file');
+		INSERT INTO form_submissions (id,workspace_id,form_id) VALUES ('sub_attachment_target','wrk_form_attachment_target','frm_attachment_target')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	formValuesIndex := -1
+	for index, spec := range tableSpecs {
+		if spec.name == "form_submission_values" {
+			formValuesIndex = index
+			break
+		}
+	}
+	archive := &Archive{
+		Version: CurrentVersion, SourceWorkspaceID: "wrk_form_attachment_source", ExportedAt: time.Now().UTC(),
+		Tables: map[string][]json.RawMessage{
+			"form_submission_values": {json.RawMessage(`{"submission_id":"sub_attachment_target","field_id":"fld_attachment_target","value":null,"file_id":"fil_source"}`)},
+		},
+	}
+	nextTable, nextRow, processed, done, err := ImportChunk(ctx, pool, archive, "wrk_form_attachment_target", formValuesIndex, 0, 10)
+	if err != nil || processed != 1 || !done || nextTable != len(tableSpecs) || nextRow != 0 {
+		t.Fatalf("form attachment chunk = table %d row %d processed %d done %t err %v", nextTable, nextRow, processed, done, err)
+	}
+	var fileID *string
+	if err := pool.QueryRow(ctx, `SELECT file_id FROM form_submission_values WHERE submission_id='sub_attachment_target' AND field_id='fld_attachment_target'`).Scan(&fileID); err != nil {
+		t.Fatal(err)
+	}
+	if fileID != nil {
+		t.Fatalf("cross-workspace form file reference survived import: %q", *fileID)
 	}
 }
 

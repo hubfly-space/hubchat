@@ -27,7 +27,7 @@ const (
 	JobImport                 = "portability.import"
 	JobExpireExports          = "portability.expire_exports"
 	importBatchSize           = 100
-	maxArchiveBytes           = 512 << 20
+	maxArchiveBytes           = MaxArchiveBytes
 	KindWorkspace             = "workspace"
 	KindCustomersCSV          = "customers_csv"
 	KindCompaniesCSV          = "companies_csv"
@@ -62,17 +62,32 @@ type Request struct {
 // operator enough information to verify a download before moving it between
 // installations without exposing storage keys or bypassing file auth.
 type Manifest struct {
-	ExportID        string         `json:"export_id"`
-	WorkspaceID     string         `json:"workspace_id"`
-	FileID          string         `json:"file_id"`
-	FileName        string         `json:"file_name"`
-	SizeBytes       int64          `json:"size_bytes"`
-	Checksum        string         `json:"checksum"`
-	ExpiresAt       *time.Time     `json:"expires_at,omitempty"`
-	RowCount        int64          `json:"row_count"`
-	AttachmentCount int            `json:"attachment_count"`
-	AttachmentBytes int64          `json:"attachment_bytes"`
-	Tables          []TableSummary `json:"tables"`
+	ExportID        string                    `json:"export_id"`
+	WorkspaceID     string                    `json:"workspace_id"`
+	FileID          string                    `json:"file_id"`
+	FileName        string                    `json:"file_name"`
+	SizeBytes       int64                     `json:"size_bytes"`
+	Checksum        string                    `json:"checksum"`
+	ExpiresAt       *time.Time                `json:"expires_at,omitempty"`
+	RowCount        int64                     `json:"row_count"`
+	AttachmentCount int                       `json:"attachment_count"`
+	AttachmentBytes int64                     `json:"attachment_bytes"`
+	Attachments     []AttachmentManifestEntry `json:"attachments,omitempty"`
+	Tables          []TableSummary            `json:"tables"`
+}
+
+// AttachmentManifestEntry records the portable identity and checksum of a
+// customer attachment without exposing the backend storage key. Binary
+// objects are restored separately from the row archive and can be verified by
+// this manifest before an installation is put back into service.
+type AttachmentManifestEntry struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	MIMEType  string `json:"mime_type"`
+	SizeBytes int64  `json:"size_bytes"`
+	Checksum  string `json:"checksum"`
+	OwnerType string `json:"owner_type"`
+	OwnerID   string `json:"owner_id"`
 }
 
 type exportPayload struct {
@@ -464,10 +479,16 @@ func (s *Service) ExportManifest(ctx context.Context, workspaceID, id string) (*
 		if readErr != nil {
 			return nil, readErr
 		}
+		manifest.Attachments = make([]AttachmentManifestEntry, 0)
 		for _, raw := range archive.Tables["files"] {
 			var object struct {
+				ID        string `json:"id"`
+				Name      string `json:"name"`
+				MIMEType  string `json:"mime_type"`
 				SizeBytes int64  `json:"size_bytes"`
+				Checksum  string `json:"checksum"`
 				OwnerType string `json:"owner_type"`
+				OwnerID   string `json:"owner_id"`
 			}
 			if err := json.Unmarshal(raw, &object); err != nil {
 				return nil, fmt.Errorf("portability: manifest file row: %w", err)
@@ -475,6 +496,10 @@ func (s *Service) ExportManifest(ctx context.Context, workspaceID, id string) (*
 			if object.OwnerType != "workspace" {
 				manifest.AttachmentCount++
 				manifest.AttachmentBytes += object.SizeBytes
+				manifest.Attachments = append(manifest.Attachments, AttachmentManifestEntry{
+					ID: object.ID, Name: object.Name, MIMEType: object.MIMEType, SizeBytes: object.SizeBytes,
+					Checksum: strings.TrimPrefix(object.Checksum, `\x`), OwnerType: object.OwnerType, OwnerID: object.OwnerID,
+				})
 			}
 		}
 	}

@@ -46,9 +46,13 @@ func TestCustomerProfileAndNotificationPreferencesAreScoped(t *testing.T) {
 		Portal:      &portal.Portal{ID: portalID, WorkspaceID: workspaceID},
 	}
 	newName := "After"
+	language := "ar"
+	timezone := "Africa/Kigali"
 	falseValue := false
 	updated, err := svc.UpdateProfile(ctx, session, portal.ProfileInput{
-		Name: &newName,
+		Name:     &newName,
+		Language: &language,
+		Timezone: &timezone,
 		Preferences: &portal.NotificationPreferencesInput{
 			FeedbackUpdates: &falseValue,
 			Changelog:       &falseValue,
@@ -57,8 +61,8 @@ func TestCustomerProfileAndNotificationPreferencesAreScoped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update profile: %v", err)
 	}
-	if updated.Name != newName {
-		t.Fatalf("expected name %q, got %q", newName, updated.Name)
+	if updated.Name != newName || updated.Language != language || updated.Timezone != timezone {
+		t.Fatalf("unexpected updated profile: %+v", updated)
 	}
 	changed, err := svc.Preferences(ctx, workspaceID, customerID)
 	if err != nil {

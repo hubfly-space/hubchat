@@ -276,11 +276,11 @@ func (s *Service) Create(ctx context.Context, workspaceID string, req CreateRequ
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		`, id, workspaceID, name, subdomain,
 			jsonBytes(map[string]any{"accent": "#3B6EF6"}),
-			jsonBytes(map[string]any{"tickets": true, "knowledge_base": true, "feedback": true, "changelog": true}),
+			jsonBytes(map[string]any{"tickets": true, "knowledge_base": true, "feedback": true, "forms": true, "changelog": true}),
 			[]string{"magic_link"}, jsonBytes(map[string]any{"view_company_tickets": false}), req.DefaultInboxID); err != nil {
 			return fmt.Errorf("portal: create: %w", err)
 		}
-		for position, item := range []struct{ label, href string }{{"Guides", "/kb"}, {"Requests", "/tickets"}, {"Roadmap", "/feedback"}, {"Changelog", "/changelog"}} {
+		for position, item := range []struct{ label, href string }{{"Guides", "/kb"}, {"Requests", "/tickets"}, {"Forms", "/forms"}, {"Roadmap", "/feedback"}, {"Changelog", "/changelog"}} {
 			if _, err := tx.Exec(ctx, `
 			INSERT INTO portal_navigation_items (id, portal_id, label, href, position)
 			VALUES ($1, $2, $3, $4, $5)
