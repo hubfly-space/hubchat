@@ -153,25 +153,26 @@ export function TopBar({
   );
 }
 
-type NotificationPreference = { type: string; browser: boolean };
+type NotificationPreference = { type: string; browser: boolean; sound: boolean };
 
 function useBrowserNotifications(items: LiveNotification[], preferences: NotificationPreference[], preferencesReady: boolean, navigate: ReturnType<typeof useNavigate>) {
   const seen = useRef<Set<string> | null>(null);
+  const audioContext = useRef<AudioContext | null>(null);
   useEffect(() => {
     if (!preferencesReady || seen.current === null) {
       if (preferencesReady && seen.current === null) seen.current = new Set(items.map((item) => item.id));
       return;
     }
-    if (!("Notification" in window) || window.Notification.permission !== "granted") {
-      items.forEach((item) => seen.current?.add(item.id));
-      return;
-    }
-    const enabled = new Set(preferences.filter((item) => item.browser).map((item) => item.type));
+    const canBrowserNotify = "Notification" in window && window.Notification.permission === "granted";
+    const browserEnabled = new Set(preferences.filter((item) => item.browser).map((item) => item.type));
+    const soundEnabled = new Set(preferences.filter((item) => item.sound).map((item) => item.type));
     items.forEach((item) => {
       if (seen.current?.has(item.id)) return;
       seen.current?.add(item.id);
       const preferenceType = item.type === "customer_reply" ? "reply" : item.type;
-      if (item.read_at !== null || !enabled.has(preferenceType)) return;
+      if (item.read_at !== null) return;
+      if (soundEnabled.has(preferenceType)) playNotificationSound(audioContext);
+      if (!canBrowserNotify || !browserEnabled.has(preferenceType)) return;
       const popup = new window.Notification(item.title, { body: item.body });
       popup.onclick = () => {
         window.focus();
@@ -181,6 +182,36 @@ function useBrowserNotifications(items: LiveNotification[], preferences: Notific
       };
     });
   }, [items, preferences, preferencesReady, navigate]);
+}
+
+/**
+ * Play a short, generated tone so the dashboard does not need another static
+ * asset. AudioContext is created lazily and every browser-policy failure is
+ * ignored: sound is an enhancement, never a reason to break notifications.
+ */
+function playNotificationSound(contextRef: { current: AudioContext | null }) {
+  const AudioContextConstructor = window.AudioContext ||
+    (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextConstructor) return;
+
+  try {
+    const context = contextRef.current ?? (contextRef.current = new AudioContextConstructor());
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    const start = context.currentTime;
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(880, start);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.08, start + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.16);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(start);
+    oscillator.stop(start + 0.17);
+    void context.resume().catch(() => {});
+  } catch {
+    // Browser audio permissions and older WebViews are allowed to reject this.
+  }
 }
 
 function ConnectionIndicator({ state }: { state: ConnectionState }) {

@@ -11,6 +11,13 @@ export type AnalyticsRollup = {
   computed_at: string;
 };
 
+/** Returns the newest worker fold represented by a set of rollups. */
+export function latestComputedAt(...rollups: AnalyticsRollup[][]): string | null {
+  const timestamps = rollups.flatMap((items) => items.map((item) => item.computed_at).filter(Boolean));
+  if (timestamps.length === 0) return null;
+  return timestamps.reduce((latest, value) => value > latest ? value : latest);
+}
+
 type CalendarParts = { year: number; month: number; day: number; hour: number; minute: number; second: number };
 
 /** Loads every cursor page for a bounded report window. */

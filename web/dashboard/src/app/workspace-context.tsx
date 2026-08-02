@@ -15,6 +15,7 @@ import {
   type Tag,
   type Team,
   type Workspace,
+  type FormatOptions,
 } from "@hubchat/shared";
 import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
 import { Navigate } from "react-router-dom";
@@ -65,6 +66,14 @@ type WorkspaceContextValue = {
   tagById: (id: string) => Tag | undefined;
   tags: Tag[];
 };
+
+/** Formatting defaults shared by every dashboard surface. */
+export function workspaceFormatOptions(workspace: Workspace): Pick<FormatOptions, "locale" | "timeZone"> {
+  return {
+    locale: workspace.default_language || "en",
+    timeZone: workspace.timezone || "UTC",
+  };
+}
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 

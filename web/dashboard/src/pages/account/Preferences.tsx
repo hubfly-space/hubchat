@@ -2,7 +2,6 @@ import {
   Card,
   CardBody,
   CardHeader,
-  Checkbox,
   Kbd,
   Page,
   PageBody,
@@ -12,11 +11,13 @@ import {
   Select,
   SettingsRow,
   Switch,
+  useDashboardPreferences,
   useTheme,
   type Density,
   type ThemeMode,
 } from "@hubchat/shared";
-import { Monitor, Moon, Rows2, Rows3, Sun } from "lucide-react";
+import { ArrowRight, Monitor, Moon, Rows2, Rows3, Sun } from "lucide-react";
+import { Link } from "react-router-dom";
 
 const SHORTCUTS = [
   { group: "Global", items: [
@@ -44,6 +45,7 @@ const SHORTCUTS = [
 /** Personal preferences (§6.15, §21). */
 export default function Preferences() {
   const { mode, setMode, density, setDensity } = useTheme();
+  const { preferences, setPreference } = useDashboardPreferences();
 
   return (
     <Page>
@@ -90,7 +92,11 @@ export default function Preferences() {
                 label="Reduce motion"
                 description="Your system setting is respected automatically. This forces it on regardless."
               >
-                <Switch aria-label="Reduce motion" />
+                <Switch
+                  aria-label="Reduce motion"
+                  checked={preferences.reduceMotion}
+                  onCheckedChange={(checked) => setPreference("reduceMotion", checked === true)}
+                />
               </SettingsRow>
             </CardBody>
           </Card>
@@ -105,7 +111,8 @@ export default function Preferences() {
               >
                 <Select
                   size="sm"
-                  defaultValue="next"
+                  value={preferences.afterResolve}
+                  onValueChange={(value) => setPreference("afterResolve", value as typeof preferences.afterResolve)}
                   aria-label="After resolving"
                   options={[
                     { value: "next", label: "Open the next conversation" },
@@ -119,18 +126,22 @@ export default function Preferences() {
                 label="Mark as read on open"
                 description="Off means you clear the unread flag yourself, which some agents prefer for triage."
               >
-                <Switch defaultChecked aria-label="Mark as read on open" />
-              </SettingsRow>
-
-              <SettingsRow label="Play a sound on new conversations">
-                <Switch aria-label="Sound on new conversations" />
+                <Switch
+                  checked={preferences.markReadOnOpen}
+                  onCheckedChange={(checked) => setPreference("markReadOnOpen", checked === true)}
+                  aria-label="Mark as read on open"
+                />
               </SettingsRow>
 
               <SettingsRow
                 label="Show the customer context panel"
                 description="Hidden automatically below 1280px regardless of this setting."
               >
-                <Switch defaultChecked aria-label="Show context panel" />
+                <Switch
+                  checked={preferences.showCustomerContext}
+                  onCheckedChange={(checked) => setPreference("showCustomerContext", checked === true)}
+                  aria-label="Show context panel"
+                />
               </SettingsRow>
             </CardBody>
           </Card>
@@ -139,18 +150,19 @@ export default function Preferences() {
         <Section title="Notifications">
           <Card>
             <CardHeader
-              title="Override workspace defaults"
-              description="Unchecked rows fall back to whatever the workspace has configured."
+              title="Notification delivery"
+              description="Choose delivery channels per event on the live notification settings page."
             />
-            <CardBody className="space-y-3">
-              <Checkbox
-                label="Email me when a conversation is assigned to me"
-                description="Overrides the workspace default."
-                defaultChecked
-              />
-              <Checkbox label="Email me on mentions" defaultChecked />
-              <Checkbox label="Browser notifications for SLA warnings" defaultChecked />
-              <Checkbox label="Daily summary of my queue" />
+            <CardBody>
+              <div className="flex items-center justify-between gap-4 rounded-md border border-line bg-inset px-3 py-3">
+                <div>
+                  <p className="text-sm font-medium text-fg">Agent notifications</p>
+                  <p className="mt-0.5 text-xs text-fg-muted">In-app, email, browser, and sound preferences are saved per member.</p>
+                </div>
+                <Link to="/settings/notifications" className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-accent hover:underline">
+                  Open settings <ArrowRight className="size-3.5" aria-hidden="true" />
+                </Link>
+              </div>
             </CardBody>
           </Card>
         </Section>
