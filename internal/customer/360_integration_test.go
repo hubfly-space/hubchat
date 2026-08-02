@@ -62,7 +62,7 @@ func TestCustomer360CombinesRelatedRecordsAndPreservesTenantIsolation(t *testing
 	exec(`INSERT INTO conversations (id,workspace_id,inbox_id,channel,subject,state,customer_id,last_message_preview) VALUES ($1,$2,$3,'widget','Checkout question','open',$4,'Can you help with checkout?')`, conversationID, workspaceID, inboxID, customerID)
 	exec(`INSERT INTO tickets (id,workspace_id,number,prefix,title,status,priority,customer_id,conversation_id) VALUES ($1,$2,1001,'SUP','Checkout follow-up','pending','high',$3,$4)`, ticketID, workspaceID, customerID, conversationID)
 	exec(`INSERT INTO customer_events (id,workspace_id,customer_id,type,source,url,request_id,payload) VALUES ($1,$2,$3,'checkout.started','js_sdk','https://acme.example/checkout','req_360','{"order_id":"ord_1"}'::jsonb)`, eventID, workspaceID, customerID)
-	exec(`INSERT INTO contact_sessions (id,workspace_id,customer_id,device,browser,os,current_url,page_views) VALUES ($1,$2,$3,'desktop','Firefox','Linux','https://acme.example/checkout',3)`, sessionID, workspaceID, customerID)
+	exec(`INSERT INTO contact_sessions (id,workspace_id,customer_id,device,browser,os,referrer,landing_url,current_url,current_title,language,timezone,platform,user_agent,viewport,page_views) VALUES ($1,$2,$3,'desktop','Firefox','Linux','https://search.example','https://acme.example/pricing','https://acme.example/checkout','Checkout','en-US','Africa/Kigali','Linux x86_64','Mozilla/5.0 test-agent','{"width":1440,"height":900,"device_pixel_ratio":2}',3)`, sessionID, workspaceID, customerID)
 
 	context, err := svc.Customer360(ctx, workspaceID, customerID)
 	if err != nil {
@@ -94,6 +94,15 @@ func TestCustomer360CombinesRelatedRecordsAndPreservesTenantIsolation(t *testing
 	}
 	if len(context.Sessions) != 1 || context.Sessions[0].PageViews != 3 {
 		t.Fatalf("session context = %+v", context.Sessions)
+	}
+	if context.CurrentPage == nil || context.CurrentPage.URL == nil || *context.CurrentPage.URL != "https://acme.example/checkout" {
+		t.Fatalf("session current page fallback = %+v", context.CurrentPage)
+	}
+	if context.Device == nil || context.Device.Device != "desktop" || context.Device.Browser != "Firefox" || context.Device.OS != "Linux" || context.Device.Language != "en-US" || context.Device.Timezone != "Africa/Kigali" || context.Device.Platform != "Linux x86_64" || context.Device.ReferrerOrigin != "https://search.example" || context.Device.UserAgent == "" || context.Device.Viewport == nil || context.Device.Viewport.Width != 1440 {
+		t.Fatalf("session device fallback = %+v", context.Device)
+	}
+	if context.CurrentPage.Title != "Checkout" || context.CurrentPage.Platform != "Linux x86_64" || context.CurrentPage.Viewport == nil || context.CurrentPage.Viewport.DevicePixelRatio != 2 {
+		t.Fatalf("session current page details = %+v", context.CurrentPage)
 	}
 	if context.FeedbackTruncated || context.SurveysTruncated || context.ArticlesTruncated || context.IdentitiesTruncated || context.MergesTruncated {
 		t.Fatal("small customer 360 result was unexpectedly truncated")

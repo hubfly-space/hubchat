@@ -159,6 +159,7 @@ func (r *repository) eraseHistory(ctx context.Context, tx pgx.Tx, workspaceID, c
 		`DELETE FROM customer_emails WHERE workspace_id = $1 AND customer_id = $2`,
 		`DELETE FROM customer_phones WHERE workspace_id = $1 AND customer_id = $2`,
 		`DELETE FROM visitor_customer_links WHERE customer_id = $2 AND visitor_id IN (SELECT id FROM visitors WHERE workspace_id = $1)`,
+		`DELETE FROM customer_command_invocations WHERE workspace_id = $1 AND visitor_id IN (SELECT id FROM visitors WHERE workspace_id = $1 AND customer_id = $2)`,
 		`DELETE FROM customer_notification_preferences WHERE workspace_id = $1 AND customer_id = $2`,
 		`DELETE FROM feedback_votes WHERE workspace_id = $1 AND customer_id = $2`,
 		`DELETE FROM feedback_subscriptions WHERE customer_id = $2 AND item_id IN (SELECT id FROM feedback_items WHERE workspace_id = $1)`,

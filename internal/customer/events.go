@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -29,35 +30,43 @@ var validEventSources = map[string]bool{
 // ---------------------------------------------------------------- contact sessions
 
 type ContactSession struct {
-	ID          string
-	WorkspaceID string
-	CustomerID  *string
-	VisitorID   *string
-	WidgetID    *string
-	IPCountry   *string
-	Browser     *string
-	OS          *string
-	Device      *string
-	Referrer    *string
-	LandingURL  *string
-	CurrentURL  *string
-	PageViews   int
-	Consent     map[string]any
-	StartedAt   time.Time
-	LastSeenAt  time.Time
-	EndedAt     *time.Time
+	ID           string
+	WorkspaceID  string
+	CustomerID   *string
+	VisitorID    *string
+	WidgetID     *string
+	IPCountry    *string
+	Browser      *string
+	OS           *string
+	Device       *string
+	Referrer     *string
+	LandingURL   *string
+	CurrentURL   *string
+	CurrentTitle *string
+	Language     *string
+	Timezone     *string
+	Platform     *string
+	UserAgent    *string
+	Viewport     map[string]any
+	PageViews    int
+	Consent      map[string]any
+	StartedAt    time.Time
+	LastSeenAt   time.Time
+	EndedAt      *time.Time
 }
 
 const contactSessionColumns = `
 	id, workspace_id, customer_id, visitor_id, widget_id, ip_country, browser, os, device,
-	referrer, landing_url, current_url, page_views, consent, started_at, last_seen_at, ended_at
+	referrer, landing_url, current_url, current_title, language, timezone, platform, user_agent,
+	viewport, page_views, consent, started_at, last_seen_at, ended_at
 `
 
 func scanContactSession(row interface{ Scan(dest ...any) error }) (*ContactSession, error) {
 	var s ContactSession
 	err := row.Scan(
 		&s.ID, &s.WorkspaceID, &s.CustomerID, &s.VisitorID, &s.WidgetID, &s.IPCountry, &s.Browser, &s.OS, &s.Device,
-		&s.Referrer, &s.LandingURL, &s.CurrentURL, &s.PageViews, &s.Consent, &s.StartedAt, &s.LastSeenAt, &s.EndedAt,
+		&s.Referrer, &s.LandingURL, &s.CurrentURL, &s.CurrentTitle, &s.Language, &s.Timezone, &s.Platform, &s.UserAgent,
+		&s.Viewport, &s.PageViews, &s.Consent, &s.StartedAt, &s.LastSeenAt, &s.EndedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -274,6 +283,150 @@ func (s *Service) IngestEvent(
 ) (*CustomerEvent, error) {
 	return s.ingestEvent(ctx, workspaceID, customerID, eventType, source, url, "", payload)
 }
+
+// IngestVisitorEvent is the bounded ingestion path used by the public widget.
+// It keeps the event and the visitor's rolling contact session in one
+// transaction, so the dashboard can reliably show the current page, device,
+// and recent journey instead of depending on a best-effort second write.
+func (s *Service) IngestVisitorEvent(
+	ctx context.Context, workspaceID, visitorID, customerID, eventType, source string, url *string, payload map[string]any,
+) (*CustomerEvent, error) {
+	if eventType == "" {
+		return nil, ErrEmptyEventType
+	}
+	if !validEventSources[source] {
+		return nil, ErrInvalidSource
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	if encoded, err := jsonSize(payload); err != nil {
+		return nil, err
+	} else if s.maxEventBytes > 0 && encoded > s.maxEventBytes {
+		return nil, ErrEventTooLarge
+	}
+	if customerID != "" {
+		if _, err := s.repo.byID(ctx, workspaceID, customerID); err != nil {
+			return nil, err
+		}
+	}
+
+	eventID := ids.New(ids.PrefixCustomerEvent)
+	sessionID := ids.New(ids.PrefixContactSession)
+	var event CustomerEvent
+	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		var existing string
+		err := tx.QueryRow(ctx, `
+			SELECT id FROM contact_sessions
+			WHERE workspace_id=$1 AND visitor_id=$2 AND ended_at IS NULL
+			ORDER BY last_seen_at DESC, id DESC LIMIT 1 FOR UPDATE
+		`, workspaceID, visitorID).Scan(&existing)
+		if errors.Is(err, pgx.ErrNoRows) {
+			if _, err = tx.Exec(ctx, `
+				INSERT INTO contact_sessions (
+					id, workspace_id, customer_id, visitor_id, browser, os, device, referrer,
+					landing_url, current_url, current_title, language, timezone, platform, user_agent,
+					viewport, page_views
+				) VALUES ($1,$2,NULLIF($3,''),$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),$9,$10,NULLIF($11,''),NULLIF($12,''),NULLIF($13,''),NULLIF($14,''),NULLIF($15,''),$16,$17)
+			`, sessionID, workspaceID, customerID, visitorID,
+				boundedSessionString(payload, "browser"), boundedSessionString(payload, "os"), boundedSessionString(payload, "device"), boundedSessionString(payload, "referrer_origin"),
+				url, url, boundedSessionString(payload, "title"), boundedSessionString(payload, "language"), boundedSessionString(payload, "timezone"), boundedSessionString(payload, "platform"), boundedSessionString(payload, "user_agent"),
+				viewportJSONValue(payload), pageViewsFor(eventType)); err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		} else {
+			sessionID = existing
+			if _, err = tx.Exec(ctx, `
+				UPDATE contact_sessions SET
+					customer_id=COALESCE(NULLIF($3,''),customer_id),
+					browser=COALESCE(NULLIF($4,''),browser), os=COALESCE(NULLIF($5,''),os), device=COALESCE(NULLIF($6,''),device),
+					current_url=COALESCE($7,current_url), current_title=COALESCE(NULLIF($8,''),current_title),
+					language=COALESCE(NULLIF($9,''),language), timezone=COALESCE(NULLIF($10,''),timezone),
+					platform=COALESCE(NULLIF($11,''),platform), user_agent=COALESCE(NULLIF($12,''),user_agent),
+					viewport=COALESCE($13,viewport), page_views=page_views+$14, last_seen_at=now()
+				WHERE workspace_id=$1 AND id=$2
+			`, workspaceID, sessionID, customerID, boundedSessionString(payload, "browser"), boundedSessionString(payload, "os"), boundedSessionString(payload, "device"), url,
+				boundedSessionString(payload, "title"), boundedSessionString(payload, "language"), boundedSessionString(payload, "timezone"), boundedSessionString(payload, "platform"), boundedSessionString(payload, "user_agent"), viewportJSONValue(payload), pageViewsFor(eventType)); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO customer_events (id, workspace_id, customer_id, visitor_id, session_id, type, source, url, payload)
+			VALUES ($1,$2,NULLIF($3,''),$4,$5,$6,$7,$8,$9)
+		`, eventID, workspaceID, customerID, visitorID, sessionID, eventType, source, url, payload); err != nil {
+			return err
+		}
+		return s.appendEvent(ctx, tx, events.Event{
+			WorkspaceID: workspaceID, Type: events.EventReceived, EntityType: "customer", EntityID: customerID,
+			ActorType: events.ActorSystem, Data: map[string]any{"type": eventType, "source": source, "customer_id": customerID, "visitor_id": visitorID},
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	event = CustomerEvent{ID: eventID, WorkspaceID: workspaceID, VisitorID: stringPointer(visitorID), SessionID: stringPointer(sessionID), Type: eventType, Source: source, URL: url, CustomerID: emptyStringPointer(customerID), Payload: payload, OccurredAt: time.Now().UTC()}
+	return &event, nil
+}
+
+// AttachVisitorSessions closes the identity gap when an anonymous visitor
+// identifies after browsing. Existing sessions remain in the same workspace
+// and are simply attributed to the now-known customer.
+func (s *Service) AttachVisitorSessions(ctx context.Context, workspaceID, visitorID, customerID string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE contact_sessions SET customer_id=$3
+		WHERE workspace_id=$1 AND visitor_id=$2 AND (customer_id IS NULL OR customer_id=$3)
+	`, workspaceID, visitorID, customerID)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+		UPDATE customer_events SET customer_id=$3
+		WHERE workspace_id=$1 AND visitor_id=$2 AND customer_id IS NULL
+	`, workspaceID, visitorID, customerID)
+	return err
+}
+
+func stringValue(payload map[string]any, key string) string {
+	value, _ := payload[key].(string)
+	return value
+}
+
+func boundedSessionString(payload map[string]any, key string) string {
+	value := strings.TrimSpace(stringValue(payload, key))
+	if len(value) > 512 {
+		return value[:512]
+	}
+	return value
+}
+
+func viewportJSONValue(payload map[string]any) []byte {
+	viewport := viewportFromPayload(payload)
+	if viewport == nil {
+		return nil
+	}
+	encoded, err := json.Marshal(viewport)
+	if err != nil {
+		return nil
+	}
+	return encoded
+}
+
+func pageViewsFor(eventType string) int {
+	if eventType == "page.viewed" {
+		return 1
+	}
+	return 0
+}
+
+func stringPointer(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+func emptyStringPointer(value string) *string { return stringPointer(value) }
 
 // IngestEventWithRequestID is the authenticated ingestion variant. Keeping
 // the original method preserves the SDK/widget service boundary, while HTTP
