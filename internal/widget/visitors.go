@@ -118,6 +118,9 @@ func (s *Service) Identify(ctx context.Context, workspaceID string, visitor *Vis
 		return nil, err
 	}
 	visitor.CustomerID = &found.ID
+	if err := s.customer.AttachVisitorSessions(ctx, workspaceID, visitor.ID, found.ID); err != nil {
+		return nil, err
+	}
 	return found, nil
 }
 

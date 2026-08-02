@@ -23,6 +23,26 @@ func TestArchiveManifestIsUniqueAndTenantScoped(t *testing.T) {
 	}
 }
 
+func TestCustomerCommandInvocationsArePortableAndMemberScoped(t *testing.T) {
+	var found bool
+	for _, spec := range tableSpecs {
+		if spec.name != "customer_command_invocations" {
+			continue
+		}
+		found = true
+		if !spec.direct || spec.where != "workspace_id=$1" {
+			t.Fatalf("command invocation archive scope = %+v", spec)
+		}
+		break
+	}
+	if !found {
+		t.Fatal("customer command invocations are missing from the archive manifest")
+	}
+	if requiredMemberRows["customer_command_invocations"] != "member_id" {
+		t.Fatalf("command invocation member guard = %q", requiredMemberRows["customer_command_invocations"])
+	}
+}
+
 func TestImportRejectsUnsupportedArchiveBeforeDatabaseAccess(t *testing.T) {
 	_, err := Import(nil, nil, &Archive{Version: CurrentVersion + 1}, "wrk_target", true)
 	if err == nil || err.Error() != "portability: unsupported archive version" {

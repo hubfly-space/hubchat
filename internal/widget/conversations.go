@@ -130,5 +130,6 @@ func (s *Service) Track(ctx context.Context, workspaceID string, visitor *Visito
 	if visitor.CustomerID != nil {
 		customerID = *visitor.CustomerID
 	}
-	return s.customer.IngestEvent(ctx, workspaceID, customerID, eventType, "js_sdk", pageURL, payload)
+	pageURL = customer.NormalizeObservedURL(pageURL)
+	return s.customer.IngestVisitorEvent(ctx, workspaceID, visitor.ID, customerID, eventType, "js_sdk", pageURL, payload)
 }
