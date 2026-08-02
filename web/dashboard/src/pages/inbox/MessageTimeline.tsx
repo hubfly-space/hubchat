@@ -16,6 +16,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { Fragment } from "react";
+import { useWorkspace, workspaceFormatOptions } from "../../app/workspace-context";
 
 /**
  * The conversation timeline.
@@ -36,6 +37,8 @@ export function MessageTimeline({
   messages: Message[];
   typing?: { name: string } | null;
 }) {
+  const { workspace } = useWorkspace();
+  const dateFormat = workspaceFormatOptions(workspace);
   let lastDay = "";
 
   return (
@@ -47,7 +50,7 @@ export function MessageTimeline({
 
         return (
           <Fragment key={message.id}>
-            {showDivider && <DayDivider date={message.created_at} />}
+            {showDivider && <DayDivider date={message.created_at} dateFormat={dateFormat} />}
             {message.kind === "event" ? (
               <SystemEvent message={message} />
             ) : message.kind === "note" ? (
@@ -66,12 +69,12 @@ export function MessageTimeline({
   );
 }
 
-function DayDivider({ date }: { date: string }) {
+function DayDivider({ date, dateFormat }: { date: string; dateFormat: ReturnType<typeof workspaceFormatOptions> }) {
   return (
     <div className="my-2 flex items-center gap-3">
       <span className="h-px flex-1 bg-line" aria-hidden="true" />
       <span className="text-2xs font-medium uppercase tracking-caps text-fg-muted">
-        {formatDateTime(date).split(",")[0]}
+        {formatDateTime(date, dateFormat).split(",")[0]}
       </span>
       <span className="h-px flex-1 bg-line" aria-hidden="true" />
     </div>
@@ -194,6 +197,8 @@ function Attachments({ message }: { message: Message }) {
 }
 
 function MessageMeta({ message, align }: { message: Message; align: "left" | "right" }) {
+  const { workspace } = useWorkspace();
+  const dateFormat = workspaceFormatOptions(workspace);
   return (
     <p
       className={cn(
@@ -201,7 +206,7 @@ function MessageMeta({ message, align }: { message: Message; align: "left" | "ri
         align === "right" && "justify-end",
       )}
     >
-      <Tooltip content={formatDateTime(message.created_at)}>
+      <Tooltip content={formatDateTime(message.created_at, dateFormat)}>
         <span className="tabular">{formatTime(message.created_at)}</span>
       </Tooltip>
 
