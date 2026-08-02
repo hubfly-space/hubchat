@@ -177,14 +177,28 @@ func (h *StaticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 	case isContentHashed(name):
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	case isWidgetRuntimeAsset(name):
+		// The loader imports app.js and app.css through stable URLs. They must
+		// be revalidated on every deployment or a visitor can keep an old
+		// unstyled interface after the server has shipped a new bundle.
+		w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
 	default:
-		// The loader and the app entry keep stable URLs so an install snippet
-		// never has to change. Five minutes is short enough to roll out a fix
-		// and long enough that a busy site is not re-fetching it constantly.
+		// The loader is a stable URL so an install snippet never has to change.
+		// Keep a short cache window for it; app.js/app.css are handled above
+		// because they are the files whose bytes change with the UI bundle.
 		w.Header().Set("Cache-Control", "public, max-age=300")
 	}
 
 	http.ServeContent(w, r, name, stat.ModTime(), seeker)
+}
+
+func isWidgetRuntimeAsset(name string) bool {
+	switch path.Base(name) {
+	case "app.js", "app.css":
+		return true
+	default:
+		return false
+	}
 }
 
 // isContentHashed recognises the `name-HASH.ext` pattern the bundler emits.

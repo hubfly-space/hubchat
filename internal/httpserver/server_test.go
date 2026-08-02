@@ -48,13 +48,14 @@ func TestProductionRouterServesHealthAndEmbeddedSurfaces(t *testing.T) {
 		bodyHas    string
 		location   string
 		contentKey string
+		cache      string
 	}{
 		{path: "/healthz", status: http.StatusOK, bodyHas: `"status":"ok"`},
 		{path: "/readyz", status: http.StatusOK, bodyHas: `"database":"not_configured"`},
 		{path: "/app/", status: http.StatusOK, bodyHas: "<html"},
 		{path: "/portal/", status: http.StatusOK, bodyHas: "<html"},
-		{path: "/widget/app.js", status: http.StatusOK, contentKey: "javascript"},
-		{path: "/widget/app.css", status: http.StatusOK, contentKey: "text/css"},
+		{path: "/widget/app.js", status: http.StatusOK, contentKey: "javascript", cache: "public, max-age=0, must-revalidate"},
+		{path: "/widget/app.css", status: http.StatusOK, contentKey: "text/css", cache: "public, max-age=0, must-revalidate"},
 		{path: "/api/v1/meta", status: http.StatusServiceUnavailable, bodyHas: "API is not available"},
 		{path: "/", status: http.StatusFound, location: "/app/"},
 	}
@@ -74,6 +75,9 @@ func TestProductionRouterServesHealthAndEmbeddedSurfaces(t *testing.T) {
 			}
 			if test.contentKey != "" && !strings.Contains(response.Header().Get("Content-Type"), test.contentKey) {
 				t.Fatalf("Content-Type = %q, want it to contain %q", response.Header().Get("Content-Type"), test.contentKey)
+			}
+			if test.cache != "" && response.Header().Get("Cache-Control") != test.cache {
+				t.Fatalf("Cache-Control = %q, want %q", response.Header().Get("Cache-Control"), test.cache)
 			}
 		})
 	}

@@ -24,6 +24,19 @@ func TestValidateDefinitionRejectsUnsafeSlugsAndDuplicateFields(t *testing.T) {
 	if err := validateDefinition(duplicate); err != ErrInvalidField {
 		t.Fatalf("duplicate field key: got %v, want ErrInvalidField", err)
 	}
+
+	conditional := base
+	conditional.Fields = []FieldInput{
+		{Key: "kind", Label: "Kind", Type: "string"},
+		{Key: "details", Label: "Details", Type: "text", Required: true, Condition: map[string]any{"field": "kind", "operator": "is_set"}},
+	}
+	if err := validateDefinition(conditional); err != nil {
+		t.Fatalf("valid conditional definition rejected: %v", err)
+	}
+	conditional.Fields[1].Condition = map[string]any{"field": "missing", "operator": "is"}
+	if err := validateDefinition(conditional); err != ErrInvalidField {
+		t.Fatalf("unknown condition field: got %v, want ErrInvalidField", err)
+	}
 }
 
 func TestValidateSubmissionEnforcesRequiredTypesAndOptions(t *testing.T) {
@@ -59,6 +72,28 @@ func TestValidateSubmissionSkipsInactiveConditionalFields(t *testing.T) {
 	}
 	if err := validateSubmission(fields, map[string]any{"kind": "bug"}); err == nil {
 		t.Fatal("active conditional field was not required")
+	}
+}
+
+func TestConditionAppliesSupportsSetAndContainsOperators(t *testing.T) {
+	values := map[string]any{"email": "person@example.com", "empty": "", "tags": []any{"bug", "urgent"}}
+	cases := []struct {
+		name      string
+		condition map[string]any
+		want      bool
+	}{
+		{"set", map[string]any{"field": "email", "operator": "is_set"}, true},
+		{"not set", map[string]any{"field": "missing", "operator": "is_not_set"}, true},
+		{"blank is not set", map[string]any{"field": "empty", "operator": "is_not_set"}, true},
+		{"string contains", map[string]any{"field": "email", "operator": "contains", "value": "example"}, true},
+		{"list contains", map[string]any{"field": "tags", "operator": "contains", "value": "urgent"}, true},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if got := conditionApplies(test.condition, values); got != test.want {
+				t.Fatalf("conditionApplies() = %v, want %v", got, test.want)
+			}
+		})
 	}
 }
 

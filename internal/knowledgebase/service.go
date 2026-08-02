@@ -414,7 +414,7 @@ func (s *Service) FindArticleBySlug(ctx context.Context, workspaceID, knowledgeB
 }
 
 func (s *Service) GetPublishedBySlug(ctx context.Context, workspaceID, slug string) (*Article, error) {
-	return s.GetPublishedBySlugSurface(ctx, workspaceID, slug, "")
+	return s.GetPublishedBySlugSurfaceLanguage(ctx, workspaceID, slug, "", "")
 }
 
 // GetPublishedBySlugSurface increments the published article view counter and
@@ -422,10 +422,38 @@ func (s *Service) GetPublishedBySlug(ctx context.Context, workspaceID, slug stri
 // an allowlisted reporting dimension (for example, portal or widget), not
 // arbitrary customer payload.
 func (s *Service) GetPublishedBySlugSurface(ctx context.Context, workspaceID, slug, surface string) (*Article, error) {
+	return s.GetPublishedBySlugSurfaceLanguage(ctx, workspaceID, slug, surface, "")
+}
+
+// GetPublishedBySlugSurfaceLanguage resolves the visitor's preferred
+// translation before falling back to the knowledge base default language.
+// Slugs are shared by language variants within a knowledge base, so selecting
+// only by workspace and slug would otherwise return whichever translation was
+// updated most recently.
+func (s *Service) GetPublishedBySlugSurfaceLanguage(ctx context.Context, workspaceID, slug, surface, language string) (*Article, error) {
 	surface = normalizeSurface(surface)
+	language = strings.ToLower(strings.TrimSpace(language))
 	var id string
 	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `UPDATE articles SET view_count=view_count+1 WHERE workspace_id=$1 AND slug=$2 AND state='published' RETURNING id`, workspaceID, strings.ToLower(strings.TrimSpace(slug))).Scan(&id); err != nil {
+		if err := tx.QueryRow(ctx, `
+			WITH candidate AS (
+				SELECT a.id
+				FROM articles a
+				JOIN knowledge_bases k ON k.id=a.knowledge_base_id AND k.workspace_id=a.workspace_id
+				WHERE a.workspace_id=$1 AND a.slug=$2 AND a.state='published'
+				ORDER BY CASE
+					WHEN $3 <> '' AND a.language=$3 THEN 0
+					WHEN a.language=k.default_language THEN 1
+					ELSE 2
+				END, a.published_at DESC NULLS LAST, a.id DESC
+				LIMIT 1
+			)
+			UPDATE articles a
+			SET view_count=a.view_count+1
+			FROM candidate
+			WHERE a.id=candidate.id
+			RETURNING a.id
+		`, workspaceID, strings.ToLower(strings.TrimSpace(slug)), language).Scan(&id); err != nil {
 			return err
 		}
 		if s.events == nil {
@@ -437,7 +465,7 @@ func (s *Service) GetPublishedBySlugSurface(ctx context.Context, workspaceID, sl
 			EntityType:  "article",
 			EntityID:    id,
 			ActorType:   events.ActorVisitor,
-			Data:        map[string]any{"surface": strings.TrimSpace(surface)},
+			Data:        map[string]any{"surface": strings.TrimSpace(surface), "language": language},
 		})
 		return err
 	})
@@ -890,7 +918,22 @@ func (s *Service) ListPublished(ctx context.Context, workspaceID, language strin
 	if limit <= 0 || limit > 50 {
 		limit = 20
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id,workspace_id,knowledge_base_id,collection_id,title,slug,excerpt,body,state,language,author_id,seo,view_count,helpful_count,unhelpful_count,version,scheduled_at,published_at,created_at,updated_at FROM articles WHERE workspace_id=$1 AND state='published' AND ($2='' OR language=$2) ORDER BY published_at DESC,id DESC LIMIT $3`, workspaceID, language, limit)
+	language = strings.ToLower(strings.TrimSpace(language))
+	rows, err := s.pool.Query(ctx, `
+		SELECT id,workspace_id,knowledge_base_id,collection_id,title,slug,excerpt,body,state,language,author_id,seo,view_count,helpful_count,unhelpful_count,version,scheduled_at,published_at,created_at,updated_at
+		FROM (
+			SELECT DISTINCT ON (a.knowledge_base_id,a.slug)
+				a.id,a.workspace_id,a.knowledge_base_id,a.collection_id,a.title,a.slug,a.excerpt,a.body,a.state,a.language,a.author_id,a.seo,a.view_count,a.helpful_count,a.unhelpful_count,a.version,a.scheduled_at,a.published_at,a.created_at,a.updated_at
+			FROM articles a
+			JOIN knowledge_bases k ON k.id=a.knowledge_base_id AND k.workspace_id=a.workspace_id
+			WHERE a.workspace_id=$1 AND a.state='published'
+			ORDER BY a.knowledge_base_id,a.slug,
+				CASE WHEN $2 <> '' AND a.language=$2 THEN 0 WHEN a.language=k.default_language THEN 1 ELSE 2 END,
+				a.published_at DESC NULLS LAST,a.id DESC
+		) selected
+		ORDER BY published_at DESC NULLS LAST,id DESC
+		LIMIT $3
+	`, workspaceID, language, limit)
 	if err != nil {
 		return nil, err
 	}
