@@ -24,6 +24,7 @@ import {
   ApiError,
   api,
   cn,
+  formConditionApplies,
   idempotencyKey,
   useMutation,
   useAllPages,
@@ -95,6 +96,7 @@ export default function FormBuilder() {
   const [routing, setRouting] = useState<LiveForm["routing"]>({ inbox_id: null, team_id: null, tag_ids: [] });
   const [access, setAccess] = useState<LiveForm["access"]>("public");
   const [spamProtection, setSpamProtection] = useState<Record<string, unknown>>({});
+  const [previewValues, setPreviewValues] = useState<Record<string, unknown>>({});
   const [discardOpen, setDiscardOpen] = useState(false);
 
   useEffect(() => {
@@ -104,6 +106,7 @@ export default function FormBuilder() {
     setRouting({ inbox_id: form.routing?.inbox_id ?? null, team_id: form.routing?.team_id ?? null, tag_ids: form.routing?.tag_ids ?? [] });
     setAccess(form.access);
     setSpamProtection(form.spam_protection ?? {});
+    setPreviewValues({});
   }, [form]);
 
   const save = useMutation<void, LiveForm>(
@@ -115,6 +118,10 @@ export default function FormBuilder() {
   if (query.isError || !form) return <Page><div className="p-8 text-sm text-danger">{query.error instanceof ApiError ? query.error.message : "Could not load this form."}</div></Page>;
 
   const active = fields.find((field) => field.id === activeId);
+  const activeIndex = activeId ? fields.findIndex((field) => field.id === activeId) : -1;
+  const conditionFields = activeIndex > 0 ? fields.slice(0, activeIndex) : [];
+  const previewVisible = (field: FormField) => formConditionApplies(field.condition, previewValues);
+  const setPreviewValue = (key: string, value: unknown) => setPreviewValues((current) => ({ ...current, [key]: value }));
   const dirty = JSON.stringify({ fields, routing, access, spamProtection }) !== JSON.stringify({ fields: form.fields, routing: form.routing, access: form.access, spamProtection: form.spam_protection ?? {} });
 
   const discardChanges = () => {
@@ -293,7 +300,7 @@ export default function FormBuilder() {
                       {active.condition ? (
                         <div className="space-y-2">
                           <div className="grid gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
-                            <Select size="sm" aria-label="Condition field" value={active.condition.field} onValueChange={(field) => updateActiveField({ condition: { ...active.condition!, field } })} options={fields.filter((field) => field.id !== active.id).map((field) => ({ value: field.key, label: field.label }))} />
+                            <Select size="sm" aria-label="Condition field" value={active.condition.field} onValueChange={(field) => updateActiveField({ condition: { ...active.condition!, field } })} options={conditionFields.map((field) => ({ value: field.key, label: field.label }))} />
                             <Select size="sm" aria-label="Condition operator" value={active.condition.operator} onValueChange={(operator) => updateActiveField({ condition: { ...active.condition!, operator: operator as FilterCondition["operator"] } })} options={[{ value: "is", label: "is" }, { value: "is_not", label: "is not" }, { value: "contains", label: "contains" }, { value: "is_set", label: "is set" }, { value: "is_not_set", label: "is not set" }]} />
                             <Input inputSize="sm" aria-label="Condition value" value={String(active.condition.value ?? "")} onChange={(event) => updateActiveField({ condition: { ...active.condition!, value: event.target.value } })} />
                             <Button variant="ghost" size="sm" onClick={() => updateActiveField({ condition: null })}>Remove</Button>
@@ -301,7 +308,7 @@ export default function FormBuilder() {
                           <p className="text-2xs text-fg-muted">Only fields above this one can be used as conditions.</p>
                         </div>
                       ) : (
-                        <Button variant="secondary" size="sm" leading={<Plus />} disabled={!fields.some((field) => field.id !== active.id)} onClick={() => { const source = fields.find((field) => field.id !== active.id); if (source) updateActiveField({ condition: { field: source.key, operator: "is", value: "" } }); }}>
+                        <Button variant="secondary" size="sm" leading={<Plus />} disabled={!conditionFields.length} onClick={() => { const source = conditionFields[0]; if (source) updateActiveField({ condition: { field: source.key, operator: "is", value: "" } }); }}>
                           Add a condition
                         </Button>
                       )}
@@ -394,7 +401,7 @@ export default function FormBuilder() {
           <Card variant="raised">
             <CardHeader title={form.name} description="Fields marked with * are required." />
             <CardBody className="space-y-4">
-              {fields.map((field) => (
+              {fields.filter(previewVisible).map((field) => (
                 <Field
                   key={field.id}
                   label={field.label}
@@ -402,13 +409,15 @@ export default function FormBuilder() {
                   description={field.description ?? undefined}
                 >
                   {field.type === "text" ? (
-                    <Textarea rows={3} placeholder={field.placeholder ?? ""} />
+                    <Textarea rows={3} value={String(previewValues[field.key] ?? "")} onChange={(event) => setPreviewValue(field.key, event.target.value)} placeholder={field.placeholder ?? ""} />
                   ) : field.type === "enum" ? (
                     <Select
                       options={(field.options ?? []).map((option) => ({
                         value: option,
                         label: option,
                       }))}
+                      value={String(previewValues[field.key] ?? "")}
+                      onValueChange={(value) => setPreviewValue(field.key, value)}
                       aria-label={field.label}
                     />
                   ) : field.type === "file" ? (
@@ -416,7 +425,7 @@ export default function FormBuilder() {
                       Drop a file or click to browse
                     </div>
                   ) : (
-                    <Input placeholder={field.placeholder ?? ""} />
+                    <Input value={String(previewValues[field.key] ?? "")} onChange={(event) => setPreviewValue(field.key, event.target.value)} placeholder={field.placeholder ?? ""} />
                   )}
                 </Field>
               ))}

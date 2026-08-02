@@ -10,6 +10,7 @@ import {
   SegmentedControl,
   Tooltip,
   cn,
+  useFixedVirtualList,
   useTheme,
   type Conversation,
   type Customer,
@@ -23,7 +24,7 @@ import {
   Rows3,
   UserPlus,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ConversationRow } from "./ConversationRow";
 
 export type SortKey = "recent" | "oldest" | "priority";
@@ -31,9 +32,9 @@ export type SortKey = "recent" | "oldest" | "priority";
 /**
  * Middle pane of the inbox.
  *
- * The API returns bounded cursor pages, so this list does not retain the whole
- * inbox in memory. Row virtualization is still a follow-up for very large
- * pages; the row component is height-stable and keyed for that upgrade.
+ * The API returns bounded cursor pages, and only the visible rows from those
+ * pages are mounted. Cursor pagination remains the memory boundary while
+ * fixed-height virtualization keeps a large loaded page responsive.
  */
 export function ConversationList({
   conversations,
@@ -44,6 +45,9 @@ export function ConversationList({
   onBulkAssignToMe,
   onBulkResolve,
   bulkPending,
+  bulkError,
+  sort,
+  onSortChange,
   hasMore,
   onLoadMore,
   loadingMore,
@@ -53,16 +57,18 @@ export function ConversationList({
   activeId: string | null;
   onSelect: (id: string) => void;
   viewName: string;
-  onBulkAssignToMe: (ids: string[]) => void;
-  onBulkResolve: (ids: string[]) => void;
+  onBulkAssignToMe: (ids: string[]) => Promise<boolean>;
+  onBulkResolve: (ids: string[]) => Promise<boolean>;
   bulkPending: boolean;
+  bulkError: string | null;
+  sort: SortKey;
+  onSortChange: (sort: SortKey) => void;
   hasMore: boolean;
   onLoadMore: () => void;
   loadingMore: boolean;
 }) {
   const { density, setDensity } = useTheme();
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [sort, setSort] = useState<SortKey>("recent");
 
   const selectionMode = selected.size > 0;
 
@@ -75,7 +81,7 @@ export function ConversationList({
     });
   };
 
-  const sorted = [...conversations].sort((a, b) => {
+  const sorted = useMemo(() => [...conversations].sort((a, b) => {
     switch (sort) {
       case "oldest":
         return a.last_message_at.localeCompare(b.last_message_at);
@@ -86,7 +92,14 @@ export function ConversationList({
       default:
         return b.last_message_at.localeCompare(a.last_message_at);
     }
-  });
+  }), [conversations, sort]);
+  const itemSize = density === "compact" ? 96 : 112;
+  const { ref, onScroll, items, totalSize, scrollToIndex } = useFixedVirtualList(sorted.length, itemSize);
+
+  useEffect(() => {
+    const activeIndex = sorted.findIndex((conversation) => conversation.id === activeId);
+    if (activeIndex >= 0) scrollToIndex(activeIndex);
+  }, [activeId, scrollToIndex, sorted]);
 
   return (
     <div className="flex h-full min-h-0 w-list shrink-0 flex-col border-r border-line bg-surface">
@@ -106,8 +119,9 @@ export function ConversationList({
                   leading={<UserPlus />}
                   loading={bulkPending}
                   onClick={() => {
-                    onBulkAssignToMe([...selected]);
-                    setSelected(new Set());
+                    void onBulkAssignToMe([...selected]).then((success) => {
+                      if (success) setSelected(new Set());
+                    });
                   }}
                 />
               </Tooltip>
@@ -120,8 +134,9 @@ export function ConversationList({
                   leading={<CheckCheck />}
                   loading={bulkPending}
                   onClick={() => {
-                    onBulkResolve([...selected]);
-                    setSelected(new Set());
+                    void onBulkResolve([...selected]).then((success) => {
+                      if (success) setSelected(new Set());
+                    });
                   }}
                 />
               </Tooltip>
@@ -147,7 +162,7 @@ export function ConversationList({
                   iconOnly
                   aria-label="Select conversations"
                   leading={<CheckSquare />}
-                  onClick={() => sorted[0] && toggle(sorted[0].id)}
+                  onClick={() => setSelected(new Set(sorted.map((conversation) => conversation.id)))}
                 />
               </Tooltip>
 
@@ -159,7 +174,7 @@ export function ConversationList({
                 </Tooltip>
                 <MenuContent align="end">
                   <MenuLabel>Sort by</MenuLabel>
-                  <MenuRadioGroup value={sort} onValueChange={(value) => setSort(value as SortKey)}>
+                  <MenuRadioGroup value={sort} onValueChange={(value) => onSortChange(value as SortKey)}>
                     <MenuRadioItem value="recent">Most recent activity</MenuRadioItem>
                     <MenuRadioItem value="oldest">Oldest waiting</MenuRadioItem>
                     <MenuRadioItem value="priority">Priority</MenuRadioItem>
@@ -181,7 +196,15 @@ export function ConversationList({
         )}
       </header>
 
+      {bulkError && (
+        <div role="alert" className="border-b border-danger-border bg-danger-subtle px-3 py-2 text-xs text-danger">
+          {bulkError} The selection was kept so you can retry.
+        </div>
+      )}
+
       <div
+        ref={ref}
+        onScroll={onScroll}
         role="listbox"
         aria-label={`${viewName} conversations`}
         className={cn("min-h-0 flex-1 overflow-y-auto overscroll-contain")}
@@ -195,18 +218,27 @@ export function ConversationList({
           />
         ) : (
           <>
-            {sorted.map((conversation) => (
-              <ConversationRow
-                key={conversation.id}
-                conversation={conversation}
-                customer={conversation.customer_id ? customersById.get(conversation.customer_id) : undefined}
-                active={conversation.id === activeId}
-                selected={selected.has(conversation.id)}
-                showSelection={selectionMode}
-                onSelect={() => onSelect(conversation.id)}
-                onToggleSelect={() => toggle(conversation.id)}
-              />
-            ))}
+            <div className="relative" style={{ height: totalSize }}>
+              {items.map((item) => {
+                const conversation = sorted[item.index];
+                if (!conversation) return null;
+                return (
+                  <div key={conversation.id} className="absolute inset-x-0" style={{ top: item.start, height: item.size }}>
+                    <ConversationRow
+                      conversation={conversation}
+                      customer={conversation.customer_id ? customersById.get(conversation.customer_id) : undefined}
+                      active={conversation.id === activeId}
+                      selected={selected.has(conversation.id)}
+                      showSelection={selectionMode}
+                      ariaPosInSet={item.index + 1}
+                      ariaSetSize={sorted.length}
+                      onSelect={() => onSelect(conversation.id)}
+                      onToggleSelect={() => toggle(conversation.id)}
+                    />
+                  </div>
+                );
+              })}
+            </div>
             {hasMore && (
               <div className="flex justify-center p-3">
                 <Button variant="secondary" size="sm" loading={loadingMore} onClick={onLoadMore}>

@@ -32,6 +32,7 @@ type CustomerEvent = {
   type: string;
   source: string;
   url: string | null;
+  request_id: string | null;
   payload: Record<string, unknown>;
   occurred_at: string;
 };
@@ -69,7 +70,7 @@ export default function EventStream() {
   const customerById = new Map((customers.data?.data ?? []).map((c) => [c.id, c]));
 
   const rows = list.items.filter((event) =>
-    `${event.type} ${JSON.stringify(event.payload)}`.toLowerCase().includes(query.toLowerCase()),
+    `${event.type} ${event.source} ${event.request_id ?? ""} ${JSON.stringify(event.payload)}`.toLowerCase().includes(query.toLowerCase()),
   );
   const active = rows.find((event) => event.id === selected);
 
@@ -166,6 +167,7 @@ export default function EventStream() {
               <p className="mb-1 font-mono text-sm text-fg">{active.type}</p>
               <p className="mb-4 text-xs text-fg-muted">
                 {formatRelativeShort(active.occurred_at, new Date())} ago · via {active.source}
+                {active.request_id ? ` · request ${active.request_id}` : ""}
               </p>
               <CodeBlock
                 language="json"
@@ -178,6 +180,7 @@ export default function EventStream() {
                     customer_id: active.customer_id,
                     session_id: active.session_id,
                     source: active.source,
+                    request_id: active.request_id || null,
                     occurred_at: active.occurred_at,
                     payload: active.payload,
                   },

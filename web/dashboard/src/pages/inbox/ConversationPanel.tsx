@@ -53,7 +53,7 @@ import {
   TicketPlus,
   UserPlus,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useWorkspace } from "../../app/workspace-context";
 import { Composer } from "./Composer";
@@ -72,9 +72,13 @@ import { MessageTimeline } from "./MessageTimeline";
 export function ConversationPanel({
   conversation,
   onToggleContext,
+  onResolved,
+  markReadOnOpen,
 }: {
   conversation: Conversation;
   onToggleContext: () => void;
+  onResolved: () => void;
+  markReadOnOpen: boolean;
 }) {
   const navigate = useNavigate();
   const { memberById, members, tagById, viewer, can, workspace } = useWorkspace();
@@ -111,6 +115,7 @@ export function ConversationPanel({
   );
 
   const markRead = useMutation<void, unknown>(() => api.post(`/conversations/${conversation.id}/read`));
+  const markReadConversation = markRead.mutate;
   const isFollowing = viewers.some((v) => v!.id === viewer.id) || false;
 
   const setAssignee = useMutation<string | null, unknown>(
@@ -147,6 +152,11 @@ export function ConversationPanel({
       onSuccess: (ticket) => navigate(`/tickets/${ticket.id}`),
     },
   );
+
+  useEffect(() => {
+    if (!markReadOnOpen || !conversation.unread) return;
+    void markReadConversation().catch(() => {});
+  }, [conversation.id, conversation.unread, markReadConversation, markReadOnOpen]);
 
   const sendMessage = async (body: string, kind: "reply" | "note", fileIDs: string[], mentionedMemberIDs: string[]) => {
     await api.post(`/conversations/${conversation.id}/messages`, { body, kind, author_name: viewer.name, file_ids: fileIDs, mentioned_member_ids: mentionedMemberIDs }, { idempotencyKey: idempotencyKey() });
@@ -282,7 +292,7 @@ export function ConversationPanel({
             leading={<CheckCircle2 />}
             loading={setState.isPending}
             disabled={conversation.state === "resolved"}
-            onClick={() => void setState.mutate("resolved").catch(() => {})}
+            onClick={() => void setState.mutate("resolved").then(onResolved).catch(() => {})}
           >
             Resolve
           </Button>
@@ -389,7 +399,7 @@ export function ConversationPanel({
       </header>
 
       {/* Timeline ---------------------------------------------------------- */}
-      <div className="min-h-0 flex-1 overflow-y-auto" onClick={() => void markRead.mutate().catch(() => {})}>
+      <div className="min-h-0 flex-1 overflow-y-auto" onClick={markReadOnOpen ? undefined : () => void markReadConversation().catch(() => {})}>
         {messages.isLoading ? <p className="p-8 text-center text-xs text-fg-muted">Loading messages…</p> : messages.error ? <p className="p-8 text-center text-xs text-danger">Could not load messages.</p> : messages.items.length > 0 ? <><div className="flex justify-center px-5 pt-4">{messages.hasMore && <Button variant="ghost" size="xs" loading={messages.isFetching} onClick={() => void messages.fetchNext()}>Load older messages</Button>}</div><MessageTimeline messages={messages.items} /></> : <div className="flex h-full items-center justify-center p-8 text-center text-xs text-fg-muted">No messages yet.</div>}
       </div>
 
