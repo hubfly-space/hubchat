@@ -2,7 +2,8 @@ import { ApiError, Card, CardBody, EmptyState, SearchInput, api, useQuery, type 
 import { ArrowRight, Book, Lightbulb, MessageSquarePlus } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { portalAccent, portalFeatureEnabled, portalThemeText, usePortal } from "../portal-context";
+import { portalAccent, portalFeatureEnabled, portalLanguage, portalThemeText, usePortal } from "../portal-context";
+import { portalText } from "../i18n";
 
 type Article = { id: string; slug: string; title: string; excerpt: string; updated_at: string; view_count: number };
 type SearchResponse = Paginated<{ article: Article }>;
@@ -22,13 +23,15 @@ export default function Home() {
   const ticketsEnabled = portalFeatureEnabled(portalData?.portal, "tickets");
   const knowledgeBaseEnabled = portalFeatureEnabled(portalData?.portal, "knowledge_base");
   const feedbackEnabled = portalFeatureEnabled(portalData?.portal, "feedback");
+  const language = portalLanguage(portalData);
   const articles = useQuery<SearchResponse>(
-    ["portal-home-knowledge", workspaceID, query],
-    (signal) => api.get(`/public/knowledge-bases/${encodeURIComponent(workspaceID)}/search?q=${encodeURIComponent(query)}&surface=portal`, { signal }),
+    ["portal-home-knowledge", workspaceID, language, query],
+    (signal) => api.get(`/public/knowledge-bases/${encodeURIComponent(workspaceID)}/search?q=${encodeURIComponent(query)}&language=${encodeURIComponent(language)}&surface=portal`, { signal }),
     { enabled: Boolean(workspaceID && knowledgeBaseEnabled) },
   );
   const results = (articles.data?.data ?? []).map((item) => item.article);
   const navigation = portalData?.portal.navigation ?? [];
+  const t = (key: string, fallback: string, values?: Record<string, string | number>) => portalText(portalData, key, fallback, values);
 
   return (
     <>
@@ -57,8 +60,8 @@ export default function Home() {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               onClear={() => setQuery("")}
-              placeholder="Search guides and answers…"
-              aria-label="Search the help centre"
+              placeholder={t("search_guides", "Search guides and answers…")}
+              aria-label={t("search_help_centre", "Search the help centre")}
               className="shadow-2"
             />
 
@@ -66,16 +69,16 @@ export default function Home() {
               <div className="absolute inset-x-0 top-full z-10 mt-2 overflow-hidden rounded-lg border border-line bg-overlay text-left shadow-3">
                 {articles.isError ? (
                   <div className="px-4 py-6 text-center text-sm text-danger">
-                    {articles.error instanceof ApiError ? articles.error.message : "Help centre unavailable."}
+                    {articles.error instanceof ApiError ? articles.error.message : t("help_centre_unavailable", "Help centre unavailable.")}
                   </div>
                 ) : results.length === 0 ? (
                   <div className="px-4 py-6 text-center">
-                    <p className="text-sm text-fg">Nothing matches “{query}”</p>
+                    <p className="text-sm text-fg">{t("nothing_matches", "Nothing matches “{query}”", { query })}</p>
                     <p className="mt-1 text-xs text-fg-muted">
-                      Try fewer words, or{" "}
+                      {t("try_fewer_words", "Try fewer words, or")} {" "}
                       {ticketsEnabled ? <Link to="/tickets/new" className="text-accent-text hover:underline">
-                        send us a request
-                      </Link> : "contact the team"}
+                        {t("send_us_request", "send us a request")}
+                      </Link> : t("contact_team", "contact the team")}
                       .
                     </p>
                   </div>
@@ -98,24 +101,24 @@ export default function Home() {
                 )}
               </div>
             )}
-          </div> : <p className="mx-auto mt-7 max-w-xl text-sm text-fg-muted">Use the links above to find support or contact the team.</p>}
+          </div> : <p className="mx-auto mt-7 max-w-xl text-sm text-fg-muted">{t("use_links_support", "Use the links above to find support or contact the team.")}</p>}
         </div>
       </section>
 
       <div className="mx-auto w-full max-w-5xl px-4 py-10 sm:px-6">
         {knowledgeBaseEnabled && <section className="mb-10">
           <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="text-md font-semibold tracking-tight text-fg">Latest guides</h2>
-            <Link to="/kb" className="text-xs text-accent-text hover:underline">Browse all</Link>
+            <h2 className="text-md font-semibold tracking-tight text-fg">{t("latest_guides", "Latest guides")}</h2>
+            <Link to="/kb" className="text-xs text-accent-text hover:underline">{t("browse_all", "Browse all")}</Link>
           </div>
-          {articles.isLoading ? <p className="text-sm text-fg-muted">Loading guides…</p> : articles.isError ? <EmptyState icon={Book} title="Guides unavailable" description="Try again in a moment or send us a request." /> : results.length === 0 ? <EmptyState icon={Book} title="No published guides yet" description="Send us a request and we will help directly." /> : (
+          {articles.isLoading ? <p className="text-sm text-fg-muted">{t("loading_guides", "Loading guides…")}</p> : articles.isError ? <EmptyState icon={Book} title={t("guides_unavailable", "Guides unavailable")} description="Try again in a moment or send us a request." /> : results.length === 0 ? <EmptyState icon={Book} title={t("no_guides", "No published guides yet")} description="Send us a request and we will help directly." /> : (
             <Card><CardBody className="p-0"><ul className="divide-y divide-line-subtle">{results.slice(0, 6).map((article) => <li key={article.id}><Link to={`/kb/article/${article.slug}`} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-hover"><Book aria-hidden="true" className="size-3.5 shrink-0 text-fg-muted" /><span className="min-w-0 flex-1"><span className="block truncate text-sm text-fg">{article.title}</span><span className="mt-0.5 block line-clamp-1 text-xs text-fg-muted">{article.excerpt}</span></span><ArrowRight aria-hidden="true" className="size-3.5 shrink-0 text-fg-disabled" /></Link></li>)}</ul></CardBody></Card>
           )}
         </section>}
 
         {/* Popular -------------------------------------------------------- */}
         {knowledgeBaseEnabled && <section className="mb-10">
-          <h2 className="mb-3 text-md font-semibold tracking-tight text-fg">Most read</h2>
+          <h2 className="mb-3 text-md font-semibold tracking-tight text-fg">{t("most_read", "Most read")}</h2>
           <Card>
             <CardBody className="p-0">
               <ul className="divide-y divide-line-subtle">
@@ -130,7 +133,7 @@ export default function Home() {
                         {article.title}
                       </span>
                       <span className="shrink-0 text-2xs text-fg-muted">
-                        {article.view_count} views
+                        {t("views", "{count} views", { count: article.view_count })}
                       </span>
                       <ArrowRight aria-hidden="true" className="size-3.5 shrink-0 text-fg-disabled" />
                     </Link>
@@ -143,14 +146,14 @@ export default function Home() {
 
         {/* Contact -------------------------------------------------------- */}
         {(ticketsEnabled || feedbackEnabled) && <section>
-          <h2 className="mb-3 text-md font-semibold tracking-tight text-fg">Still need help?</h2>
+          <h2 className="mb-3 text-md font-semibold tracking-tight text-fg">{t("still_need_help", "Still need help?")}</h2>
           <div className="grid gap-3 sm:grid-cols-2">
             {ticketsEnabled && <Card interactive className="p-0">
               <Link to={navigation.find((item) => !item.external && item.href === "/tickets/new")?.href ?? "/tickets/new"} className="block p-4">
                 <MessageSquarePlus aria-hidden="true" className="size-4 text-accent-text" />
-                <p className="mt-2.5 text-sm font-medium text-fg">Send a request</p>
+                <p className="mt-2.5 text-sm font-medium text-fg">{t("send_request", "Send a request")}</p>
                 <p className="mt-1 text-xs leading-normal text-fg-muted">
-                  We reply within one business day, usually much sooner.
+                  {t("reply_business_day", "We reply within one business day, usually much sooner.")}
                 </p>
               </Link>
             </Card>}
@@ -158,9 +161,9 @@ export default function Home() {
             {feedbackEnabled && <Card interactive className="p-0">
               <Link to="/feedback" className="block p-4">
                 <Lightbulb aria-hidden="true" className="size-4 text-accent-text" />
-                <p className="mt-2.5 text-sm font-medium text-fg">Suggest an improvement</p>
+                <p className="mt-2.5 text-sm font-medium text-fg">{t("suggest_improvement", "Suggest an improvement")}</p>
                 <p className="mt-1 text-xs leading-normal text-fg-muted">
-                  Vote on what we build next, or add something we have missed.
+                  {t("vote_build", "Vote on what we build next, or add something we have missed.")}
                 </p>
               </Link>
             </Card>}
