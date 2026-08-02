@@ -46,7 +46,7 @@
 
   .prose-portal ul,
   .prose-portal ol {
-    padding-left: 1.4em;
+    padding-inline-start: 1.4em;
   }
 
   .prose-portal li {
@@ -76,8 +76,8 @@
   }
 
   .prose-portal blockquote {
-    border-left: 2px solid var(--hc-accent-border);
-    padding-left: var(--space-4);
+    border-inline-start: 2px solid var(--hc-accent-border);
+    padding-inline-start: var(--space-4);
     color: var(--hc-text-muted);
   }
 }

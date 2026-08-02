@@ -16,7 +16,7 @@ export type PortalConfig = {
   enabled: boolean;
 };
 
-export type PortalFeature = "tickets" | "knowledge_base" | "feedback" | "changelog" | "announcements";
+export type PortalFeature = "tickets" | "knowledge_base" | "feedback" | "changelog" | "forms" | "announcements";
 
 export type PortalViewer = {
   id: string;
@@ -93,6 +93,24 @@ export function portalThemeText(config: PortalConfig | undefined, key: "headline
   return typeof value === "string" && value.trim() ? value : fallback;
 }
 
+/** Language used for knowledge-base variants on public portal requests. */
+export function portalLanguage(data: PortalBootstrap | undefined) {
+  const configured = data?.viewer?.language || data?.portal.default_language || "en";
+  return configured.trim().toLowerCase().replaceAll("_", "-");
+}
+
+const RTL_LANGUAGE_PREFIXES = new Set(["ar", "dv", "fa", "ha", "he", "ks", "ku", "ps", "ur", "yi"]);
+
+/** Languages whose normal reading direction is right-to-left. */
+export function portalIsRTL(language: string) {
+  const base = language.trim().toLowerCase().split("-", 1)[0] ?? "";
+  return RTL_LANGUAGE_PREFIXES.has(base);
+}
+
+export function portalDirection(language: string): "ltr" | "rtl" {
+  return portalIsRTL(language) ? "rtl" : "ltr";
+}
+
 export function portalAssetURL(value: unknown) {
   if (typeof value !== "string" || !value.trim()) return null;
   try {
@@ -110,6 +128,7 @@ export function portalNavigationFeature(href: string): PortalFeature | null {
   if (pathname === "/kb" || pathname.startsWith("/kb/")) return "knowledge_base";
   if (pathname === "/feedback" || pathname.startsWith("/feedback/")) return "feedback";
   if (pathname === "/changelog" || pathname.startsWith("/changelog/")) return "changelog";
+  if (pathname === "/forms" || pathname.startsWith("/forms/")) return "forms";
   return null;
 }
 

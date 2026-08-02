@@ -15,6 +15,7 @@ import { Plus, TicketCheck } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { portalErrorMessage, usePortal } from "../portal-context";
+import { portalText } from "../i18n";
 
 const STATUS: Record<string, { label: string; tone: BadgeTone }> = {
   open: { label: "Open", tone: "accent" },
@@ -39,6 +40,7 @@ export default function Tickets() {
   const [filter, setFilter] = useState<"open" | "all">("open");
   const location = useLocation();
   const { data: portalData } = usePortal();
+  const t = (key: string, fallback: string, values?: Record<string, string | number>) => portalText(portalData, key, fallback, values);
   const query = useInfinite<PortalTicket>(
     portalData?.viewer ? ["portal", "tickets"] : null,
     (cursor, signal) => {
@@ -49,10 +51,10 @@ export default function Tickets() {
   );
 
   if (!portalData?.viewer) {
-    return <EmptyState icon={TicketCheck} title="Sign in to view your requests" description="Use your email to access requests and replies from this portal." action={<Button variant="primary" size="sm" asChild><Link to={`/sign-in?portal=${encodeURIComponent(portalData?.portal.id ?? "")}&next=${encodeURIComponent(location.pathname + location.search)}`}>Sign in</Link></Button>} />;
+    return <EmptyState icon={TicketCheck} title="Sign in to view your requests" description="Use your email to access requests and replies from this portal." action={<Button variant="primary" size="sm" asChild><Link to={`/sign-in?portal=${encodeURIComponent(portalData?.portal.id ?? "")}&next=${encodeURIComponent(location.pathname + location.search)}`}>{t("sign_in", "Sign in")}</Link></Button>} />;
   }
-  if (query.isLoading) return <div className="py-12 text-center text-sm text-fg-muted">Loading your requests…</div>;
-  if (query.error) return <div className="py-12 text-center text-sm text-danger">{portalErrorMessage(query.error)} <Button className="ml-2" variant="secondary" size="sm" onClick={query.refetch}>Try again</Button></div>;
+  if (query.isLoading) return <div className="py-12 text-center text-sm text-fg-muted">{t("loading_requests", "Loading your requests…")}</div>;
+  if (query.error) return <div className="py-12 text-center text-sm text-danger">{portalErrorMessage(query.error)} <Button className="ml-2" variant="secondary" size="sm" onClick={query.refetch}>{t("try_again", "Try again")}</Button></div>;
 
   const tickets = query.items;
   const visible = tickets.filter((ticket) =>
@@ -63,24 +65,24 @@ export default function Tickets() {
     <div>
       <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tighter text-fg">Your requests</h1>
+          <h1 className="text-2xl font-semibold tracking-tighter text-fg">{t("your_requests", "Your requests")}</h1>
           <p className="mt-1.5 text-sm text-fg-muted">
-            Everything you have sent us, and where it stands.
+            {t("requests_description", "Everything you have sent us, and where it stands.")}
           </p>
         </div>
         <Button variant="primary" size="sm" leading={<Plus />} asChild>
-          <Link to="/tickets/new">New request</Link>
+          <Link to="/tickets/new">{t("new_request", "New request")}</Link>
         </Button>
       </header>
 
       <div className="mb-4">
         <SegmentedControl
-          aria-label="Filter requests"
+          aria-label={t("filter_requests", "Filter requests")}
           value={filter}
           onValueChange={setFilter}
           options={[
-            { value: "open", label: "Open" },
-            { value: "all", label: "All" },
+            { value: "open", label: t("open", "Open") },
+            { value: "all", label: t("all", "All") },
           ]}
         />
       </div>
@@ -88,11 +90,11 @@ export default function Tickets() {
       {visible.length === 0 ? (
         <EmptyState
           icon={TicketCheck}
-          title="No requests here"
-          description="When you send us something, it appears here so you can follow along."
+          title={t("no_requests", "No requests here")}
+          description={t("follow_requests", "When you send us something, it appears here so you can follow along.")}
           action={
             <Button variant="primary" size="sm" asChild>
-              <Link to="/tickets/new">Send a request</Link>
+              <Link to="/tickets/new">{t("send_request", "Send a request")}</Link>
             </Button>
           }
         />
@@ -113,11 +115,11 @@ export default function Tickets() {
                     </div>
 
                     <p className="mt-2 line-clamp-1 text-xs text-fg-muted">
-                      {ticket.description || "No description provided."}
+                      {ticket.description || t("no_description", "No description provided.")}
                     </p>
 
                     <p className="mt-2 text-2xs text-fg-disabled">
-                      updated {formatRelativeShort(ticket.updated_at)} ago
+                      {t("updated", "updated {time} ago", { time: formatRelativeShort(ticket.updated_at) })}
                     </p>
                   </Link>
                 </Card>
@@ -132,7 +134,7 @@ export default function Tickets() {
         hasNext={query.hasMore}
         onPrevious={() => undefined}
         onNext={() => void query.fetchNext()}
-        summary={`${tickets.length} request${tickets.length === 1 ? "" : "s"} loaded`}
+        summary={t("requests_loaded", "{count} request{suffix} loaded", { count: tickets.length, suffix: tickets.length === 1 ? "" : "s" })}
       />
     </div>
   );
