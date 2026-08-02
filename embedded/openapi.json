@@ -306,6 +306,90 @@
           },
           {
             "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "name": "inbox_id",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "name": "assignee_id",
+            "in": "query",
+            "description": "Use unassigned to select conversations without an assignee.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "team_id",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "name": "customer_id",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "name": "priority",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "low",
+                "normal",
+                "high",
+                "urgent"
+              ]
+            }
+          },
+          {
+            "name": "tag_id",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "name": "follower_id",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "Comma-separated conversation states.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "sla",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "approaching",
+                "breached"
+              ]
+            }
+          },
+          {
+            "name": "mentioned",
+            "in": "query",
+            "description": "When true, return conversations where the authenticated member was mentioned.",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
           }
         ],
         "responses": {
@@ -367,6 +451,69 @@
         "tags": [
           "Conversations"
         ]
+      }
+    },
+    "/v1/conversations/counts": {
+      "get": {
+        "summary": "Get a resource",
+        "responses": {
+          "200": {
+            "description": "Successful JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationCounts"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "getConversationsCounts",
+        "tags": [
+          "Conversations"
+        ]
+      }
+    },
+    "/v1/conversations/bulk": {
+      "post": {
+        "summary": "Apply one action to a bounded conversation selection",
+        "operationId": "bulkUpdateConversations",
+        "tags": [
+          "Conversations"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkConversationUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bulk action applied atomically",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkConversationUpdateResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     },
     "/v1/saved-views": {
@@ -1731,6 +1878,15 @@
           },
           {
             "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Preferred language where the public resource supports language variants."
           }
         ],
         "responses": {
@@ -1821,6 +1977,15 @@
           },
           {
             "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Preferred language where the public resource supports language variants."
           }
         ],
         "responses": {
@@ -2110,6 +2275,15 @@
           },
           {
             "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Preferred language where the public resource supports language variants."
           }
         ],
         "responses": {
@@ -2337,6 +2511,15 @@
           },
           {
             "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Preferred language where the public resource supports language variants."
           }
         ],
         "responses": {
@@ -4521,6 +4704,142 @@
         }
       }
     },
+    "/v1/portal/forms": {
+      "get": {
+        "summary": "List published resources",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Preferred language where the public resource supports language variants."
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "listPortalForms",
+        "security": [],
+        "tags": [
+          "Portal"
+        ]
+      }
+    },
+    "/v1/portal/forms/{slug}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Slug"
+        }
+      ],
+      "get": {
+        "summary": "Read a published resource",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "getPortalForm",
+        "security": [],
+        "tags": [
+          "Portal"
+        ]
+      }
+    },
+    "/v1/portal/forms/{slug}/files": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Slug"
+        }
+      ],
+      "post": {
+        "operationId": "uploadPortalFormFile",
+        "security": [],
+        "tags": [
+          "Portal"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/v1/portal/forms/{slug}/submissions": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Slug"
+        }
+      ],
+      "post": {
+        "summary": "Create or submit a public resource",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/Json"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Json"
+          },
+          "201": {
+            "$ref": "#/components/responses/Json"
+          },
+          "202": {
+            "$ref": "#/components/responses/Json"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "operationId": "submitPortalForm",
+        "security": [],
+        "tags": [
+          "Portal"
+        ]
+      }
+    },
     "/v1/portals/{id}/domains": {
       "parameters": [
         {
@@ -6546,44 +6865,6 @@
         ]
       }
     },
-    "/v1/conversations/counts": {
-      "get": {
-        "operationId": "getConversationsCounts",
-        "summary": "get /v1/conversations/counts",
-        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "Successful response.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "The request is invalid."
-          },
-          "401": {
-            "description": "Authentication is required."
-          },
-          "403": {
-            "description": "The actor lacks the required capability."
-          },
-          "404": {
-            "description": "The resource was not found."
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
     "/v1/conversations/{id}/assignee": {
       "patch": {
         "operationId": "patchConversationsIdAssignee",
@@ -8316,6 +8597,205 @@
             "bearerAuth": []
           }
         ]
+      }
+    },
+    "/v1/email/templates": {
+      "get": {
+        "operationId": "getEmailTemplates",
+        "summary": "get /v1/email/templates",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/email/templates/{key}": {
+      "put": {
+        "operationId": "putEmailTemplatesKey",
+        "summary": "put /v1/email/templates/{key}",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteEmailTemplatesKey",
+        "summary": "delete /v1/email/templates/{key}",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/email/templates/{key}/preview": {
+      "post": {
+        "operationId": "postEmailTemplatesKeyPreview",
+        "summary": "post /v1/email/templates/{key}/preview",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
       }
     },
     "/v1/feedback/boards/{id}": {
@@ -15945,6 +16425,61 @@
           }
         }
       },
+      "ConversationCounts": {
+        "type": "object",
+        "required": [
+          "all",
+          "unassigned",
+          "mine",
+          "following",
+          "mentioned",
+          "waiting_on_us",
+          "waiting_on_customer",
+          "snoozed",
+          "resolved",
+          "spam",
+          "sla_approaching",
+          "sla_breached"
+        ],
+        "properties": {
+          "all": {
+            "type": "integer"
+          },
+          "unassigned": {
+            "type": "integer"
+          },
+          "mine": {
+            "type": "integer"
+          },
+          "following": {
+            "type": "integer"
+          },
+          "mentioned": {
+            "type": "integer"
+          },
+          "waiting_on_us": {
+            "type": "integer"
+          },
+          "waiting_on_customer": {
+            "type": "integer"
+          },
+          "snoozed": {
+            "type": "integer"
+          },
+          "resolved": {
+            "type": "integer"
+          },
+          "spam": {
+            "type": "integer"
+          },
+          "sla_approaching": {
+            "type": "integer"
+          },
+          "sla_breached": {
+            "type": "integer"
+          }
+        }
+      },
       "ConversationSLA": {
         "type": "object",
         "required": [
@@ -16640,6 +17175,16 @@
       "Customer360": {
         "type": "object",
         "required": [
+          "companies",
+          "companies_truncated",
+          "conversations",
+          "conversations_truncated",
+          "tickets",
+          "tickets_truncated",
+          "events",
+          "events_truncated",
+          "sessions",
+          "sessions_truncated",
           "feedback",
           "feedback_truncated",
           "surveys",
@@ -16652,6 +17197,51 @@
           "merges_truncated"
         ],
         "properties": {
+          "companies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Customer360Company"
+            }
+          },
+          "companies_truncated": {
+            "type": "boolean"
+          },
+          "conversations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Customer360Conversation"
+            }
+          },
+          "conversations_truncated": {
+            "type": "boolean"
+          },
+          "tickets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Customer360Ticket"
+            }
+          },
+          "tickets_truncated": {
+            "type": "boolean"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Customer360Event"
+            }
+          },
+          "events_truncated": {
+            "type": "boolean"
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Customer360Session"
+            }
+          },
+          "sessions_truncated": {
+            "type": "boolean"
+          },
           "feedback": {
             "type": "array",
             "items": {
@@ -16696,6 +17286,213 @@
           },
           "merges_truncated": {
             "type": "boolean"
+          }
+        }
+      },
+      "Customer360Company": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "name": {
+            "type": "string"
+          },
+          "domain": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tier": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Customer360Conversation": {
+        "type": "object",
+        "required": [
+          "id",
+          "state",
+          "channel",
+          "inbox_id",
+          "last_message_preview",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": "string"
+          },
+          "channel": {
+            "type": "string"
+          },
+          "inbox_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "last_message_preview": {
+            "type": "string"
+          },
+          "last_message_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "Customer360Ticket": {
+        "type": "object",
+        "required": [
+          "id",
+          "number",
+          "prefix",
+          "title",
+          "status",
+          "priority",
+          "updated_at",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "number": {
+            "type": "integer"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "string"
+          },
+          "conversation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "Customer360Event": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "source",
+          "occurred_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "type": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "occurred_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "Customer360Session": {
+        "type": "object",
+        "required": [
+          "id",
+          "page_views",
+          "started_at",
+          "last_seen_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "device": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "browser": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "os": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "current_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          },
+          "page_views": {
+            "type": "integer"
+          },
+          "started_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "last_seen_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           }
         }
       },
@@ -17803,6 +18600,81 @@
             "items": {
               "$ref": "#/components/schemas/Id"
             }
+          }
+        }
+      },
+      "BulkConversationUpdateRequest": {
+        "type": "object",
+        "required": [
+          "ids",
+          "action"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "ids": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "assign",
+              "state"
+            ]
+          },
+          "assignee_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "type": "string"
+          }
+        }
+      },
+      "BulkConversationUpdateResult": {
+        "type": "object",
+        "required": [
+          "data",
+          "count"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "state",
+                "assignee_id"
+              ],
+              "properties": {
+                "id": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "state": {
+                  "type": "string"
+                },
+                "assignee_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "count": {
+            "type": "integer"
           }
         }
       },
