@@ -211,6 +211,64 @@ func (s *Service) NotifyAssignment(ctx context.Context, workspaceID, memberID, a
 	return s.insertForMember(ctx, workspaceID, memberID, actorID, "assignment", "Assigned "+label, "A "+label+" was assigned to you.", url, entityType, entityID, sourceEventID)
 }
 
+// NotifyTeamUnassigned alerts eligible members when work enters a team queue
+// without an individual assignee. Preference resolution is repeated for each
+// recipient and source_event_id is suffixed with the member ID so replaying
+// the same assignment event remains idempotent.
+func (s *Service) NotifyTeamUnassigned(ctx context.Context, workspaceID, teamID, conversationID, actorID, sourceEventID string) error {
+	if strings.TrimSpace(teamID) == "" || strings.TrimSpace(conversationID) == "" {
+		return nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT tm.member_id
+		FROM team_members tm
+		JOIN workspace_members members
+		  ON members.id=tm.member_id AND members.workspace_id=$1
+		LEFT JOIN notification_preferences preferences
+		  ON preferences.workspace_id=$1 AND preferences.member_id=tm.member_id AND preferences.type='team_unassigned'
+		WHERE tm.team_id=$2
+		  AND (preferences.member_id IS NULL OR coalesce(preferences.in_app,false)
+		       OR coalesce(preferences.email,false) OR coalesce(preferences.browser,false)
+		       OR coalesce(preferences.sound,false))
+	`, workspaceID, teamID)
+	if err != nil {
+		return fmt.Errorf("notification: resolve unassigned team recipients: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var memberID string
+		if err := rows.Scan(&memberID); err != nil {
+			return err
+		}
+		if err := s.insertForMember(ctx, workspaceID, memberID, actorID, "team_unassigned", "Unassigned team work", "A conversation is waiting in your team queue.", "/inbox?conversation="+url.QueryEscape(conversationID), "conversation", conversationID, sourceEventID+":"+memberID); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// NotifyMentions fans out one durable notification per explicitly mentioned
+// member. The conversation service validates membership before the event is
+// appended; insertForMember still applies workspace and preference predicates
+// at delivery time.
+func (s *Service) NotifyMentions(ctx context.Context, workspaceID, conversationID, actorID, sourceEventID string, memberIDs []string) error {
+	seen := make(map[string]struct{}, len(memberIDs))
+	for _, memberID := range memberIDs {
+		memberID = strings.TrimSpace(memberID)
+		if memberID == "" {
+			continue
+		}
+		if _, ok := seen[memberID]; ok {
+			continue
+		}
+		seen[memberID] = struct{}{}
+		if err := s.insertForMember(ctx, workspaceID, memberID, actorID, "mention", "You were mentioned", "You were mentioned in a support conversation.", "/inbox?conversation="+url.QueryEscape(conversationID), "conversation", conversationID, sourceEventID+":"+memberID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // NotifySLA fans an approaching or breached timer out to the subject's
 // assignee, team members, and followers. Recipient resolution is repeated at
 // event-consumption time so an assignment change cannot expose an old queue
@@ -432,12 +490,27 @@ func (s *Service) RunEventConsumer(ctx context.Context, signals <-chan events.Si
 
 func (s *Service) processEvent(ctx context.Context, record events.Record) error {
 	switch record.Type {
-	case events.ConversationAssigned, events.TicketUpdated:
+	case events.ConversationAssigned:
+		var data struct {
+			AssigneeID *string `json:"assignee_id"`
+			TeamID     *string `json:"team_id"`
+		}
+		if err := json.Unmarshal(record.Data, &data); err != nil {
+			return fmt.Errorf("notification: decode assignment event: %w", err)
+		}
+		if data.AssigneeID != nil {
+			return s.NotifyAssignment(ctx, record.WorkspaceID, *data.AssigneeID, record.ActorID, record.EntityType, record.EntityID, record.ID)
+		}
+		if data.TeamID != nil {
+			return s.NotifyTeamUnassigned(ctx, record.WorkspaceID, *data.TeamID, record.EntityID, record.ActorID, record.ID)
+		}
+		return nil
+	case events.TicketUpdated:
 		var data struct {
 			AssigneeID *string `json:"assignee_id"`
 		}
 		if err := json.Unmarshal(record.Data, &data); err != nil {
-			return fmt.Errorf("notification: decode assignment event: %w", err)
+			return fmt.Errorf("notification: decode ticket assignment event: %w", err)
 		}
 		if data.AssigneeID == nil {
 			return nil
@@ -458,7 +531,13 @@ func (s *Service) processEvent(ctx context.Context, record events.Record) error 
 		if err := json.Unmarshal(record.Data, &message); err != nil {
 			return fmt.Errorf("notification: decode message event: %w", err)
 		}
-		if message.AuthorType != "agent" || message.Kind != "reply" || strings.TrimSpace(message.Body) == "" {
+		if message.AuthorType != "agent" || strings.TrimSpace(message.Body) == "" {
+			return nil
+		}
+		if err := s.NotifyMentions(ctx, record.WorkspaceID, message.ConversationID, record.ActorID, record.ID, message.MentionedMemberIDs); err != nil {
+			return err
+		}
+		if message.Kind != "reply" {
 			return nil
 		}
 		return s.NotifyTicketCustomerReply(ctx, record.WorkspaceID, message, record.ID)

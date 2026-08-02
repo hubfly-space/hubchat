@@ -4,6 +4,7 @@ package conversation_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -272,6 +273,52 @@ func TestPostMessageIsIdempotentByClientID(t *testing.T) {
 	}
 	if reloaded.MessageCount != 2 {
 		t.Fatalf("expected exactly 2 messages (open + one reply, not two), got %d", reloaded.MessageCount)
+	}
+}
+
+func TestPostMessageMentionsAreWorkspaceScopedAndDurable(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+
+	eventLog := events.New(pool)
+	svc := conversation.New(pool, eventLog, audit.New(pool))
+	wsA := seedWorkspace(t, ctx, pool)
+	wsB := seedWorkspace(t, ctx, pool)
+	memberA := seedMember(t, ctx, pool, wsA.WorkspaceID)
+
+	conv, _, err := svc.Start(ctx, wsA.WorkspaceID, wsA.InboxID, "widget", nil, nil, nil, "Visitor", "Hi")
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := svc.PostMessageWithMentions(ctx, wsA.WorkspaceID, conv.ID, nil, "note", "agent", &wsA.MemberID, "Agent", "Please review", []string{wsB.MemberID}); !errors.Is(err, conversation.ErrInvalidMention) {
+		t.Fatalf("cross-workspace mention: got %v, want ErrInvalidMention", err)
+	}
+	if _, err := svc.PostMessageWithMentions(ctx, wsA.WorkspaceID, conv.ID, nil, "note", "agent", &wsA.MemberID, "Agent", "Please review", []string{memberA}); err != nil {
+		t.Fatalf("same-workspace mention: %v", err)
+	}
+
+	records, err := eventLog.Since(ctx, wsA.WorkspaceID, 0, 50)
+	if err != nil {
+		t.Fatalf("read event log: %v", err)
+	}
+	var found bool
+	for _, record := range records {
+		if record.Type != events.MessageCreated {
+			continue
+		}
+		var payload conversation.MessageEvent
+		if err := json.Unmarshal(record.Data, &payload); err != nil {
+			t.Fatalf("decode message event: %v", err)
+		}
+		for _, mentioned := range payload.MentionedMemberIDs {
+			if mentioned == memberA {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("message event did not preserve the validated mentioned member")
 	}
 }
 

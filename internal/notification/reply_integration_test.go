@@ -148,6 +148,149 @@ func TestCustomerReplyEmailEventConsumer(t *testing.T) {
 	assertEmailJob(t, ctx, pool, 1, "ada@example.com", "New reply on ticket SUP-1", "Grace Hopper replied")
 }
 
+func TestMentionNotificationEventConsumer(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+
+	ws := seedReplyWorkspace(t, ctx, pool, "mention")
+	mentionedUserID := ids.New(ids.PrefixUser)
+	mentionedMemberID := ids.New(ids.PrefixMember)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO users (id,name,email,password_hash,email_verified_at)
+		VALUES ($1,'Mentioned Agent',$2,'x',now())
+	`, mentionedUserID, mentionedUserID+"@example.com"); err != nil {
+		t.Fatalf("seed mentioned user: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspace_members (id,workspace_id,user_id,role)
+		VALUES ($1,$2,$3,'agent')
+	`, mentionedMemberID, ws.id, mentionedUserID); err != nil {
+		t.Fatalf("seed mentioned member: %v", err)
+	}
+
+	eventLog := events.New(pool)
+	conversationService := conversation.New(pool, eventLog, audit.New(pool))
+	thread, _, err := conversationService.Start(ctx, ws.id, ws.inboxID, "widget", nil, nil, nil, "Visitor", "I need help")
+	if err != nil {
+		t.Fatalf("start conversation: %v", err)
+	}
+
+	service := New(pool)
+	record := events.Record{
+		ID:          "evt-mention-1",
+		WorkspaceID: ws.id,
+		ActorID:     "mem_actor",
+		Type:        events.MessageCreated,
+		Data: mustJSON(t, conversation.MessageEvent{
+			ConversationID:     thread.ID,
+			MessageID:          ids.New(ids.PrefixMessage),
+			Kind:               "note",
+			AuthorType:         "agent",
+			Body:               "Can you review this?",
+			MentionedMemberIDs: []string{mentionedMemberID, mentionedMemberID},
+		}),
+	}
+	if err := service.processEvent(ctx, record); err != nil {
+		t.Fatalf("process mention event: %v", err)
+	}
+	assertMentionNotification(t, ctx, pool, ws.id, mentionedMemberID, 1)
+	if err := service.processEvent(ctx, record); err != nil {
+		t.Fatalf("reprocess mention event: %v", err)
+	}
+	assertMentionNotification(t, ctx, pool, ws.id, mentionedMemberID, 1)
+}
+
+func TestUnassignedTeamNotificationEventConsumer(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+
+	ws := seedReplyWorkspace(t, ctx, pool, "team-unassigned")
+	var ownerMemberID string
+	if err := pool.QueryRow(ctx, `SELECT id FROM workspace_members WHERE workspace_id=$1 ORDER BY created_at,id LIMIT 1`, ws.id).Scan(&ownerMemberID); err != nil {
+		t.Fatalf("find owner member: %v", err)
+	}
+	mentionedUserID := ids.New(ids.PrefixUser)
+	mentionedMemberID := ids.New(ids.PrefixMember)
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id,name,email,password_hash,email_verified_at) VALUES ($1,'Queue Agent',$2,'x',now())`, mentionedUserID, mentionedUserID+"@example.com"); err != nil {
+		t.Fatalf("seed queue user: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO workspace_members (id,workspace_id,user_id,role) VALUES ($1,$2,$3,'agent')`, mentionedMemberID, ws.id, mentionedUserID); err != nil {
+		t.Fatalf("seed queue member: %v", err)
+	}
+
+	eventLog := events.New(pool)
+	workspaceService := workspace.New(pool, eventLog, audit.New(pool))
+	team, err := workspaceService.CreateTeam(ctx, ws.id, ownerMemberID, "Manual Queue", nil, nil, "manual", []string{ownerMemberID, mentionedMemberID})
+	if err != nil {
+		t.Fatalf("create manual team: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO inbox_teams (inbox_id,team_id) VALUES ($1,$2)`, ws.inboxID, team.ID); err != nil {
+		t.Fatalf("attach manual team: %v", err)
+	}
+
+	conversationService := conversation.New(pool, eventLog, audit.New(pool))
+	thread, _, err := conversationService.Start(ctx, ws.id, ws.inboxID, "widget", nil, nil, nil, "Visitor", "Waiting for support")
+	if err != nil {
+		t.Fatalf("start queued conversation: %v", err)
+	}
+	records, err := eventLog.Since(ctx, ws.id, 0, 50)
+	if err != nil {
+		t.Fatalf("read assignment event: %v", err)
+	}
+	var assignment events.Record
+	for _, record := range records {
+		if record.Type == events.ConversationAssigned && record.EntityID == thread.ID {
+			assignment = record
+			break
+		}
+	}
+	if assignment.ID == "" {
+		t.Fatal("manual routing did not append a conversation.assigned event")
+	}
+
+	service := New(pool)
+	if err := service.processEvent(ctx, assignment); err != nil {
+		t.Fatalf("process unassigned team event: %v", err)
+	}
+	assertTeamNotification(t, ctx, pool, ws.id, team.ID, 2)
+	if err := service.processEvent(ctx, assignment); err != nil {
+		t.Fatalf("reprocess unassigned team event: %v", err)
+	}
+	assertTeamNotification(t, ctx, pool, ws.id, team.ID, 2)
+}
+
+func assertMentionNotification(t *testing.T, ctx context.Context, pool *database.Pool, workspaceID, memberID string, expected int) {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM notifications
+		WHERE workspace_id=$1 AND member_id=$2 AND type='mention'
+	`, workspaceID, memberID).Scan(&count); err != nil {
+		t.Fatalf("count mention notifications: %v", err)
+	}
+	if count != expected {
+		t.Fatalf("mention notification count = %d, want %d", count, expected)
+	}
+}
+
+func assertTeamNotification(t *testing.T, ctx context.Context, pool *database.Pool, workspaceID, teamID string, expected int) {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM notifications n
+		JOIN team_members tm ON tm.member_id=n.member_id AND tm.team_id=$2
+		WHERE n.workspace_id=$1 AND n.type='team_unassigned'
+	`, workspaceID, teamID).Scan(&count); err != nil {
+		t.Fatalf("count team notifications: %v", err)
+	}
+	if count != expected {
+		t.Fatalf("team notification count = %d, want %d", count, expected)
+	}
+}
+
 func assertEmailJob(t *testing.T, ctx context.Context, pool *database.Pool, expected int, recipient, subject, bodyPart string) {
 	t.Helper()
 	var count int

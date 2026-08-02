@@ -35,6 +35,7 @@ var (
 	ErrInvalidAssignee = errors.New("conversation: assignee is not a member of this workspace")
 	ErrInvalidTeam     = errors.New("conversation: not a team in this workspace")
 	ErrInvalidInbox    = errors.New("conversation: not an inbox in this workspace")
+	ErrInvalidMention  = errors.New("conversation: mention is not a member of this workspace")
 	ErrTagNotFound     = errors.New("conversation: not a tag in this workspace")
 	ErrSnoozeInPast    = errors.New("conversation: snooze time must be in the future")
 )
@@ -45,17 +46,18 @@ var (
 // the field names are the API's, not the repository's. Anything not in here is
 // not published — a payload is a publication boundary (§12).
 type MessageEvent struct {
-	ConversationID string  `json:"conversation_id"`
-	InboxID        string  `json:"inbox_id"`
-	MessageID      string  `json:"id"`
-	ClientID       *string `json:"client_id,omitempty"`
-	Kind           string  `json:"kind"`
-	AuthorType     string  `json:"author_type"`
-	AuthorID       *string `json:"author_id,omitempty"`
-	AuthorName     string  `json:"author_name"`
-	Body           string  `json:"body"`
-	Sequence       int64   `json:"sequence"`
-	CreatedAt      string  `json:"created_at"`
+	ConversationID     string   `json:"conversation_id"`
+	InboxID            string   `json:"inbox_id"`
+	MessageID          string   `json:"id"`
+	ClientID           *string  `json:"client_id,omitempty"`
+	Kind               string   `json:"kind"`
+	AuthorType         string   `json:"author_type"`
+	AuthorID           *string  `json:"author_id,omitempty"`
+	AuthorName         string   `json:"author_name"`
+	Body               string   `json:"body"`
+	MentionedMemberIDs []string `json:"mentioned_member_ids,omitempty"`
+	Sequence           int64    `json:"sequence"`
+	CreatedAt          string   `json:"created_at"`
 }
 
 // ConversationEvent is the payload published when a conversation is created.
@@ -215,6 +217,22 @@ func (s *Service) PostMessage(
 	authorID *string,
 	authorName, body string,
 ) (*Message, error) {
+	return s.PostMessageWithMentions(ctx, workspaceID, conversationID, clientID, kind, authorType, authorID, authorName, body, nil)
+}
+
+// PostMessageWithMentions appends a reply or internal note and records the
+// explicitly selected workspace members mentioned by the author. Mentions
+// become part of the durable event payload so notification consumers can
+// replay them without reparsing message text or trusting an unscoped ID.
+func (s *Service) PostMessageWithMentions(
+	ctx context.Context,
+	workspaceID, conversationID string,
+	clientID *string,
+	kind, authorType string,
+	authorID *string,
+	authorName, body string,
+	mentionedMemberIDs []string,
+) (*Message, error) {
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return nil, ErrEmptyBody
@@ -222,8 +240,8 @@ func (s *Service) PostMessage(
 	if kind == "" {
 		kind = "reply"
 	}
-
 	var message *Message
+	var mentions []string
 
 	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
 		conv, err := s.repo.lockAndLoad(ctx, tx, workspaceID, conversationID)
@@ -243,6 +261,11 @@ func (s *Service) PostMessage(
 				message = existing
 				return nil
 			}
+		}
+
+		mentions, err = validateMentionedMembers(ctx, tx, workspaceID, mentionedMemberIDs)
+		if err != nil {
+			return err
 		}
 
 		message, err = s.repo.insertMessage(
@@ -268,7 +291,7 @@ func (s *Service) PostMessage(
 			EntityID:    conversationID,
 			ActorType:   actorTypeFor(authorType),
 			ActorID:     derefOr(authorID, ""),
-			Data:        messagePayload(conv.InboxID, *message),
+			Data:        messagePayload(conv.InboxID, *message, mentions),
 		})
 	})
 	if err != nil {
@@ -278,24 +301,58 @@ func (s *Service) PostMessage(
 	return message, nil
 }
 
+func validateMentionedMembers(ctx context.Context, tx pgx.Tx, workspaceID string, memberIDs []string) ([]string, error) {
+	if len(memberIDs) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]struct{}, len(memberIDs))
+	mentions := make([]string, 0, len(memberIDs))
+	for _, memberID := range memberIDs {
+		memberID = strings.TrimSpace(memberID)
+		if memberID == "" {
+			return nil, ErrInvalidMention
+		}
+		if _, ok := seen[memberID]; ok {
+			continue
+		}
+		var exists bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (SELECT 1 FROM workspace_members WHERE id=$1 AND workspace_id=$2)
+		`, memberID, workspaceID).Scan(&exists); err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, ErrInvalidMention
+		}
+		seen[memberID] = struct{}{}
+		mentions = append(mentions, memberID)
+	}
+	return mentions, nil
+}
+
 // entityConversation is the entity type every conversation-scoped event
 // carries. Realtime clients subscribe by "<entity_type>:<entity_id>", so this
 // string is part of the wire contract, not an internal label.
 const entityConversation = "conversation"
 
-func messagePayload(inboxID string, message Message) MessageEvent {
+func messagePayload(inboxID string, message Message, mentionedMemberIDs ...[]string) MessageEvent {
+	var mentions []string
+	if len(mentionedMemberIDs) > 0 {
+		mentions = mentionedMemberIDs[0]
+	}
 	return MessageEvent{
-		ConversationID: message.ConversationID,
-		InboxID:        inboxID,
-		MessageID:      message.ID,
-		ClientID:       message.ClientID,
-		Kind:           message.Kind,
-		AuthorType:     message.AuthorType,
-		AuthorID:       message.AuthorID,
-		AuthorName:     message.AuthorName,
-		Body:           message.Body,
-		Sequence:       message.Sequence,
-		CreatedAt:      message.CreatedAt.UTC().Format(time.RFC3339Nano),
+		ConversationID:     message.ConversationID,
+		InboxID:            inboxID,
+		MessageID:          message.ID,
+		ClientID:           message.ClientID,
+		Kind:               message.Kind,
+		AuthorType:         message.AuthorType,
+		AuthorID:           message.AuthorID,
+		AuthorName:         message.AuthorName,
+		Body:               message.Body,
+		MentionedMemberIDs: mentions,
+		Sequence:           message.Sequence,
+		CreatedAt:          message.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
 }
 
