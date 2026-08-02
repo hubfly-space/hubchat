@@ -22,17 +22,18 @@ import (
 )
 
 var (
-	ErrNotFound          = errors.New("form: not found")
-	ErrInvalidName       = errors.New("form: name is required")
-	ErrInvalidSlug       = errors.New("form: slug must contain lowercase letters, numbers, and hyphens")
-	ErrInvalidPurpose    = errors.New("form: purpose is not supported")
-	ErrInvalidAccess     = errors.New("form: access is not supported")
-	ErrInvalidField      = errors.New("form: field definition is invalid")
-	ErrInvalidLimit      = errors.New("form: submission limit must be positive")
-	ErrInvalidSubmission = errors.New("form: submission is invalid")
-	ErrSubmissionLimit   = errors.New("form: submission limit reached")
-	ErrRateLimited       = errors.New("form: submission rate limit reached")
-	ErrDisabled          = errors.New("form: form is disabled")
+	ErrNotFound               = errors.New("form: not found")
+	ErrInvalidName            = errors.New("form: name is required")
+	ErrInvalidSlug            = errors.New("form: slug must contain lowercase letters, numbers, and hyphens")
+	ErrInvalidPurpose         = errors.New("form: purpose is not supported")
+	ErrInvalidAccess          = errors.New("form: access is not supported")
+	ErrInvalidField           = errors.New("form: field definition is invalid")
+	ErrInvalidLimit           = errors.New("form: submission limit must be positive")
+	ErrInvalidSubmission      = errors.New("form: submission is invalid")
+	ErrSubmissionLimit        = errors.New("form: submission limit reached")
+	ErrRateLimited            = errors.New("form: submission rate limit reached")
+	ErrDisabled               = errors.New("form: form is disabled")
+	ErrAuthenticationRequired = errors.New("form: authentication is required")
 )
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
@@ -205,6 +206,14 @@ func (s *Service) Get(ctx context.Context, workspaceID, id string) (*Form, error
 }
 
 func (s *Service) GetPublic(ctx context.Context, workspaceID, slug string) (*Form, error) {
+	return s.GetPortal(ctx, workspaceID, slug, false)
+}
+
+// GetPortal returns an enabled form visible on a portal. Public forms are
+// available to everyone; authenticated forms require a portal customer
+// session. Keeping this access check in the service prevents a route from
+// accidentally exposing an authenticated form through a public URL.
+func (s *Service) GetPortal(ctx context.Context, workspaceID, slug string, authenticated bool) (*Form, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, workspace_id, name, slug, description, purpose, routing, confirmation,
 		       access, spam_protection, max_submissions, submission_count, enabled, created_at, updated_at
@@ -217,8 +226,49 @@ func (s *Service) GetPublic(ctx context.Context, workspaceID, slug string) (*For
 	if err != nil {
 		return nil, err
 	}
+	if item.Access == "authenticated" && !authenticated {
+		return nil, ErrAuthenticationRequired
+	}
 	item.Fields, err = s.fields(ctx, workspaceID, item.ID)
 	return item, err
+}
+
+// ListPortalPage returns enabled forms visible to the current portal viewer.
+// Creation time and id provide a stable cursor even when form names change.
+func (s *Service) ListPortalPage(ctx context.Context, workspaceID string, authenticated bool, before time.Time, beforeID string, limit int) ([]Form, error) {
+	query := `
+		SELECT id, workspace_id, name, slug, description, purpose, routing, confirmation,
+		       access, spam_protection, max_submissions, submission_count, enabled, created_at, updated_at
+		FROM forms WHERE workspace_id = $1 AND enabled
+		  AND (access = 'public' OR (access = 'authenticated' AND $2))`
+	args := []any{workspaceID, authenticated}
+	if !before.IsZero() {
+		query += " AND (created_at, id) < ($3, $4)"
+		args = append(args, before, beforeID)
+	}
+	query += " ORDER BY created_at DESC, id DESC"
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		args = append(args, limit)
+	}
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("form: list portal: %w", err)
+	}
+	defer rows.Close()
+	items := make([]Form, 0)
+	for rows.Next() {
+		item, scanErr := scanForm(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		item.Fields, scanErr = s.fields(ctx, workspaceID, item.ID)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
 }
 
 // ListPublic returns only enabled public forms for an embeddable surface. It
@@ -351,6 +401,21 @@ func (s *Service) Submit(ctx context.Context, workspaceID, slug string, input Su
 	if err != nil {
 		return "", err
 	}
+	return s.submitLoaded(ctx, workspaceID, form, input)
+}
+
+// SubmitPortal is the session-aware submission path used by hosted portals.
+// The public Submit method intentionally remains public-only for widget and
+// embed callers.
+func (s *Service) SubmitPortal(ctx context.Context, workspaceID, slug string, authenticated bool, input SubmissionInput) (string, error) {
+	form, err := s.GetPortal(ctx, workspaceID, slug, authenticated)
+	if err != nil {
+		return "", err
+	}
+	return s.submitLoaded(ctx, workspaceID, form, input)
+}
+
+func (s *Service) submitLoaded(ctx context.Context, workspaceID string, form *Form, input SubmissionInput) (string, error) {
 	if !form.Enabled {
 		return "", ErrDisabled
 	}
@@ -368,7 +433,7 @@ func (s *Service) Submit(ctx context.Context, workspaceID, slug string, input Su
 	}
 
 	id := ids.New(ids.PrefixSubmission)
-	err = database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
 		result, err := tx.Exec(ctx, `
 			UPDATE forms SET submission_count=submission_count+1, updated_at=now()
 			WHERE workspace_id=$1 AND id=$2 AND (max_submissions IS NULL OR submission_count < max_submissions)
@@ -727,6 +792,14 @@ func validateDefinition(input CreateInput) error {
 		if _, exists := seen[key]; exists {
 			return ErrInvalidField
 		}
+		if len(field.Condition) > 0 {
+			conditionField, _ := field.Condition["field"].(string)
+			operator, _ := field.Condition["operator"].(string)
+			_, conditionFieldExists := seen[strings.TrimSpace(conditionField)]
+			if strings.TrimSpace(conditionField) == "" || !conditionFieldExists || !validConditionOperator(operator) {
+				return ErrInvalidField
+			}
+		}
 		seen[key] = struct{}{}
 	}
 	return nil
@@ -848,7 +921,7 @@ func conditionApplies(condition map[string]any, values map[string]any) bool {
 	actual, exists := values[field]
 	want := condition["value"]
 	if !exists {
-		return false
+		return operator == "is_not_set" || operator == "not_equals" || operator == "is_not"
 	}
 	switch operator {
 	case "equals", "is":
@@ -856,10 +929,46 @@ func conditionApplies(condition map[string]any, values map[string]any) bool {
 	case "not_equals", "is_not":
 		return fmt.Sprint(actual) != fmt.Sprint(want)
 	case "contains":
-		return strings.Contains(fmt.Sprint(actual), fmt.Sprint(want))
+		if strings.Contains(fmt.Sprint(actual), fmt.Sprint(want)) {
+			return true
+		}
+		if values, ok := actual.([]any); ok {
+			for _, value := range values {
+				if fmt.Sprint(value) == fmt.Sprint(want) {
+					return true
+				}
+			}
+		}
+		return false
+	case "is_set":
+		return !blankConditionValue(actual)
+	case "is_not_set":
+		return blankConditionValue(actual)
 	default:
 		return false
 	}
+}
+
+func validConditionOperator(operator string) bool {
+	switch operator {
+	case "equals", "is", "not_equals", "is_not", "contains", "is_set", "is_not_set":
+		return true
+	default:
+		return false
+	}
+}
+
+func blankConditionValue(value any) bool {
+	if value == nil {
+		return true
+	}
+	if text, ok := value.(string); ok {
+		return strings.TrimSpace(text) == ""
+	}
+	if values, ok := value.([]any); ok {
+		return len(values) == 0
+	}
+	return false
 }
 
 func contains(values []string, want string) bool {

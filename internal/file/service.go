@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"time"
 
+	"github.com/hubchat/hubchat/internal/audit"
 	"github.com/hubchat/hubchat/internal/database"
 	"github.com/hubchat/hubchat/internal/ids"
 	"github.com/jackc/pgx/v5"
@@ -20,14 +22,22 @@ type Service struct {
 	pool    *database.Pool
 	store   Store
 	backend string
+	audit   *audit.Log
 }
 
-func New(pool *database.Pool, store Store) *Service {
+// New constructs the file service. The audit log is optional for isolated
+// module tests and import/export workers; the production API supplies it so
+// successful member downloads are recorded before bytes are sent.
+func New(pool *database.Pool, store Store, auditLogs ...*audit.Log) *Service {
 	backend := "local"
 	if _, ok := store.(*S3Store); ok {
 		backend = "s3"
 	}
-	return &Service{pool: pool, store: store, backend: backend}
+	var auditLog *audit.Log
+	if len(auditLogs) > 0 {
+		auditLog = auditLogs[0]
+	}
+	return &Service{pool: pool, store: store, backend: backend, audit: auditLog}
 }
 
 type Record struct {
@@ -243,6 +253,32 @@ func (s *Service) Get(ctx context.Context, workspaceID, id string) (*Record, err
 		return nil, fmt.Errorf("file: get %s: %w", id, err)
 	}
 	return &record, nil
+}
+
+// RecordDownload appends the audit record for a successful, authorized member
+// download. Authorization stays in the API layer because it depends on the
+// caller's capability and file owner; this method owns the file-domain audit
+// shape and keeps handlers from writing audit rows directly.
+func (s *Service) RecordDownload(ctx context.Context, record Record, actorID, requestID string, ip netip.Addr) error {
+	if s.audit == nil {
+		return nil
+	}
+	return s.audit.Record(ctx, audit.Entry{
+		WorkspaceID: record.WorkspaceID,
+		ActorType:   audit.ActorUser,
+		ActorID:     actorID,
+		Action:      audit.DataFileDownloaded,
+		EntityType:  "file",
+		EntityID:    record.ID,
+		RequestID:   requestID,
+		IP:          ip,
+		Metadata: map[string]any{
+			"name":       record.Name,
+			"size_bytes": record.SizeBytes,
+			"checksum":   ChecksumHex(record.Checksum),
+			"owner_type": record.OwnerType,
+		},
+	})
 }
 
 // AttachToMessage links already-uploaded files to a message. Uploads are kept

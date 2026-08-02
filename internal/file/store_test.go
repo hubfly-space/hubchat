@@ -62,6 +62,7 @@ func TestS3StoreSignsAndTransfersObjects(t *testing.T) {
 		if r.Header.Get("Authorization") == "" || r.Header.Get("x-amz-content-sha256") == "" {
 			t.Fatal("S3 request was not signed")
 		}
+		w.WriteHeader(http.StatusOK)
 		switch r.Method {
 		case http.MethodPut:
 			body, _ := io.ReadAll(r.Body)
@@ -71,7 +72,6 @@ func TestS3StoreSignsAndTransfersObjects(t *testing.T) {
 		case http.MethodGet:
 			_, _ = w.Write([]byte("hello"))
 		}
-		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 
