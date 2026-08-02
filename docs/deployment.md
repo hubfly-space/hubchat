@@ -169,10 +169,12 @@ release recoverable:
 
 1. Restore the dump into an isolated PostgreSQL database.
 2. Restore the attachment objects into an isolated storage prefix.
-3. Start the exact release binary with `HUBCHAT_MIGRATE=verify`.
-4. Run the core support/portal journey and download an attachment.
-5. Compare the restored export manifest and checksums.
-6. Record the restore timestamp and discard the isolated environment only
+3. Verify each copied workspace archive before import:
+   `./dist/hubchat workspace verify --file workspace.json.gz --json`.
+4. Start the exact release binary with `HUBCHAT_MIGRATE=verify`.
+5. Run the core support/portal journey and download an attachment.
+6. Compare the restored export manifest and checksums.
+7. Record the restore timestamp and discard the isolated environment only
    after the checks pass.
 
 Never test restore procedures against the live workspace database. Portability

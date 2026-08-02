@@ -120,6 +120,18 @@ only — it never touches the development database (`hubchat`). Point it
 elsewhere only deliberately:
 `export HUBCHAT_TEST_DATABASE_URL="postgres://hubchat:hubchat@127.0.0.1:5432/other?sslmode=disable"`.
 
+Workspace archive downloads can be checked before an import without a database
+connection. The verifier enforces the gzip envelope, archive version, complete
+table manifest, workspace identity, row shape, size limit, and prints the
+exact SHA-256 checksum used for restore records:
+
+```bash
+./dist/hubchat workspace verify --file workspace.json.gz --json
+```
+
+Run this verification after copying an archive and compare its checksum with
+the recorded export manifest. It does not mutate PostgreSQL or the archive.
+
 The suite runs one package at a time because each package resets the shared
 test database. A missing `HUBCHAT_TEST_DATABASE_URL` skips integration tests by
 design; it never guesses which database is safe to destroy.
@@ -132,7 +144,8 @@ installs a widget, verifies public widget configuration and visitor identity,
 creates and publicly bootstraps a portal, queues and redeems a portal
 magic-link session, starts and replies to a visitor conversation, verifies the
 visitor WebSocket subscription and agent reply delivery, configures an
-SLA calendar and policy, delivers a signed webhook to a local probe and
+public portal form with conditional fields and a staged attachment, verifies
+authenticated form visibility, configures an SLA calendar and policy, delivers a signed webhook to a local probe and
 replays it, publishes and searches a knowledge-base article, records
 article helpfulness, creates and answers an anonymous CSAT survey, submits and
 votes on widget feedback, converts the conversation to a ticket, dry-runs and
@@ -171,8 +184,9 @@ ticket creation, agent and customer replies, attachment upload/download, and
 idempotent reply retry. A browser-level acceptance suite should still run
 against a built binary with a temporary PostgreSQL database. The opt-in
 production browser check above covers the widget DOM, keyboard-visible
-controls, authenticated portal navigation, and dashboard tenant/accessibility
-anchors; the API journey remains the broader cross-module gate.
+controls, authenticated portal navigation and form rendering, and dashboard
+tenant/accessibility anchors; the API journey remains the broader cross-module
+gate.
 The full journey set is documented in
 `.material/idea.md`: setup, widget conversation, verified identity, agent
 reply, ticket/portal reply, attachments, feedback, knowledge-base search,

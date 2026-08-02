@@ -91,7 +91,9 @@ Two traps worth naming, because both were live in this repository:
 
 ### Lists
 
-Virtualise anything unbounded. Rows must be height-stable and keyed.
+Virtualise anything unbounded. The inbox uses fixed-height, keyed rows with
+overscan while the API cursor remains the memory boundary. Other unbounded
+lists must follow the same pattern; rows must be height-stable and keyed.
 
 Realtime updates patch the cache; they never refetch the list. A thousand-row
 inbox that refetches on every incoming message is a thousand-row inbox that is
@@ -147,7 +149,19 @@ approach was rejected for a reason; something looks wrong but is not.
 Do not comment: what a well-named function does, obvious JSX, or anything the
 type signature already says.
 
-## 9. Checklist before opening a PR
+## 9. Locale and time
+
+Workspace-facing timestamps must use the workspace's `default_language` and
+`timezone`, never the agent's browser timezone. Import `formatDateTime`,
+`formatDate`, or `formatTime` from `@hubchat/shared` and pass explicit options;
+dashboard pages can use `workspaceFormatOptions(workspace)` from the workspace
+context. Report-specific timezone selections may override only `timeZone`, and
+must preserve the workspace locale. For `datetime-local` scheduling controls,
+use `formatDateTimeLocal` and `parseDateTimeLocal` with the workspace timezone;
+never use `Date#getHours()` or `new Date(input).toISOString()` directly, and
+reject wall-clock values skipped by daylight-saving transitions.
+
+## 10. Checklist before opening a PR
 
 - [ ] `pnpm typecheck` and `pnpm lint` pass
 - [ ] Keyboard-operable; icon-only controls have `aria-label`
