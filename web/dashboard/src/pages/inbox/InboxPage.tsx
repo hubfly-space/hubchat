@@ -1,9 +1,12 @@
 import {
-  api,
+	ApiError,
+	api,
   EmptyState,
   cn,
-  invalidate,
-  useHotkey,
+	invalidate,
+	idempotencyKey,
+	useDashboardPreferences,
+	useHotkey,
   useAllPages,
   useInfinite,
   useQuery,
@@ -14,8 +17,8 @@ import {
   type SavedView,
 } from "@hubchat/shared";
 import { MessagesSquare } from "lucide-react";
-import { useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useWorkspace } from "../../app/workspace-context";
 import { ConversationList } from "./ConversationList";
 import { ConversationPanel } from "./ConversationPanel";
@@ -33,9 +36,16 @@ import { CustomerContextPanel } from "./CustomerContextPanel";
  */
 export default function InboxPage() {
   const { viewId = "all", conversationId } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { viewer } = useWorkspace();
-  const [showContext, setShowContext] = useState(true);
+  const { preferences, setPreference } = useDashboardPreferences();
+  const [showContext, setShowContext] = useState(preferences.showCustomerContext);
+
+  useEffect(() => {
+    setShowContext(preferences.showCustomerContext);
+  }, [preferences.showCustomerContext]);
 
   const inboxes = useAllPages<Inbox>(["inboxes", "lookup"], (cursor, signal) => api.get<Paginated<Inbox>>(`/inboxes?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
   const savedViews = useInfinite<SavedView>(["saved-views", "conversation"], (cursor, signal) => {
@@ -64,6 +74,15 @@ export default function InboxPage() {
   );
   const conversation = active ?? activeDetail.data;
 
+  const sortParam = searchParams.get("sort");
+  const sort = sortParam === "oldest" || sortParam === "priority" ? sortParam : "recent";
+  const setSort = (next: "recent" | "oldest" | "priority") => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (next === "recent") nextParams.delete("sort");
+    else nextParams.set("sort", next);
+    setSearchParams(nextParams, { replace: true });
+  };
+
   const customerIds = useMemo(
     () => [...new Set(list.items.map((item) => item.customer_id).filter((id): id is string => !!id))],
     [list.items],
@@ -78,7 +97,26 @@ export default function InboxPage() {
   );
 
   const activeIndex = conversation ? list.items.findIndex((item) => item.id === conversation.id) : -1;
-  const open = (id: string) => navigate(`/inbox/${viewId}/${id}`);
+  const open = (id: string) => navigate({ pathname: `/inbox/${viewId}/${id}`, search: location.search });
+  const afterResolved = (id: string) => {
+    if (preferences.afterResolve === "stay") return;
+    if (preferences.afterResolve === "next") {
+      const currentIndex = list.items.findIndex((item) => item.id === id);
+      const next = currentIndex >= 0 ? list.items[currentIndex + 1] : undefined;
+      if (next) {
+        open(next.id);
+        return;
+      }
+    }
+    navigate({ pathname: `/inbox/${viewId}`, search: location.search });
+  };
+  const toggleContext = () => {
+    setShowContext((current) => {
+      const next = !current;
+      setPreference("showCustomerContext", next);
+      return next;
+    });
+  };
 
   // j/k move through the list without leaving the keyboard (§6.2).
   useHotkey("j", () => {
@@ -90,25 +128,24 @@ export default function InboxPage() {
     if (previous) open(previous.id);
   });
 
-  const [bulkPending, setBulkPending] = useState(false);
-  const bulkAssignToMe = async (ids: string[]) => {
-    setBulkPending(true);
-    try {
-      await Promise.all(ids.map((id) => api.patch(`/conversations/${id}/assignee`, { assignee_id: viewer.id })));
-    } finally {
-      invalidate(["conversations"]);
-      setBulkPending(false);
-    }
-  };
-  const bulkResolve = async (ids: string[]) => {
-    setBulkPending(true);
-    try {
-      await Promise.all(ids.map((id) => api.patch(`/conversations/${id}/state`, { state: "resolved" })));
-    } finally {
-      invalidate(["conversations"]);
-      setBulkPending(false);
-    }
-  };
+	const [bulkPending, setBulkPending] = useState(false);
+	const [bulkError, setBulkError] = useState<string | null>(null);
+	const runBulk = async (ids: string[], action: "assign" | "state", body: Record<string, unknown>): Promise<boolean> => {
+		setBulkPending(true);
+		setBulkError(null);
+		try {
+			await api.post("/conversations/bulk", { ids, action, ...body }, { idempotencyKey: idempotencyKey() });
+			return true;
+		} catch (error) {
+			setBulkError(error instanceof ApiError ? error.message : "The bulk update could not be completed. No conversations were changed.");
+			return false;
+		} finally {
+			invalidate(["conversations"]);
+			setBulkPending(false);
+		}
+	};
+	const bulkAssignToMe = (ids: string[]) => runBulk(ids, "assign", { assignee_id: viewer.id });
+	const bulkResolve = (ids: string[]) => runBulk(ids, "state", { state: "resolved" });
 
   return (
     <div className="flex h-full min-h-0">
@@ -118,9 +155,12 @@ export default function InboxPage() {
         activeId={conversation?.id ?? null}
         onSelect={open}
         viewName={viewLabel(viewId, inboxes.items, savedViews.items)}
-        onBulkAssignToMe={(ids) => void bulkAssignToMe(ids)}
-        onBulkResolve={(ids) => void bulkResolve(ids)}
-        bulkPending={bulkPending}
+		onBulkAssignToMe={(ids) => bulkAssignToMe(ids)}
+		onBulkResolve={(ids) => bulkResolve(ids)}
+		bulkPending={bulkPending}
+		bulkError={bulkError}
+        sort={sort}
+        onSortChange={setSort}
         hasMore={list.hasMore}
         onLoadMore={() => void list.fetchNext()}
         loadingMore={list.isFetching}
@@ -130,7 +170,9 @@ export default function InboxPage() {
         <ConversationPanel
           key={conversation.id}
           conversation={conversation}
-          onToggleContext={() => setShowContext((current) => !current)}
+          onToggleContext={toggleContext}
+          onResolved={() => afterResolved(conversation.id)}
+          markReadOnOpen={preferences.markReadOnOpen}
         />
       ) : (
         <div className="flex flex-1 items-center justify-center bg-canvas">
@@ -179,6 +221,18 @@ function viewFilterParams(viewId: string, viewerId: string, inboxes: Inbox[], sa
     case "following":
       params.set("follower_id", viewerId);
       break;
+    case "mentioned":
+      params.set("mentioned", "true");
+      params.set("state", "new,open,pending,waiting_for_customer,waiting_for_support,snoozed");
+      break;
+    case "sla-approaching":
+      params.set("sla", "approaching");
+      params.set("state", "new,open,pending,waiting_for_customer,waiting_for_support,snoozed");
+      break;
+    case "sla-breached":
+      params.set("sla", "breached");
+      params.set("state", "new,open,pending,waiting_for_customer,waiting_for_support,snoozed");
+      break;
     case "waiting-support":
       params.set("state", "waiting_for_support");
       break;
@@ -215,10 +269,13 @@ function viewLabel(viewId: string, inboxes: Inbox[], savedViews: SavedView[]): s
     unassigned: "Unassigned",
     mine: "Assigned to me",
     following: "Following",
+    mentioned: "Mentioned",
     "waiting-support": "Waiting on us",
     "waiting-customer": "Waiting on customer",
     snoozed: "Snoozed",
     resolved: "Resolved",
+    "sla-approaching": "Approaching SLA",
+    "sla-breached": "Breached SLA",
     spam: "Spam",
   };
 

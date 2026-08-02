@@ -35,6 +35,8 @@ export function ConversationRow({
   customer,
   selected,
   active,
+  ariaPosInSet,
+  ariaSetSize,
   onSelect,
   onToggleSelect,
   showSelection,
@@ -43,6 +45,8 @@ export function ConversationRow({
   customer: Customer | undefined;
   selected: boolean;
   active: boolean;
+  ariaPosInSet?: number;
+  ariaSetSize?: number;
   onSelect: () => void;
   onToggleSelect: () => void;
   showSelection: boolean;
@@ -57,6 +61,8 @@ export function ConversationRow({
     <div
       role="option"
       aria-selected={active}
+      aria-posinset={ariaPosInSet}
+      aria-setsize={ariaSetSize}
       tabIndex={0}
       onClick={onSelect}
       onKeyDown={(event) => {
@@ -68,7 +74,7 @@ export function ConversationRow({
       data-unread={conversation.unread}
       className={cn(
         "group relative flex cursor-pointer gap-2.5 border-b border-line-subtle px-3",
-        "py-[var(--hc-list-item-py)]",
+        "h-full overflow-hidden py-[var(--hc-list-item-py)]",
         "transition-colors duration-fast",
         active ? "bg-accent-subtle" : "hover:bg-surface-hover",
         selected && !active && "bg-fill",
@@ -134,7 +140,7 @@ export function ConversationRow({
           </p>
         )}
 
-        <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-fg-muted">
+        <p className="mt-0.5 line-clamp-2 compact:line-clamp-1 text-xs leading-snug text-fg-muted">
           {conversation.last_message_preview}
         </p>
 

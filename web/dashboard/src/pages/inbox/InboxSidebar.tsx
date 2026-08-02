@@ -26,6 +26,8 @@ import {
   Hourglass,
   Inbox as InboxIcon,
   Plus,
+  AtSign,
+  TriangleAlert,
   UserCheck,
   Users,
 } from "lucide-react";
@@ -38,21 +40,23 @@ type Counts = {
   unassigned: number;
   mine: number;
   following: number;
+  mentioned: number;
   waiting_on_us: number;
   waiting_on_customer: number;
   snoozed: number;
   resolved: number;
   spam: number;
+  sla_approaching: number;
+  sla_breached: number;
 };
 
 /**
  * The inbox's own sidebar, substituted for the generic SectionSidebar.
  *
  * Counts arrive as one aggregate call (`GET /v1/conversations/counts`)
- * rather than one query per badge. Mentions, breached/approaching SLA, and
- * Mentions and breached/approaching SLA shortcuts remain outside this sidebar
- * until their dedicated notification queues exist. Saved views are live API
- * resources and are rendered only when the server returns them.
+ * rather than one query per badge. Mention and SLA queues are backed by the
+ * same workspace-scoped conversation filters as the list, so their counts and
+ * contents cannot drift apart.
  */
 export function InboxSidebar() {
   const { pathname } = useLocation();
@@ -143,6 +147,15 @@ export function InboxSidebar() {
               active={activeView === "following"}
             />
           </li>
+          <li>
+            <SidebarItem
+              to="/inbox/mentioned"
+              label="Mentioned"
+              icon={<AtSign />}
+              count={c?.mentioned ?? 0}
+              active={activeView === "mentioned"}
+            />
+          </li>
         </ul>
 
         <div>
@@ -182,6 +195,25 @@ export function InboxSidebar() {
                 icon={<CheckCircle2 />}
                 count={c?.resolved ?? 0}
                 active={activeView === "resolved"}
+              />
+            </li>
+            <li>
+              <SidebarItem
+                to="/inbox/sla-approaching"
+                label="Approaching SLA"
+                icon={<TriangleAlert />}
+                count={c?.sla_approaching ?? 0}
+                active={activeView === "sla-approaching"}
+              />
+            </li>
+            <li>
+              <SidebarItem
+                to="/inbox/sla-breached"
+                label="Breached SLA"
+                icon={<TriangleAlert />}
+                count={c?.sla_breached ?? 0}
+                active={activeView === "sla-breached"}
+                accent
               />
             </li>
           </ul>

@@ -19,7 +19,7 @@ import {
 import { BadgeCheck, Mail, MessageSquare, ShieldQuestion, StickyNote, Ticket as TicketIcon } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useWorkspace } from "../../app/workspace-context";
+import { useWorkspace, workspaceFormatOptions } from "../../app/workspace-context";
 
 /**
  * Right-hand context panel (§6.9).
@@ -51,7 +51,8 @@ export function CustomerContextPanel({ customerId }: { customerId: string | null
 }
 
 function CustomerContext({ customer }: { customer: Customer }) {
-  const { tagById } = useWorkspace();
+  const { tagById, workspace } = useWorkspace();
+  const dateFormat = workspaceFormatOptions(workspace);
 
   const history = useQuery<{ data: Conversation[] }>(
     ["conversations", "customer-history", customer.id],
@@ -110,7 +111,7 @@ function CustomerContext({ customer }: { customer: Customer }) {
           <DetailRow label="Language">{customer.language ?? "—"}</DetailRow>
           <DetailRow label="Timezone">{customer.timezone ?? "—"}</DetailRow>
           <DetailRow label="First seen">
-            <Tooltip content={formatDateTime(customer.first_seen_at)}>
+            <Tooltip content={formatDateTime(customer.first_seen_at, dateFormat)}>
               <span>{formatRelativeShort(customer.first_seen_at, new Date())} ago</span>
             </Tooltip>
           </DetailRow>
