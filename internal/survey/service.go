@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -81,10 +82,12 @@ type Survey struct {
 }
 
 type QuestionInput struct {
-	Prompt    string         `json:"prompt"`
-	Type      string         `json:"type"`
-	Options   []string       `json:"options"`
-	Required  bool           `json:"required"`
+	Prompt   string   `json:"prompt"`
+	Type     string   `json:"type"`
+	Options  []string `json:"options"`
+	Required bool     `json:"required"`
+	// Condition references an earlier question with question_index and uses
+	// the deterministic operators is, is_not, contains, is_set, or is_not_set.
 	Condition map[string]any `json:"condition"`
 	Position  int            `json:"position"`
 }
@@ -435,10 +438,12 @@ func triggerMatchesResolution(trigger map[string]any, status string) bool {
 }
 
 type surveyEmailPayload struct {
-	To          string `json:"to"`
-	Subject     string `json:"subject"`
-	Body        string `json:"body"`
-	WorkspaceID string `json:"workspace_id"`
+	To           string            `json:"to"`
+	Subject      string            `json:"subject"`
+	Body         string            `json:"body"`
+	WorkspaceID  string            `json:"workspace_id"`
+	TemplateKey  string            `json:"template_key,omitempty"`
+	TemplateData map[string]string `json:"template_data,omitempty"`
 }
 
 func (s *Service) issueInvitation(ctx context.Context, workspaceID, ticketID, sourceEventID, status, surveyID, surveyName string, anonymous bool, customerID, email, name, number, title, agentID string) error {
@@ -479,7 +484,7 @@ func (s *Service) issueInvitation(ctx context.Context, workspaceID, ticketID, so
 			WorkspaceID: workspaceID,
 			Queue:       "email",
 			Type:        "email.send",
-			Payload:     surveyEmailPayload{To: email, Subject: subject, Body: body, WorkspaceID: workspaceID},
+			Payload:     surveyEmailPayload{To: email, Subject: subject, Body: body, WorkspaceID: workspaceID, TemplateKey: "survey_request", TemplateData: map[string]string{"CustomerName": name, "TicketNumber": number, "TicketTitle": title, "TicketStatus": strings.ReplaceAll(status, "_", " "), "SurveyName": subject, "SurveyLink": link}},
 			DedupeKey:   "survey-email:" + sourceEventID + ":" + surveyID + ":" + customerID,
 		}); err != nil && !errors.Is(err, jobs.ErrDuplicate) {
 			return fmt.Errorf("survey: queue invitation: %w", err)
@@ -577,9 +582,9 @@ func (s *Service) Submit(ctx context.Context, workspaceID, id, customerID string
 		} else if _, err := tx.Exec(ctx, `INSERT INTO survey_responses(id,workspace_id,survey_id,customer_id,conversation_id,ticket_id,agent_id,score,comment,token_hash,submitted_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),$10,now())`, response.ID, workspaceID, id, customer, conversation, ticket, agent, score, strings.TrimSpace(input.Comment), tokenHash); err != nil {
 			return err
 		}
-		for _, question := range survey.Questions {
+		for index, question := range survey.Questions {
 			value, present := input.Answers[question.ID]
-			if !present {
+			if !present || !surveyConditionApplies(question.Condition, index, survey.Questions, input.Answers) {
 				continue
 			}
 			encoded, _ := json.Marshal(value)
@@ -807,14 +812,24 @@ func validateQuestions(input []QuestionInput) ([]QuestionInput, error) {
 		if result[index].Prompt == "" || !questionTypes[result[index].Type] {
 			return nil, ErrInvalidQuestion
 		}
+		if len(result[index].Condition) > 0 {
+			conditionIndex, ok := conditionQuestionIndex(result[index].Condition)
+			operator, _ := result[index].Condition["operator"].(string)
+			if !ok || conditionIndex < 0 || conditionIndex >= index || !validConditionOperator(operator) {
+				return nil, ErrInvalidQuestion
+			}
+		}
 		result[index].Position = index
 	}
 	return result, nil
 }
 
 func validateAnswers(questions []Question, answers map[string]any) error {
-	for _, question := range questions {
+	for index, question := range questions {
 		value, present := answers[question.ID]
+		if !surveyConditionApplies(question.Condition, index, questions, answers) {
+			continue
+		}
 		if question.Required && (!present || value == nil || strings.TrimSpace(fmt.Sprint(value)) == "") {
 			return ErrInvalidQuestion
 		}
@@ -846,6 +861,99 @@ func deriveScore(survey *Survey, answers map[string]any) *float64 {
 	}
 	return &score
 }
+
+// Conditions use question_index because question IDs are generated only after
+// a survey is created. References must point to an earlier question so the
+// response can be evaluated deterministically in display order.
+func conditionQuestionIndex(condition map[string]any) (int, bool) {
+	value, ok := condition["question_index"]
+	if !ok {
+		value, ok = condition["question"]
+	}
+	if !ok {
+		if field, fieldOK := condition["field"].(string); fieldOK {
+			parsed, err := strconv.Atoi(strings.TrimSpace(field))
+			return parsed, err == nil
+		}
+		return 0, false
+	}
+	switch value := value.(type) {
+	case int:
+		return value, true
+	case int64:
+		return int(value), true
+	case float64:
+		return int(value), value == float64(int(value))
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(value))
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func surveyConditionApplies(condition map[string]any, index int, questions []Question, answers map[string]any) bool {
+	if len(condition) == 0 {
+		return true
+	}
+	reference, ok := conditionQuestionIndex(condition)
+	if !ok || reference < 0 || reference >= index || reference >= len(questions) {
+		return false
+	}
+	operator, _ := condition["operator"].(string)
+	actual, exists := answers[questions[reference].ID]
+	want := condition["value"]
+	if !exists {
+		return operator == "is_not_set" || operator == "not_equals" || operator == "is_not"
+	}
+	switch operator {
+	case "equals", "is":
+		return fmt.Sprint(actual) == fmt.Sprint(want)
+	case "not_equals", "is_not":
+		return fmt.Sprint(actual) != fmt.Sprint(want)
+	case "contains":
+		if strings.Contains(fmt.Sprint(actual), fmt.Sprint(want)) {
+			return true
+		}
+		if values, ok := actual.([]any); ok {
+			for _, value := range values {
+				if fmt.Sprint(value) == fmt.Sprint(want) {
+					return true
+				}
+			}
+		}
+		return false
+	case "is_set":
+		return !blankConditionValue(actual)
+	case "is_not_set":
+		return blankConditionValue(actual)
+	default:
+		return false
+	}
+}
+
+func validConditionOperator(operator string) bool {
+	switch operator {
+	case "equals", "is", "not_equals", "is_not", "contains", "is_set", "is_not_set":
+		return true
+	default:
+		return false
+	}
+}
+
+func blankConditionValue(value any) bool {
+	if value == nil {
+		return true
+	}
+	if text, ok := value.(string); ok {
+		return strings.TrimSpace(text) == ""
+	}
+	if values, ok := value.([]any); ok {
+		return len(values) == 0
+	}
+	return false
+}
+
 func contains(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {

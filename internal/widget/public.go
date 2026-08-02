@@ -14,6 +14,7 @@ import (
 // the workspace beyond what they can already see on screen").
 type PublicConfig struct {
 	WidgetID   string
+	Language   string
 	Enabled    bool
 	Online     bool
 	Modes      []string
@@ -33,6 +34,13 @@ type PublicConfig struct {
 // navigation can arrive without one). originHeader is a defense-in-depth
 // fallback when pageURL is missing or unparsable.
 func (s *Service) ResolveConfig(ctx context.Context, publicKey, pageURL, originHeader string) (*PublicConfig, error) {
+	return s.ResolveConfigForLanguage(ctx, publicKey, pageURL, originHeader, "")
+}
+
+// ResolveConfigForLanguage projects the configured copy into the visitor's
+// requested locale. The public response contains only the selected strings,
+// never the complete translation catalog.
+func (s *Service) ResolveConfigForLanguage(ctx context.Context, publicKey, pageURL, originHeader, language string) (*PublicConfig, error) {
 	widget, err := s.WidgetForOrigin(ctx, publicKey, pageURL, originHeader)
 	if err != nil {
 		return nil, err
@@ -55,14 +63,52 @@ func (s *Service) ResolveConfig(ctx context.Context, publicKey, pageURL, originH
 
 	return &PublicConfig{
 		WidgetID:   widget.ID,
+		Language:   normalizeLanguage(language),
 		Enabled:    widget.Enabled && included,
 		Online:     online,
 		Modes:      widget.Modes,
 		Appearance: widget.Appearance,
-		Content:    widget.Content,
+		Content:    localizedContent(widget.Content, language),
 		Behavior:   widget.Behavior,
 		Articles:   []map[string]any{},
 	}, nil
+}
+
+func normalizeLanguage(value string) string {
+	value = strings.ToLower(strings.TrimSpace(strings.ReplaceAll(value, "_", "-")))
+	if len(value) > 32 {
+		return ""
+	}
+	return value
+}
+
+func localizedContent(content map[string]any, language string) map[string]any {
+	result := make(map[string]any, len(content))
+	for key, value := range content {
+		if key != "translations" {
+			result[key] = value
+		}
+	}
+
+	translations, ok := content["translations"].(map[string]any)
+	if !ok {
+		return result
+	}
+	normalized := normalizeLanguage(language)
+	for _, key := range []string{normalized, strings.Split(normalized, "-")[0]} {
+		if key == "" {
+			continue
+		}
+		variant, ok := translations[key].(map[string]any)
+		if !ok {
+			continue
+		}
+		for field, value := range variant {
+			result[field] = value
+		}
+		break
+	}
+	return result
 }
 
 // WidgetForOrigin is the shared gate every unauthenticated widget endpoint

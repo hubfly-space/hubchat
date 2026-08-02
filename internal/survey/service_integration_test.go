@@ -103,3 +103,39 @@ func TestSubmitPublishesEventAndAnalyticsSummaryIncludesCSAT(t *testing.T) {
 		t.Fatalf("survey rollups = %#v", rollups)
 	}
 }
+
+func TestSubmitSkipsInactiveConditionalAnswers(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	workspaceID := ids.New(ids.PrefixWorkspace)
+	if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id,name,slug) VALUES ($1,'Conditional survey','conditional-survey')`, workspaceID); err != nil {
+		t.Fatalf("seed workspace: %v", err)
+	}
+
+	service := New(pool)
+	created, err := service.Create(ctx, workspaceID, Input{
+		Name: "Conditional survey",
+		Type: "custom",
+		Questions: []QuestionInput{
+			{Prompt: "What kind of request?", Type: "choice", Options: []string{"question", "bug"}, Required: true},
+			{Prompt: "Reproduction steps", Type: "text", Required: true, Condition: map[string]any{"question_index": 0, "operator": "is", "value": "bug"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create conditional survey: %v", err)
+	}
+	if _, err := service.Submit(ctx, workspaceID, created.ID, "", ResponseInput{
+		Answers: map[string]any{created.Questions[0].ID: "question", created.Questions[1].ID: "should not be stored"},
+	}); err != nil {
+		t.Fatalf("submit with inactive required question: %v", err)
+	}
+
+	var answerCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM survey_answers a JOIN survey_responses r ON r.id=a.response_id WHERE r.workspace_id=$1 AND r.survey_id=$2`, workspaceID, created.ID).Scan(&answerCount); err != nil {
+		t.Fatalf("count survey answers: %v", err)
+	}
+	if answerCount != 1 {
+		t.Fatalf("stored answer count = %d, want only the active question", answerCount)
+	}
+}
