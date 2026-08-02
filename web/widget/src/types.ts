@@ -8,7 +8,8 @@
  * on screen (§11.5 — no privileged data in widget code).
  */
 export type WidgetConfig = {
-  enabled: boolean;
+	language?: string;
+	enabled: boolean;
   online: boolean;
   modes: WidgetMode[];
   appearance: {
