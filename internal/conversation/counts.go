@@ -10,11 +10,14 @@ type Counts struct {
 	Unassigned        int
 	Mine              int
 	Following         int
+	Mentioned         int
 	WaitingOnUs       int
 	WaitingOnCustomer int
 	Snoozed           int
 	Resolved          int
 	Spam              int
+	SLAApproaching    int
+	SLABreached       int
 }
 
 // Counts computes every sidebar badge for one workspace and viewer in a
@@ -31,17 +34,33 @@ func (r *repository) counts(ctx context.Context, workspaceID, memberID string) (
 			count(*) FILTER (WHERE c.assignee_id IS NULL AND c.state NOT IN ('closed', 'spam')),
 			count(*) FILTER (WHERE c.assignee_id = $2 AND c.state NOT IN ('closed', 'spam')),
 			count(*) FILTER (WHERE cf.member_id IS NOT NULL AND c.state NOT IN ('closed', 'spam')),
+			count(*) FILTER (WHERE EXISTS (
+				SELECT 1 FROM notifications n
+				WHERE n.workspace_id=c.workspace_id AND n.member_id=$2
+				  AND n.type='mention' AND n.entity_type='conversation' AND n.entity_id=c.id
+			) AND c.state NOT IN ('closed', 'resolved', 'spam')),
 			count(*) FILTER (WHERE c.state = 'waiting_for_support'),
 			count(*) FILTER (WHERE c.state IN ('waiting_for_customer', 'pending')),
 			count(*) FILTER (WHERE c.state = 'snoozed'),
 			count(*) FILTER (WHERE c.state = 'resolved'),
-			count(*) FILTER (WHERE c.state = 'spam')
+			count(*) FILTER (WHERE c.state = 'spam'),
+			count(*) FILTER (WHERE EXISTS (
+				SELECT 1 FROM sla_instances si
+				WHERE si.workspace_id=c.workspace_id AND si.conversation_id=c.id
+				  AND si.state='active' AND si.warned_at IS NOT NULL
+			) AND c.state NOT IN ('closed', 'resolved', 'spam')),
+			count(*) FILTER (WHERE EXISTS (
+				SELECT 1 FROM sla_instances si
+				WHERE si.workspace_id=c.workspace_id AND si.conversation_id=c.id
+				  AND si.state='breached'
+			) AND c.state NOT IN ('closed', 'resolved', 'spam'))
 		FROM conversations c
 		LEFT JOIN conversation_followers cf ON cf.conversation_id = c.id AND cf.member_id = $2
 		WHERE c.workspace_id = $1
 	`, workspaceID, memberID).Scan(
 		&c.All, &c.Unassigned, &c.Mine, &c.Following,
-		&c.WaitingOnUs, &c.WaitingOnCustomer, &c.Snoozed, &c.Resolved, &c.Spam,
+		&c.Mentioned, &c.WaitingOnUs, &c.WaitingOnCustomer, &c.Snoozed, &c.Resolved, &c.Spam,
+		&c.SLAApproaching, &c.SLABreached,
 	)
 	if err != nil {
 		return nil, err

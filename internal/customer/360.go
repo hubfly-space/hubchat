@@ -12,16 +12,80 @@ import (
 // the source records: each section keeps the owning record's id so a future
 // deep link can open the authoritative screen.
 type Customer360 struct {
-	Feedback            []FeedbackReference `json:"feedback"`
-	FeedbackTruncated   bool                `json:"feedback_truncated"`
-	Surveys             []SurveyReference   `json:"surveys"`
-	SurveysTruncated    bool                `json:"surveys_truncated"`
-	Articles            []ArticleReference  `json:"articles"`
-	ArticlesTruncated   bool                `json:"articles_truncated"`
-	Identities          []IdentityReference `json:"identities"`
-	IdentitiesTruncated bool                `json:"identities_truncated"`
-	Merges              []MergeReference    `json:"merges"`
-	MergesTruncated     bool                `json:"merges_truncated"`
+	Companies              []CompanyReference      `json:"companies"`
+	CompaniesTruncated     bool                    `json:"companies_truncated"`
+	Conversations          []ConversationReference `json:"conversations"`
+	ConversationsTruncated bool                    `json:"conversations_truncated"`
+	Tickets                []TicketReference       `json:"tickets"`
+	TicketsTruncated       bool                    `json:"tickets_truncated"`
+	Events                 []EventReference        `json:"events"`
+	EventsTruncated        bool                    `json:"events_truncated"`
+	Sessions               []SessionReference      `json:"sessions"`
+	SessionsTruncated      bool                    `json:"sessions_truncated"`
+	Feedback               []FeedbackReference     `json:"feedback"`
+	FeedbackTruncated      bool                    `json:"feedback_truncated"`
+	Surveys                []SurveyReference       `json:"surveys"`
+	SurveysTruncated       bool                    `json:"surveys_truncated"`
+	Articles               []ArticleReference      `json:"articles"`
+	ArticlesTruncated      bool                    `json:"articles_truncated"`
+	Identities             []IdentityReference     `json:"identities"`
+	IdentitiesTruncated    bool                    `json:"identities_truncated"`
+	Merges                 []MergeReference        `json:"merges"`
+	MergesTruncated        bool                    `json:"merges_truncated"`
+}
+
+type CompanyReference struct {
+	ID     string  `json:"id"`
+	Name   string  `json:"name"`
+	Domain *string `json:"domain,omitempty"`
+	Tier   *string `json:"tier,omitempty"`
+}
+
+type ConversationReference struct {
+	ID                 string     `json:"id"`
+	Subject            *string    `json:"subject,omitempty"`
+	State              string     `json:"state"`
+	Channel            string     `json:"channel"`
+	InboxID            string     `json:"inbox_id"`
+	LastMessagePreview string     `json:"last_message_preview"`
+	LastMessageAt      *time.Time `json:"last_message_at,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+}
+
+type TicketReference struct {
+	ID             string    `json:"id"`
+	Number         int       `json:"number"`
+	Prefix         string    `json:"prefix"`
+	Title          string    `json:"title"`
+	Status         string    `json:"status"`
+	Priority       string    `json:"priority"`
+	ConversationID *string   `json:"conversation_id,omitempty"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// EventReference intentionally omits the event payload. Payloads can contain
+// customer-sensitive values and the dedicated timeline endpoint applies the
+// viewer's audited redaction policy before returning them.
+type EventReference struct {
+	ID         string    `json:"id"`
+	Type       string    `json:"type"`
+	Source     string    `json:"source"`
+	URL        *string   `json:"url,omitempty"`
+	RequestID  *string   `json:"request_id,omitempty"`
+	OccurredAt time.Time `json:"occurred_at"`
+}
+
+type SessionReference struct {
+	ID         string     `json:"id"`
+	Device     *string    `json:"device,omitempty"`
+	Browser    *string    `json:"browser,omitempty"`
+	OS         *string    `json:"os,omitempty"`
+	CurrentURL *string    `json:"current_url,omitempty"`
+	PageViews  int        `json:"page_views"`
+	StartedAt  time.Time  `json:"started_at"`
+	LastSeenAt time.Time  `json:"last_seen_at"`
+	EndedAt    *time.Time `json:"ended_at,omitempty"`
 }
 
 type FeedbackReference struct {
@@ -89,6 +153,147 @@ func (s *Service) Customer360(ctx context.Context, workspaceID, customerID strin
 	}
 
 	result := &Customer360{}
+
+	companyRows, err := s.pool.Query(ctx, `
+		SELECT c.id, c.name, c.domain::text, c.tier
+		FROM companies c
+		JOIN company_customers cc ON cc.company_id=c.id
+		WHERE c.workspace_id=$1 AND cc.customer_id=$2
+		ORDER BY c.name ASC, c.id ASC
+		LIMIT $3
+	`, workspaceID, customerID, customer360QuerySize)
+	if err != nil {
+		return nil, fmt.Errorf("customer: load 360 companies: %w", err)
+	}
+	for companyRows.Next() {
+		var item CompanyReference
+		if err := companyRows.Scan(&item.ID, &item.Name, &item.Domain, &item.Tier); err != nil {
+			companyRows.Close()
+			return nil, fmt.Errorf("customer: scan 360 company: %w", err)
+		}
+		result.Companies = append(result.Companies, item)
+	}
+	if err := companyRows.Err(); err != nil {
+		companyRows.Close()
+		return nil, fmt.Errorf("customer: read 360 companies: %w", err)
+	}
+	companyRows.Close()
+	if len(result.Companies) > customer360PageSize {
+		result.Companies = result.Companies[:customer360PageSize]
+		result.CompaniesTruncated = true
+	}
+
+	conversationRows, err := s.pool.Query(ctx, `
+		SELECT id, subject, state, channel, inbox_id, last_message_preview, last_message_at, created_at
+		FROM conversations
+		WHERE workspace_id=$1 AND customer_id=$2
+		ORDER BY last_message_at DESC, id DESC
+		LIMIT $3
+	`, workspaceID, customerID, customer360QuerySize)
+	if err != nil {
+		return nil, fmt.Errorf("customer: load 360 conversations: %w", err)
+	}
+	for conversationRows.Next() {
+		var item ConversationReference
+		if err := conversationRows.Scan(&item.ID, &item.Subject, &item.State, &item.Channel, &item.InboxID, &item.LastMessagePreview, &item.LastMessageAt, &item.CreatedAt); err != nil {
+			conversationRows.Close()
+			return nil, fmt.Errorf("customer: scan 360 conversation: %w", err)
+		}
+		result.Conversations = append(result.Conversations, item)
+	}
+	if err := conversationRows.Err(); err != nil {
+		conversationRows.Close()
+		return nil, fmt.Errorf("customer: read 360 conversations: %w", err)
+	}
+	conversationRows.Close()
+	if len(result.Conversations) > customer360PageSize {
+		result.Conversations = result.Conversations[:customer360PageSize]
+		result.ConversationsTruncated = true
+	}
+
+	ticketRows, err := s.pool.Query(ctx, `
+		SELECT id, number, prefix, title, status, priority, conversation_id, updated_at, created_at
+		FROM tickets
+		WHERE workspace_id=$1 AND customer_id=$2
+		ORDER BY updated_at DESC, id DESC
+		LIMIT $3
+	`, workspaceID, customerID, customer360QuerySize)
+	if err != nil {
+		return nil, fmt.Errorf("customer: load 360 tickets: %w", err)
+	}
+	for ticketRows.Next() {
+		var item TicketReference
+		if err := ticketRows.Scan(&item.ID, &item.Number, &item.Prefix, &item.Title, &item.Status, &item.Priority, &item.ConversationID, &item.UpdatedAt, &item.CreatedAt); err != nil {
+			ticketRows.Close()
+			return nil, fmt.Errorf("customer: scan 360 ticket: %w", err)
+		}
+		result.Tickets = append(result.Tickets, item)
+	}
+	if err := ticketRows.Err(); err != nil {
+		ticketRows.Close()
+		return nil, fmt.Errorf("customer: read 360 tickets: %w", err)
+	}
+	ticketRows.Close()
+	if len(result.Tickets) > customer360PageSize {
+		result.Tickets = result.Tickets[:customer360PageSize]
+		result.TicketsTruncated = true
+	}
+
+	eventRows, err := s.pool.Query(ctx, `
+		SELECT id, type, source, url, request_id, occurred_at
+		FROM customer_events
+		WHERE workspace_id=$1 AND customer_id=$2
+		ORDER BY occurred_at DESC, id DESC
+		LIMIT $3
+	`, workspaceID, customerID, customer360QuerySize)
+	if err != nil {
+		return nil, fmt.Errorf("customer: load 360 events: %w", err)
+	}
+	for eventRows.Next() {
+		var item EventReference
+		if err := eventRows.Scan(&item.ID, &item.Type, &item.Source, &item.URL, &item.RequestID, &item.OccurredAt); err != nil {
+			eventRows.Close()
+			return nil, fmt.Errorf("customer: scan 360 event: %w", err)
+		}
+		result.Events = append(result.Events, item)
+	}
+	if err := eventRows.Err(); err != nil {
+		eventRows.Close()
+		return nil, fmt.Errorf("customer: read 360 events: %w", err)
+	}
+	eventRows.Close()
+	if len(result.Events) > customer360PageSize {
+		result.Events = result.Events[:customer360PageSize]
+		result.EventsTruncated = true
+	}
+
+	sessionRows, err := s.pool.Query(ctx, `
+		SELECT id, device, browser, os, current_url, page_views, started_at, last_seen_at, ended_at
+		FROM contact_sessions
+		WHERE workspace_id=$1 AND customer_id=$2
+		ORDER BY last_seen_at DESC, id DESC
+		LIMIT $3
+	`, workspaceID, customerID, customer360QuerySize)
+	if err != nil {
+		return nil, fmt.Errorf("customer: load 360 sessions: %w", err)
+	}
+	for sessionRows.Next() {
+		var item SessionReference
+		if err := sessionRows.Scan(&item.ID, &item.Device, &item.Browser, &item.OS, &item.CurrentURL, &item.PageViews, &item.StartedAt, &item.LastSeenAt, &item.EndedAt); err != nil {
+			sessionRows.Close()
+			return nil, fmt.Errorf("customer: scan 360 session: %w", err)
+		}
+		result.Sessions = append(result.Sessions, item)
+	}
+	if err := sessionRows.Err(); err != nil {
+		sessionRows.Close()
+		return nil, fmt.Errorf("customer: read 360 sessions: %w", err)
+	}
+	sessionRows.Close()
+	if len(result.Sessions) > customer360PageSize {
+		result.Sessions = result.Sessions[:customer360PageSize]
+		result.SessionsTruncated = true
+	}
 
 	feedbackRows, err := s.pool.Query(ctx, `
 		SELECT fi.id, fi.title, fi.board_id, fb.name, fi.status,

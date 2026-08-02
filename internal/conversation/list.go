@@ -27,6 +27,10 @@ type ListFilter struct {
 	Priority   string
 	TagID      string
 	FollowerID string
+	// SLAState accepts "approaching" or "breached" and filters against the
+	// durable SLA timers rather than the presentation-only SLA summary.
+	SLAState          string
+	MentionedMemberID string
 
 	Before   time.Time
 	BeforeID string
@@ -97,6 +101,20 @@ func (r *repository) list(ctx context.Context, workspaceID string, filter ListFi
 
 	if filter.FollowerID != "" {
 		where = append(where, "EXISTS (SELECT 1 FROM conversation_followers cf WHERE cf.conversation_id = c.id AND cf.member_id = "+arg(filter.FollowerID)+")")
+	}
+
+	switch filter.SLAState {
+	case "approaching":
+		where = append(where, "c.state NOT IN ('closed', 'resolved', 'spam')")
+		where = append(where, "EXISTS (SELECT 1 FROM sla_instances si WHERE si.workspace_id = c.workspace_id AND si.conversation_id = c.id AND si.state = 'active' AND si.warned_at IS NOT NULL)")
+	case "breached":
+		where = append(where, "c.state NOT IN ('closed', 'resolved', 'spam')")
+		where = append(where, "EXISTS (SELECT 1 FROM sla_instances si WHERE si.workspace_id = c.workspace_id AND si.conversation_id = c.id AND si.state = 'breached')")
+	}
+
+	if filter.MentionedMemberID != "" {
+		where = append(where, "c.state NOT IN ('closed', 'resolved', 'spam')")
+		where = append(where, "EXISTS (SELECT 1 FROM notifications n WHERE n.workspace_id = c.workspace_id AND n.member_id = "+arg(filter.MentionedMemberID)+" AND n.type = 'mention' AND n.entity_type = 'conversation' AND n.entity_id = c.id)")
 	}
 
 	before := filter.Before
