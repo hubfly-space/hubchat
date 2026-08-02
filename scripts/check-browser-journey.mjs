@@ -316,6 +316,42 @@ export async function runBrowserJourney({
     assert(dialogState?.label, "widget dialog has no accessible label");
     assert(dialogState.closeFocusable, "widget close control is not keyboard-focusable");
 
+    // The visitor session is browser-local by design. Prove the real customer
+    // journey, not only the HTTP endpoint: start a conversation, wait until
+    // the widget has persisted its conversation id, reload the host page, and
+    // require the widget to reopen on the same chat with the same message.
+    const persistenceBody = `Browser persistence check ${Date.now()}`;
+    await browser.page.evaluate(`(() => {
+      const shadow = document.querySelector('#hubchat-widget')?.shadowRoot;
+      const button = [...(shadow?.querySelectorAll('button') ?? [])].find((item) => item.textContent?.includes('Start a conversation'));
+      if (!button) throw new Error('widget start conversation control is missing');
+      button.click();
+    })()`);
+    await waitFor(() => browser.page.evaluate(`Boolean(document.querySelector('#hubchat-widget')?.shadowRoot?.querySelector('textarea[aria-label="Message"]'))`), "widget conversation composer");
+    await browser.page.evaluate(`(() => {
+      const textarea = document.querySelector('#hubchat-widget')?.shadowRoot?.querySelector('textarea[aria-label="Message"]');
+      if (!textarea) throw new Error('widget message composer is missing');
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+      setter?.call(textarea, ${JSON.stringify(persistenceBody)});
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+    })()`);
+    await waitFor(() => browser.page.evaluate(`(() => {
+      const raw = Object.entries(localStorage).find(([key]) => key.startsWith('hubchat.visitor.'))?.[1];
+      if (!raw) return false;
+      try { return Boolean(JSON.parse(raw).conversationId); } catch { return false; }
+    })()`), "persisted widget conversation");
+    await browser.page.navigate(host.url);
+    await waitFor(() => browser.page.evaluate("window.__hubchatReady === true"), "widget ready after host reload");
+    await waitFor(() => browser.page.evaluate(`Boolean(document.querySelector('#hubchat-widget')?.shadowRoot?.querySelector('[role="dialog"]'))`), "widget dialog after host reload");
+    await waitFor(() => browser.page.evaluate(`Boolean(document.querySelector('#hubchat-widget')?.shadowRoot?.textContent?.includes(${JSON.stringify(persistenceBody)}))`), "restored widget conversation message");
+    const persistenceState = await browser.page.evaluate(`(() => {
+      const shadow = document.querySelector('#hubchat-widget')?.shadowRoot;
+      const body = shadow?.textContent ?? '';
+      return { hasMessage: body.includes(${JSON.stringify(persistenceBody)}), hasComposer: Boolean(shadow?.querySelector('textarea[aria-label="Message"]')) };
+    })()`);
+    assert(persistenceState.hasMessage && persistenceState.hasComposer, "widget did not restore the existing conversation after host reload");
+
     let portalFormsChecked = false;
     if (portalID && portalCookie) {
       const cookieResult = await browser.page.send("Network.setCookie", {
@@ -419,7 +455,7 @@ export async function runBrowserJourney({
       dashboardChecked = true;
     }
 
-    return { widgetState, dialogState, portalChecked: Boolean(portalID && portalCookie), portalFormsChecked: Boolean(portalID && portalCookie && portalFormSlug), dashboardChecked };
+    return { widgetState, dialogState, widgetPersistenceChecked: true, portalChecked: Boolean(portalID && portalCookie), portalFormsChecked: Boolean(portalID && portalCookie && portalFormSlug), dashboardChecked };
   } finally {
     await browser.close();
     await host.close();
@@ -439,7 +475,7 @@ if (isMain) {
       dashboardCookie: process.env.HUBCHAT_BROWSER_DASHBOARD_COOKIE,
       workspaceName: process.env.HUBCHAT_BROWSER_WORKSPACE_NAME ?? "Production Journey Workspace",
     });
-    console.log(`Browser journey OK (widget CSS isolation, accessible dialog${result.portalChecked ? ", portal navigation" : ""}${result.dashboardChecked ? ", dashboard navigation" : ""})`);
+    console.log(`Browser journey OK (widget CSS isolation, accessible dialog, conversation persistence${result.portalChecked ? ", portal navigation" : ""}${result.dashboardChecked ? ", dashboard navigation" : ""})`);
   } catch (error) {
     console.error(`Browser journey failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;

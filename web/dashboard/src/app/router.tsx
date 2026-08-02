@@ -112,6 +112,7 @@ const appRoutes: RouteObject[] = [
   { path: "developers/events", element: page(() => import("../pages/developers/EventStream")) },
   { path: "developers/metadata", element: page(() => import("../pages/developers/MetadataSchema")) },
   { path: "developers/sdk", element: page(() => import("../pages/developers/SdkGuide")) },
+  { path: "developers/commands", element: page(() => import("../pages/developers/CustomerCommands")) },
 
   // ---------------------------------------------------------------- settings
   { path: "settings", element: <Navigate to="/settings/general" replace /> },

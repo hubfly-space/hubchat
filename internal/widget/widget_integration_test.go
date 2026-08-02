@@ -300,6 +300,327 @@ func TestVisitorConversationRoundTrip(t *testing.T) {
 	}
 }
 
+func TestVisitorEventsBuildJourneyAndAttachAfterIdentification(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	h := newHarness(pool)
+	ws := seedWorkspace(t, ctx, pool)
+	_, visitor, err := h.Widget.IssueVisitor(ctx, ws.WorkspaceID)
+	if err != nil {
+		t.Fatalf("issue visitor: %v", err)
+	}
+	firstURL := "https://customer.example/pricing"
+	secondURL := "https://customer.example/checkout"
+	for _, item := range []struct {
+		url   string
+		title string
+	}{
+		{firstURL, "Pricing"},
+		{secondURL, "Checkout"},
+	} {
+		if _, err := h.Widget.Track(ctx, ws.WorkspaceID, visitor, "page.viewed", &item.url, map[string]any{
+			"page":  map[string]any{"origin": "https://customer.example", "path": item.url[len("https://customer.example"):]},
+			"title": item.title, "device": "desktop", "browser": "Firefox", "os": "Linux", "language": "en-US", "timezone": "Africa/Kigali",
+			"platform": "Linux x86_64", "referrer_origin": "https://search.example", "user_agent": "Mozilla/5.0 test-agent",
+			"viewport": map[string]any{"width": float64(1440), "height": float64(900), "device_pixel_ratio": 2.0},
+		}); err != nil {
+			t.Fatalf("track %s: %v", item.url, err)
+		}
+	}
+	if _, err := h.Widget.Track(ctx, ws.WorkspaceID, visitor, "context.updated", nil, map[string]any{
+		"plan": "pro", "account": map[string]any{"tier": "team"}, "auth_token": "must not be exposed",
+	}); err != nil {
+		t.Fatalf("track context: %v", err)
+	}
+	visitorContext, err := h.Customer.VisitorContext(ctx, ws.WorkspaceID, visitor.ID)
+	if err != nil {
+		t.Fatalf("anonymous visitor context: %v", err)
+	}
+	if visitorContext.CurrentPage == nil || visitorContext.CurrentPage.URL == nil || *visitorContext.CurrentPage.URL != secondURL {
+		t.Fatalf("anonymous current page = %+v", visitorContext.CurrentPage)
+	}
+	if visitorContext.Device == nil || visitorContext.Device.Browser != "Firefox" || visitorContext.Device.Timezone != "Africa/Kigali" || visitorContext.Device.Platform != "Linux x86_64" || visitorContext.Device.UserAgent == "" || visitorContext.Device.Viewport == nil || visitorContext.Device.Viewport.Width != 1440 {
+		t.Fatalf("anonymous device = %+v", visitorContext.Device)
+	}
+	if visitorContext.ContextMetadata["plan"] != "pro" || visitorContext.ContextMetadata["account"].(map[string]any)["tier"] != "team" {
+		t.Fatalf("anonymous context metadata = %+v", visitorContext.ContextMetadata)
+	}
+	if _, exists := visitorContext.ContextMetadata["auth_token"]; exists {
+		t.Fatalf("sensitive context metadata was exposed: %+v", visitorContext.ContextMetadata)
+	}
+	otherWorkspace := seedWorkspace(t, ctx, pool)
+	if _, err := h.Customer.VisitorContext(ctx, otherWorkspace.WorkspaceID, visitor.ID); !errors.Is(err, customer.ErrNotFound) {
+		t.Fatalf("cross-workspace visitor context error = %v", err)
+	}
+	name, email := "Journey Customer", "journey@example.com"
+	cust, err := h.Widget.Identify(ctx, ws.WorkspaceID, visitor, widget.IdentifyInput{Name: &name, Email: &email})
+	if err != nil {
+		t.Fatalf("identify: %v", err)
+	}
+	context, err := h.Customer.Customer360(ctx, ws.WorkspaceID, cust.ID)
+	if err != nil {
+		t.Fatalf("customer 360: %v", err)
+	}
+	if len(context.PageJourney) != 2 || context.CurrentPage == nil || context.CurrentPage.URL == nil || *context.CurrentPage.URL != secondURL {
+		t.Fatalf("page journey = %+v, current = %+v", context.PageJourney, context.CurrentPage)
+	}
+	if len(context.Sessions) != 1 || context.Sessions[0].CurrentURL == nil || *context.Sessions[0].CurrentURL != secondURL {
+		t.Fatalf("sessions = %+v", context.Sessions)
+	}
+	if context.Device == nil || context.Device.Browser != "Firefox" || context.Device.OS != "Linux" {
+		t.Fatalf("device = %+v", context.Device)
+	}
+	if context.Device.Platform != "Linux x86_64" || context.Device.ReferrerOrigin != "https://search.example" || context.Device.Viewport == nil || context.Device.Viewport.DevicePixelRatio != 2 {
+		t.Fatalf("extended device = %+v", context.Device)
+	}
+	if context.Sessions[0].Language == nil || *context.Sessions[0].Language != "en-US" || context.Sessions[0].Timezone == nil || *context.Sessions[0].Timezone != "Africa/Kigali" || context.Sessions[0].Viewport == nil || context.Sessions[0].Viewport.Width != 1440 {
+		t.Fatalf("persisted session context = %+v", context.Sessions[0])
+	}
+	if context.ContextMetadata["plan"] != "pro" {
+		t.Fatalf("customer context metadata = %+v", context.ContextMetadata)
+	}
+}
+
+func TestWidgetTrackingNormalizesObservedURLs(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	h := newHarness(pool)
+	ws := seedWorkspace(t, ctx, pool)
+	_, visitor, err := h.Widget.IssueVisitor(ctx, ws.WorkspaceID)
+	if err != nil {
+		t.Fatalf("issue visitor: %v", err)
+	}
+
+	urlWithSecrets := "https://customer.example/account?email=ada%40example.com&token=do-not-store#billing"
+	if _, err := h.Widget.Track(ctx, ws.WorkspaceID, visitor, "page.viewed", &urlWithSecrets, map[string]any{
+		"page":  map[string]any{"origin": "https://customer.example", "path": "/account?session=do-not-store"},
+		"title": "Account",
+	}); err != nil {
+		t.Fatalf("track page: %v", err)
+	}
+
+	context, err := h.Customer.VisitorContext(ctx, ws.WorkspaceID, visitor.ID)
+	if err != nil {
+		t.Fatalf("load visitor context: %v", err)
+	}
+	if context.CurrentPage == nil || context.CurrentPage.URL == nil || *context.CurrentPage.URL != "https://customer.example/account" {
+		t.Fatalf("normalized current page = %+v", context.CurrentPage)
+	}
+	if context.Session == nil || context.Session.CurrentURL == nil || *context.Session.CurrentURL != "https://customer.example/account" {
+		t.Fatalf("normalized session URL = %+v", context.Session)
+	}
+}
+
+func TestCustomerCommandBindingIsScopedAndDeliveredAsAnEvent(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	h := newHarness(pool)
+	ws := seedWorkspace(t, ctx, pool)
+	w, _ := h.Widget.Create(ctx, ws.WorkspaceID, ws.MemberID, "Support widget", &ws.InboxID)
+	_, visitor, err := h.Widget.IssueVisitor(ctx, ws.WorkspaceID)
+	if err != nil {
+		t.Fatalf("issue visitor: %v", err)
+	}
+	conv, _, err := h.Widget.StartConversation(ctx, ws.WorkspaceID, w, visitor, "Need diagnostics")
+	if err != nil {
+		t.Fatalf("start conversation: %v", err)
+	}
+	binding, err := h.Widget.CreateCommandBinding(ctx, ws.WorkspaceID, ws.MemberID, "reload_page", "Reload the host page")
+	if err != nil {
+		t.Fatalf("create binding: %v", err)
+	}
+	binding, err = h.Widget.UpdateCommandBinding(ctx, ws.WorkspaceID, ws.MemberID, binding.ID, binding.Name, "Reload the host page for diagnostics", false)
+	if err != nil || binding.Enabled {
+		t.Fatalf("disable binding: %+v, %v", binding, err)
+	}
+	if _, err := h.Widget.InvokeCommand(ctx, ws.WorkspaceID, ws.MemberID, conv.ID, binding.ID, nil); !errors.Is(err, widget.ErrCommandBindingDisabled) {
+		t.Fatalf("disabled binding invocation error = %v", err)
+	}
+	binding, err = h.Widget.UpdateCommandBinding(ctx, ws.WorkspaceID, ws.MemberID, binding.ID, binding.Name, binding.Description, true)
+	if err != nil || !binding.Enabled {
+		t.Fatalf("re-enable binding: %+v, %v", binding, err)
+	}
+	invocation, err := h.Widget.InvokeCommand(ctx, ws.WorkspaceID, ws.MemberID, conv.ID, binding.ID, map[string]any{"reason": "diagnostics"})
+	if err != nil {
+		t.Fatalf("invoke command: %v", err)
+	}
+	if invocation.Status != "queued" || invocation.ConversationID != conv.ID {
+		t.Fatalf("invocation = %+v", invocation)
+	}
+	var eventType string
+	if err := pool.QueryRow(ctx, `SELECT type FROM workspace_events WHERE workspace_id=$1 AND entity_type='conversation' AND entity_id=$2 ORDER BY sequence DESC LIMIT 1`, ws.WorkspaceID, conv.ID).Scan(&eventType); err != nil {
+		t.Fatalf("load command event: %v", err)
+	}
+	if eventType != "customer.command" {
+		t.Fatalf("event type = %q", eventType)
+	}
+	otherWS := seedWorkspace(t, ctx, pool)
+	if _, err := h.Widget.ListCommandBindings(ctx, otherWS.WorkspaceID); err != nil {
+		t.Fatalf("list other workspace bindings: %v", err)
+	}
+	if _, err := h.Widget.InvokeCommand(ctx, otherWS.WorkspaceID, otherWS.MemberID, conv.ID, binding.ID, nil); err == nil {
+		t.Fatal("cross-workspace command invocation succeeded")
+	}
+}
+
+func TestCustomerCommandBindingsUseCreatedCursorPagination(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	h := newHarness(pool)
+	ws := seedWorkspace(t, ctx, pool)
+	first, err := h.Widget.CreateCommandBinding(ctx, ws.WorkspaceID, ws.MemberID, "first_command", "First command")
+	if err != nil {
+		t.Fatalf("create first binding: %v", err)
+	}
+	second, err := h.Widget.CreateCommandBinding(ctx, ws.WorkspaceID, ws.MemberID, "second_command", "Second command")
+	if err != nil {
+		t.Fatalf("create second binding: %v", err)
+	}
+
+	page, err := h.Widget.ListCommandBindingsPage(ctx, ws.WorkspaceID, time.Time{}, "", 1)
+	if err != nil {
+		t.Fatalf("load first binding page: %v", err)
+	}
+	if len(page) != 1 || page[0].ID != second.ID {
+		t.Fatalf("first binding page = %+v, want newest binding", page)
+	}
+	next, err := h.Widget.ListCommandBindingsPage(ctx, ws.WorkspaceID, page[0].CreatedAt, page[0].ID, 1)
+	if err != nil {
+		t.Fatalf("load second binding page: %v", err)
+	}
+	if len(next) != 1 || next[0].ID != first.ID {
+		t.Fatalf("second binding page = %+v, want older binding", next)
+	}
+}
+
+func TestPendingCustomerCommandsUseCreatedCursorPagination(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	h := newHarness(pool)
+	ws := seedWorkspace(t, ctx, pool)
+	w, _ := h.Widget.Create(ctx, ws.WorkspaceID, ws.MemberID, "Support widget", &ws.InboxID)
+	_, visitor, err := h.Widget.IssueVisitor(ctx, ws.WorkspaceID)
+	if err != nil {
+		t.Fatalf("issue visitor: %v", err)
+	}
+	conv, _, err := h.Widget.StartConversation(ctx, ws.WorkspaceID, w, visitor, "Need a command queue")
+	if err != nil {
+		t.Fatalf("start conversation: %v", err)
+	}
+	binding, err := h.Widget.CreateCommandBinding(ctx, ws.WorkspaceID, ws.MemberID, "queue_command", "Queue command")
+	if err != nil {
+		t.Fatalf("create binding: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := h.Widget.InvokeCommand(ctx, ws.WorkspaceID, ws.MemberID, conv.ID, binding.ID, map[string]any{"sequence": i}); err != nil {
+			t.Fatalf("invoke command %d: %v", i, err)
+		}
+	}
+
+	first, err := h.Widget.PendingCommandsPage(ctx, ws.WorkspaceID, conv.ID, visitor, time.Time{}, "", 2)
+	if err != nil {
+		t.Fatalf("load first pending page: %v", err)
+	}
+	if len(first.Items) != 2 || !first.HasMore {
+		t.Fatalf("first pending page = %+v, want two items and another page", first)
+	}
+	if first.Items[0].Payload["sequence"] != float64(0) || first.Items[1].Payload["sequence"] != float64(1) {
+		t.Fatalf("first pending page order = %+v", first.Items)
+	}
+
+	last := first.Items[len(first.Items)-1]
+	second, err := h.Widget.PendingCommandsPage(ctx, ws.WorkspaceID, conv.ID, visitor, last.CreatedAt, last.ID, 2)
+	if err != nil {
+		t.Fatalf("load second pending page: %v", err)
+	}
+	if len(second.Items) != 1 || second.HasMore || second.Items[0].Payload["sequence"] != float64(2) {
+		t.Fatalf("second pending page = %+v, want final command", second)
+	}
+
+	third, err := h.Widget.PendingCommandsPage(ctx, ws.WorkspaceID, conv.ID, visitor, second.Items[0].CreatedAt, second.Items[0].ID, 2)
+	if err != nil {
+		t.Fatalf("load exhausted pending page: %v", err)
+	}
+	if len(third.Items) != 0 || third.HasMore {
+		t.Fatalf("exhausted pending page = %+v", third)
+	}
+}
+
+func TestPendingCustomerCommandsAreClaimedOnceAndExpire(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	h := newHarness(pool)
+	ws := seedWorkspace(t, ctx, pool)
+	w, _ := h.Widget.Create(ctx, ws.WorkspaceID, ws.MemberID, "Support widget", &ws.InboxID)
+	_, visitor, err := h.Widget.IssueVisitor(ctx, ws.WorkspaceID)
+	if err != nil {
+		t.Fatalf("issue visitor: %v", err)
+	}
+	conv, _, err := h.Widget.StartConversation(ctx, ws.WorkspaceID, w, visitor, "Need a reload")
+	if err != nil {
+		t.Fatalf("start conversation: %v", err)
+	}
+	binding, err := h.Widget.CreateCommandBinding(ctx, ws.WorkspaceID, ws.MemberID, "reload_page", "Reload the host page")
+	if err != nil {
+		t.Fatalf("create binding: %v", err)
+	}
+	invocation, err := h.Widget.InvokeCommand(ctx, ws.WorkspaceID, ws.MemberID, conv.ID, binding.ID, map[string]any{"reason": "reconnect"})
+	if err != nil {
+		t.Fatalf("invoke command: %v", err)
+	}
+
+	pending, err := h.Widget.PendingCommands(ctx, ws.WorkspaceID, conv.ID, visitor)
+	if err != nil {
+		t.Fatalf("claim pending commands: %v", err)
+	}
+	if len(pending) != 1 || pending[0].ID != invocation.ID || pending[0].Name != binding.Name || pending[0].Payload["reason"] != "reconnect" {
+		t.Fatalf("pending commands = %+v", pending)
+	}
+	if pending[0].ConversationID != conv.ID {
+		t.Fatalf("pending conversation = %q", pending[0].ConversationID)
+	}
+
+	again, err := h.Widget.PendingCommands(ctx, ws.WorkspaceID, conv.ID, visitor)
+	if err != nil {
+		t.Fatalf("reclaim pending commands: %v", err)
+	}
+	if len(again) != 0 {
+		t.Fatalf("claimed command was returned twice: %+v", again)
+	}
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM customer_command_invocations WHERE id=$1`, invocation.ID).Scan(&status); err != nil {
+		t.Fatalf("load claimed status: %v", err)
+	}
+	if status != "delivered" {
+		t.Fatalf("claimed status = %q", status)
+	}
+
+	expired, err := h.Widget.InvokeCommand(ctx, ws.WorkspaceID, ws.MemberID, conv.ID, binding.ID, nil)
+	if err != nil {
+		t.Fatalf("invoke expiring command: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE customer_command_invocations SET expires_at=now()-interval '1 second' WHERE id=$1`, expired.ID); err != nil {
+		t.Fatalf("expire command: %v", err)
+	}
+	if pending, err := h.Widget.PendingCommands(ctx, ws.WorkspaceID, conv.ID, visitor); err != nil {
+		t.Fatalf("load expired commands: %v", err)
+	} else if len(pending) != 0 {
+		t.Fatalf("expired command was delivered: %+v", pending)
+	}
+	if err := pool.QueryRow(ctx, `SELECT status FROM customer_command_invocations WHERE id=$1`, expired.ID).Scan(&status); err != nil {
+		t.Fatalf("load expired status: %v", err)
+	}
+	if status != "expired" {
+		t.Fatalf("expired status = %q", status)
+	}
+}
+
 func TestIdentifyUnsignedCreatesUnverifiedCustomer(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.Reset(t, pool)

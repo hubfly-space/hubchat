@@ -494,6 +494,38 @@ const visitor = await request("/api/v1/widget/visitors", {
 const visitorToken = requireValue(visitor?.token, "visitor token");
 const visitorBody = { public_key: publicKey, url: widgetURL, token: visitorToken };
 
+const firstJourneyURL = `${origin}/journey-pricing`;
+const currentJourneyURL = `${origin}/journey-checkout`;
+for (const page of [
+  { url: firstJourneyURL, title: "Pricing", referrer_origin: `${origin}/search` },
+  { url: currentJourneyURL, title: "Checkout", referrer_origin: firstJourneyURL },
+]) {
+  await request("/api/v1/widget/events", {
+    method: "POST",
+    body: {
+      public_key: publicKey,
+      url: page.url,
+      token: visitorToken,
+      type: "page.viewed",
+      page_url: page.url,
+      payload: {
+        page: { origin, path: new URL(page.url).pathname },
+        title: page.title,
+        referrer_origin: page.referrer_origin,
+        language: "en-US",
+        timezone: "UTC",
+        platform: "Linux x86_64",
+        user_agent: "Hubchat production journey browser",
+        device: "desktop",
+        browser: "Chrome",
+        os: "Linux",
+        viewport: { width: 1440, height: 900, device_pixel_ratio: 1 },
+      },
+    },
+    expected: 204,
+  });
+}
+
 const identified = await request("/api/v1/widget/identify", {
   method: "POST",
   body: { ...visitorBody, name: "Journey Customer", email: customerEmail, external_id: `journey-customer-${suffix}` },
@@ -586,6 +618,34 @@ const conversationID = requireValue(started?.conversation_id, "widget conversati
 const tokenAfterStart = started?.token || visitorToken;
 const conversationBody = { ...visitorBody, token: tokenAfterStart };
 
+// Exercise the offline/reconnect command path before opening the visitor
+// socket. The dashboard creates and invokes the host-owned binding; the
+// visitor then claims it through the public endpoint and acknowledges it.
+const commandBinding = await request("/api/v1/customer-command-bindings", {
+  method: "POST",
+  body: { name: `reload_page_${suffix}`, description: "Reload the customer page for diagnostics." },
+  expected: 201,
+});
+const commandBindingID = requireValue(commandBinding?.id, "customer command binding id");
+const commandInvocation = await request(`/api/v1/conversations/${conversationID}/customer-commands`, {
+  method: "POST",
+  body: { binding_id: commandBindingID, payload: { reason: "production-journey" } },
+  expected: 202,
+});
+const commandID = requireValue(commandInvocation?.id, "customer command invocation id");
+const pendingCommands = await request(`/api/v1/widget/conversations/${conversationID}/commands?key=${encodeURIComponent(publicKey)}&url=${encodeURIComponent(widgetURL)}&token=${encodeURIComponent(tokenAfterStart)}`);
+if (pendingCommands?.data?.length !== 1 || pendingCommands.data[0]?.command_id !== commandID || pendingCommands.data[0]?.name !== commandBinding.name || pendingCommands.data[0]?.payload?.reason !== "production-journey") {
+  throw new Error("offline customer command was not returned by the reconnect endpoint");
+}
+const pendingAgain = await request(`/api/v1/widget/conversations/${conversationID}/commands?key=${encodeURIComponent(publicKey)}&url=${encodeURIComponent(widgetURL)}&token=${encodeURIComponent(tokenAfterStart)}`);
+if (pendingAgain?.data?.length !== 0) throw new Error("claimed customer command was returned twice");
+await request(`/api/v1/widget/conversations/${conversationID}/commands/${commandID}/ack`, {
+  method: "POST",
+  body: { public_key: publicKey, url: widgetURL, token: tokenAfterStart, status: "acknowledged" },
+  expected: 204,
+});
+log("customer command reconnect delivery and acknowledgement");
+
 const visitorSocket = await openVisitorSocket({
   publicKey,
   token: tokenAfterStart,
@@ -596,6 +656,25 @@ await visitorSocket.waitFor(
   (frame) => frame.type === "hub.topics" && frame.data?.topics?.includes(`conversation:${conversationID}`),
   "conversation subscription",
 );
+const liveCommandInvocation = await request(`/api/v1/conversations/${conversationID}/customer-commands`, {
+  method: "POST",
+  body: { binding_id: commandBindingID, payload: { reason: "realtime" } },
+  expected: 202,
+});
+const liveCommandFrame = await visitorSocket.waitFor(
+  (frame) => frame.type === "customer.command" && frame.entity_type === "conversation" && frame.entity_id === conversationID && frame.data?.command_id === liveCommandInvocation?.id,
+  "live customer command",
+);
+if (liveCommandFrame.data?.name !== commandBinding.name || liveCommandFrame.data?.payload?.reason !== "realtime") {
+  visitorSocket.close();
+  throw new Error("visitor websocket delivered an unexpected customer command");
+}
+await request(`/api/v1/widget/conversations/${conversationID}/commands/${liveCommandInvocation.id}/ack`, {
+  method: "POST",
+  body: { public_key: publicKey, url: widgetURL, token: tokenAfterStart, status: "acknowledged" },
+  expected: 204,
+});
+log("customer command realtime delivery and acknowledgement");
 const realtimeAgentReply = await request(`/api/v1/conversations/${conversationID}/messages`, {
   method: "POST",
   body: { kind: "reply", author_name: "Journey Agent", body: "The realtime transport is working." },
@@ -640,6 +719,16 @@ if (!Array.isArray(customer360?.feedback) || !customer360.feedback.some((item) =
 }
 if (customer360.events?.some((item) => Object.prototype.hasOwnProperty.call(item, "payload"))) {
   throw new Error("customer 360 exposed a raw event payload instead of redacted event metadata");
+}
+if (!customer360.current_page?.url || customer360.current_page.url !== currentJourneyURL) {
+  throw new Error("customer 360 did not preserve the current page from widget events");
+}
+if (!Array.isArray(customer360.page_journey) || customer360.page_journey.length < 2 || !customer360.page_journey.some((item) => item?.url === firstJourneyURL)) {
+  throw new Error("customer 360 did not preserve the visitor page journey");
+}
+const latestSession = customer360.sessions?.[0];
+if (latestSession?.current_title !== "Checkout" || latestSession?.language !== "en-US" || latestSession?.platform !== "Linux x86_64" || latestSession?.viewport?.width !== 1440) {
+  throw new Error("customer 360 did not preserve rich session context");
 }
 log("unified customer 360 context and redacted event metadata");
 
