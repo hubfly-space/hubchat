@@ -47,11 +47,36 @@ Hubchat("update", { attributes: { plan: "pro" } });
 Hubchat("track", { type: "checkout.started", payload: { currency: "RWF" } });
 Hubchat("reset");
 Hubchat("on", { event: "ready", handler: () => console.log("Hubchat is ready") });
+
+// Register an explicit host-owned command. The dashboard can invoke this
+// binding from an active conversation; Hubchat never evaluates JavaScript.
+Hubchat("bind", {
+  name: "reload_page",
+  handler: ({ reason }) => {
+    console.log("Reload requested for", reason);
+    window.location.reload();
+  }
+});
+Hubchat("unbind", { name: "reload_page" });
 ```
 
 `open`/`close` are aliases for `show`/`hide`. `openForm` and `openFeedback`
 remain supported alongside the more explicit `openTicketForm` and
 `openFeedbackForm` names.
+
+The widget keeps the visitor token and active conversation in browser-local
+storage, so reopening or refreshing the page resumes the same conversation.
+The widget also records a bounded, privacy-reduced page journey and device
+context for the customer 360 view.
+
+Commands are host-owned actions. A binding registered with `bind` is invoked
+only by an authenticated dashboard agent through an active visitor
+conversation; the server never evaluates JavaScript or accepts a script body.
+Commands sent while the visitor is temporarily offline are retained for two
+minutes and claimed once when the widget reconnects. Reconnect delivery is
+cursor-paged internally, so a burst of commands is not truncated at the first
+page. Handlers should be idempotent because a host may retry a failed network
+acknowledgement.
 
 Customer attributes sent through `identify` or `update` are not arbitrary
 metadata writes. The workspace must declare each key and allow the `js_sdk`
@@ -72,7 +97,7 @@ Hubchat("on", {
 ```
 
 Supported events are `ready`, `open`, `close`, `message:received`,
-`conversation:started`, and `unread:changed`. Event payloads are intentionally
+`conversation:started`, `unread:changed`, and `command`. Event payloads are intentionally
 small and contain no internal notes or sensitive dashboard-only fields.
 
 ## Contract and delivery behavior

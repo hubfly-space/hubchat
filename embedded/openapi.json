@@ -8160,6 +8160,52 @@
         ]
       }
     },
+    "/v1/visitors/{id}/context": {
+      "get": {
+        "operationId": "getVisitorsIdContext",
+        "summary": "get /v1/visitors/{id}/context",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VisitorContext"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/customers/{id}/export": {
       "get": {
         "operationId": "getCustomersIdExport",
@@ -15171,6 +15217,207 @@
         ]
       }
     },
+    "/v1/customer-command-bindings": {
+      "get": {
+        "operationId": "getCustomerCommandBindings",
+        "summary": "get /v1/customer-command-bindings",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "postCustomerCommandBindings",
+        "summary": "post /v1/customer-command-bindings",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/customer-command-bindings/{id}": {
+      "patch": {
+        "operationId": "patchCustomerCommandBindingsId",
+        "summary": "patch /v1/customer-command-bindings/{id}",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/conversations/{id}/customer-commands": {
+      "post": {
+        "operationId": "postConversationsIdCustomerCommands",
+        "summary": "post /v1/conversations/{id}/customer-commands",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/widget/config": {
       "get": {
         "operationId": "getWidgetConfig",
@@ -15298,6 +15545,67 @@
         "summary": "post /v1/widget/events",
         "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
         "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/widget/conversations/{id}/commands/{commandID}/ack": {
+      "post": {
+        "operationId": "postWidgetConversationsIdCommandsCommandIDAck",
+        "summary": "post /v1/widget/conversations/{id}/commands/{commandID}/ack",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "commandID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful response.",
@@ -16017,6 +16325,48 @@
                 "additionalProperties": true
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/widget/conversations/{id}/commands": {
+      "get": {
+        "operationId": "getWidgetConversationsIdCommands",
+        "summary": "get /v1/widget/conversations/{id}/commands",
+        "description": "This endpoint is implemented by the Hubchat API. Request and response details are versioned with the running service.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request is invalid."
+          },
+          "401": {
+            "description": "Authentication is required."
+          },
+          "403": {
+            "description": "The actor lacks the required capability."
+          },
+          "404": {
+            "description": "The resource was not found."
           }
         }
       }
@@ -17183,6 +17533,8 @@
           "tickets_truncated",
           "events",
           "events_truncated",
+          "page_journey",
+          "page_journey_truncated",
           "sessions",
           "sessions_truncated",
           "feedback",
@@ -17232,6 +17584,35 @@
           },
           "events_truncated": {
             "type": "boolean"
+          },
+          "page_journey": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Customer360PageVisit"
+            }
+          },
+          "page_journey_truncated": {
+            "type": "boolean"
+          },
+          "current_page": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Customer360PageVisit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "device": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Customer360Device"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "sessions": {
             "type": "array",
@@ -17286,6 +17667,110 @@
           },
           "merges_truncated": {
             "type": "boolean"
+          },
+          "context_metadata": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "Customer360PageVisit": {
+        "type": "object",
+        "required": [
+          "id",
+          "occurred_at"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          },
+          "title": {
+            "type": "string"
+          },
+          "device": {
+            "type": "string"
+          },
+          "browser": {
+            "type": "string"
+          },
+          "os": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "referrer_origin": {
+            "type": "string"
+          },
+          "user_agent": {
+            "type": "string"
+          },
+          "viewport": {
+            "type": "object",
+            "properties": {
+              "width": {
+                "type": "integer"
+              },
+              "height": {
+                "type": "integer"
+              },
+              "device_pixel_ratio": {
+                "type": "number"
+              }
+            }
+          },
+          "occurred_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "Customer360Device": {
+        "type": "object",
+        "properties": {
+          "device": {
+            "type": "string"
+          },
+          "browser": {
+            "type": "string"
+          },
+          "os": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "referrer_origin": {
+            "type": "string"
+          },
+          "user_agent": {
+            "type": "string"
+          },
+          "viewport": {
+            "type": "object",
+            "properties": {
+              "width": {
+                "type": "integer"
+              },
+              "height": {
+                "type": "integer"
+              },
+              "device_pixel_ratio": {
+                "type": "number"
+              }
+            }
           }
         }
       },
@@ -17471,12 +17956,72 @@
               "null"
             ]
           },
+          "referrer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "landing_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          },
           "current_url": {
             "type": [
               "string",
               "null"
             ],
             "format": "uri"
+          },
+          "current_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "language": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "platform": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_agent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "viewport": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "width": {
+                "type": "integer"
+              },
+              "height": {
+                "type": "integer"
+              },
+              "device_pixel_ratio": {
+                "type": "number"
+              }
+            }
           },
           "page_views": {
             "type": "integer"
@@ -17685,6 +18230,80 @@
           },
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "VisitorContext": {
+        "type": "object",
+        "required": [
+          "visitor_id",
+          "presence",
+          "first_seen_at",
+          "last_seen_at",
+          "page_journey",
+          "page_journey_truncated"
+        ],
+        "properties": {
+          "visitor_id": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "customer_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "presence": {
+            "type": "string"
+          },
+          "first_seen_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "last_seen_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "current_page": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Customer360PageVisit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "page_journey": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Customer360PageVisit"
+            }
+          },
+          "page_journey_truncated": {
+            "type": "boolean"
+          },
+          "device": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Customer360Device"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Customer360Session"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "context_metadata": {
+            "type": "object",
+            "additionalProperties": true
           }
         }
       },
