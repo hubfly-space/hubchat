@@ -117,6 +117,7 @@ export type Capability =
   | "survey.manage"
   | "knowledgebase.manage"
   | "automation.manage"
+  | "task.manage"
   | "sla.manage"
   | "integration.manage"
   | "report.read"
@@ -1009,6 +1010,26 @@ export type SavedReply = {
   scope: "personal" | "team" | "workspace";
   body: string;
   usage_count: number;
+};
+
+export type TaskState = "open" | "completed" | "cancelled";
+
+export type Task = {
+  id: Id;
+  workspace_id: Id;
+  title: string;
+  description: string;
+  state: TaskState;
+  subject_type: "conversation" | "ticket" | "customer" | "feedback" | "";
+  subject_id: Id | "";
+  assignee_id: Id | "";
+  assignee_name: string;
+  due_at: Timestamp | null;
+  created_by: Id | "";
+  created_by_name: string;
+  completed_at: Timestamp | null;
+  created_at: Timestamp;
+  updated_at: Timestamp;
 };
 
 // ---------------------------------------------------------------- SLA

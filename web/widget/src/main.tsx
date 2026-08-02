@@ -72,13 +72,12 @@ export function mount({
   shadow.appendChild(style);
 
   // A host page with `style-src 'self'` can block the inline style element even
-  // though the widget script itself is allowed to run. Constructable sheets do
-  // not use an inline style tag, so use one as a compatibility fallback when
-  // the browser reports that the portable sheet did not parse. This keeps the
-  // normal path compatible with older WebViews while preventing a strict CSP
-  // from silently producing the unstyled panel shown by the host page.
+  // though the widget script itself is allowed to run. Browsers can still
+  // expose a blocked sheet and its rules, so checking `style.sheet` is not a
+  // reliable signal that the rules are active. Constructable sheets do not use
+  // an inline style element; install one whenever supported so a strict host
+  // CSP cannot silently produce the unstyled panel shown by the host page.
   if (
-    (style.sheet?.cssRules.length ?? 0) === 0 &&
     "adoptedStyleSheets" in shadow &&
     typeof CSSStyleSheet !== "undefined" &&
     "replaceSync" in CSSStyleSheet.prototype

@@ -120,6 +120,7 @@ export type ApiCreateConversationMessageRequest = {
   "author_name"?: string;
   "body": string;
   "file_ids"?: ApiId[];
+  "mentioned_member_ids"?: ApiId[];
 };
 
 export type ApiCreateConversationRequest = {
@@ -515,6 +516,37 @@ export type ApiSearchResult = {
   "conversation_id": string | null;
 };
 
+export type ApiTask = {
+  "id": ApiId;
+  "workspace_id": ApiId;
+  "title": string;
+  "description": string;
+  "state": "open" | "completed" | "cancelled";
+  "subject_type": string;
+  "subject_id": string;
+  "assignee_id": string;
+  "assignee_name"?: string;
+  "due_at": string | null;
+  "created_by": string;
+  "created_by_name"?: string;
+  "completed_at": string | null;
+  "created_at": ApiTimestamp;
+  "updated_at": ApiTimestamp;
+};
+
+export type ApiTaskInput = {
+  "title": string;
+  "description"?: string;
+  "subject_type"?: "conversation" | "ticket" | "customer" | "feedback";
+  "subject_id"?: ApiId;
+  "assignee_id"?: ApiId;
+  "due_at"?: string | null;
+};
+
+export type ApiTaskPage = ApiPageOf & {
+  "data"?: ApiTask[];
+};
+
 export type ApiTestEmailResult = {
   "job_id": ApiId;
   "recipient": string;
@@ -574,6 +606,14 @@ export type ApiUpdateCustomerRequest = {
   "phone"?: string | null;
   "language"?: string | null;
   "timezone"?: string | null;
+};
+
+export type ApiUpdateTaskRequest = {
+  "title"?: string;
+  "description"?: string;
+  "state"?: "open" | "completed" | "cancelled";
+  "assignee_id"?: ApiId;
+  "due_at"?: string | null;
 };
 
 export type ApiUpdateTicketRequest = {
@@ -636,6 +676,7 @@ export type ApiOperationId =
   | "createSLACalendar"
   | "createSLAPolicy"
   | "createSurvey"
+  | "createTask"
   | "createTicket"
   | "createWebhook"
   | "createWorkspaceLegalHold"
@@ -754,6 +795,7 @@ export type ApiOperationId =
   | "getSurvey"
   | "getSurveysIdSummary"
   | "getTags"
+  | "getTask"
   | "getTeams"
   | "getTicket"
   | "getTicketsDuplicates"
@@ -824,6 +866,7 @@ export type ApiOperationId =
   | "listSLAPolicies"
   | "listSurveyResponses"
   | "listSurveys"
+  | "listTasks"
   | "listTickets"
   | "listWebhooks"
   | "listWorkspaceLegalHolds"
@@ -985,6 +1028,7 @@ export type ApiOperationId =
   | "updateSavedView"
   | "updateSLACalendar"
   | "updateSurvey"
+  | "updateTask"
   | "updateTicket"
   | "uploadFile"
   | "uploadPortabilityImportFile"
@@ -1108,6 +1152,7 @@ export type ApiOperationCatalog = {
 }; response: {
   [key: string]: unknown;
 }; };
+  "createTask": { method: "POST"; path: "/v1/tasks"; request: ApiTaskInput; response: ApiTask; };
   "createTicket": { method: "POST"; path: "/v1/tickets"; request: ApiCreateTicketRequest; response: ApiTicket; };
   "createWebhook": { method: "POST"; path: "/v1/webhooks"; request: {
   [key: string]: unknown;
@@ -1416,6 +1461,7 @@ export type ApiOperationCatalog = {
   "getTags": { method: "GET"; path: "/v1/tags"; request: unknown; response: {
   [key: string]: unknown;
 }; };
+  "getTask": { method: "GET"; path: "/v1/tasks/{id}"; request: unknown; response: ApiTask; };
   "getTeams": { method: "GET"; path: "/v1/teams"; request: unknown; response: {
   [key: string]: unknown;
 }; };
@@ -1606,6 +1652,7 @@ export type ApiOperationCatalog = {
   "listSurveys": { method: "GET"; path: "/v1/surveys"; request: unknown; response: {
   [key: string]: unknown;
 }; };
+  "listTasks": { method: "GET"; path: "/v1/tasks"; request: unknown; response: ApiTaskPage; };
   "listTickets": { method: "GET"; path: "/v1/tickets"; request: unknown; response: ApiTicketPage; };
   "listWebhooks": { method: "GET"; path: "/v1/webhooks"; request: unknown; response: {
   [key: string]: unknown;
@@ -2369,6 +2416,7 @@ export type ApiOperationCatalog = {
 }; response: {
   [key: string]: unknown;
 }; };
+  "updateTask": { method: "PATCH"; path: "/v1/tasks/{id}"; request: ApiUpdateTaskRequest; response: ApiTask; };
   "updateTicket": { method: "PATCH"; path: "/v1/tickets/{id}"; request: ApiUpdateTicketRequest; response: ApiTicket; };
   "uploadFile": { method: "POST"; path: "/v1/files"; request: unknown; response: {
   [key: string]: unknown;
