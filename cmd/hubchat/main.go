@@ -55,6 +55,7 @@ import (
 	"github.com/hubchat/hubchat/internal/search"
 	"github.com/hubchat/hubchat/internal/sla"
 	"github.com/hubchat/hubchat/internal/survey"
+	"github.com/hubchat/hubchat/internal/task"
 	"github.com/hubchat/hubchat/internal/ticket"
 	"github.com/hubchat/hubchat/internal/webhook"
 	"github.com/hubchat/hubchat/internal/widget"
@@ -381,11 +382,13 @@ func wireAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) (*appl
 	surveyService := survey.New(pool, survey.Options{Jobs: jobClient, PublicURL: cfg.Server.PublicURL, Events: eventLog})
 	notificationService.SetSurveyDispatcher(surveyService)
 	slaService := sla.New(pool, eventLog)
+	taskService := task.New(pool)
 	automationService := automation.New(pool, automation.Options{
 		Conversation: conversationService,
 		Ticket:       ticketService,
 		Jobs:         jobClient,
 		SLA:          slaService,
+		Tasks:        taskService,
 		Webhook:      webhookService,
 	})
 	savedViewService := savedview.New(pool, eventLog, auditLog)
@@ -441,6 +444,7 @@ func wireAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) (*appl
 		Feedback:      feedbackService,
 		Survey:        surveyService,
 		SLA:           slaService,
+		Task:          taskService,
 		Automation:    automationService,
 		SavedView:     savedViewService,
 		Analytics:     analyticsService,
@@ -472,7 +476,7 @@ func wireAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) (*appl
 
 	if cfg.Jobs.Enabled && (cfg.Server.Has(config.RoleWorker) || cfg.Server.Has(config.RoleScheduler)) {
 		app.Worker = jobs.NewWorker(pool, logger, cfg.Jobs)
-		registerJobHandlers(app.Worker, jobClient, mailer.New(cfg.Email, logger), fileService, emailChannelService, portabilityService, automationService, conversationService, customerService, webhookService, surveyService, auditLog, slaService, analyticsService, knowledgebaseService, logger)
+		registerJobHandlers(app.Worker, jobClient, mailer.New(cfg.Email, logger), fileService, emailChannelService, portabilityService, automationService, conversationService, customerService, webhookService, surveyService, widgetService, auditLog, slaService, analyticsService, knowledgebaseService, logger)
 
 		if cfg.Server.Has(config.RoleScheduler) {
 			// Primes the self-perpetuating snooze-wake tick (see JobWakeSnoozed's
@@ -580,7 +584,7 @@ func openEmailAttachment(ctx context.Context, files *filemodule.Service, workspa
 // answerable by reading it, rather than by grepping for Register calls.
 func registerJobHandlers(
 	worker *jobs.Worker, jobClient *jobs.Client, sender *mailer.SMTPSender,
-	fileService *filemodule.Service, emailChannelService *emailchannel.Service, portabilityService *portability.Service, automationService *automation.Service, conversationService *conversation.Service, customerService *customer.Service, webhookService *webhook.Service, surveyService *survey.Service, auditLog *audit.Log, slaService *sla.Service, analyticsService *analytics.Service, knowledgebaseService *knowledgebase.Service, logger *slog.Logger,
+	fileService *filemodule.Service, emailChannelService *emailchannel.Service, portabilityService *portability.Service, automationService *automation.Service, conversationService *conversation.Service, customerService *customer.Service, webhookService *webhook.Service, surveyService *survey.Service, widgetService *widget.Service, auditLog *audit.Log, slaService *sla.Service, analyticsService *analytics.Service, knowledgebaseService *knowledgebase.Service, logger *slog.Logger,
 ) {
 	worker.Register(api.JobEmailSend, func(ctx context.Context, job *jobs.Job) error {
 		var payload api.EmailPayload
@@ -688,12 +692,16 @@ func registerJobHandlers(
 		if err != nil {
 			return err
 		}
+		identityNoncesDeleted, err := widgetService.SweepIdentityNonces(ctx, time.Now().UTC(), 1000)
+		if err != nil {
+			return err
+		}
 		auditDeleted, err := auditLog.RetentionSweep(ctx)
 		if err != nil {
 			return err
 		}
-		if eventsDeleted > 0 || sessionsDeleted > 0 || webhooksDeleted > 0 || surveysDeleted > 0 || auditDeleted > 0 {
-			logger.Info("retention sweep", "events_deleted", eventsDeleted, "sessions_deleted", sessionsDeleted, "webhooks_deleted", webhooksDeleted, "surveys_deleted", surveysDeleted, "audit_deleted", auditDeleted)
+		if eventsDeleted > 0 || sessionsDeleted > 0 || webhooksDeleted > 0 || surveysDeleted > 0 || identityNoncesDeleted > 0 || auditDeleted > 0 {
+			logger.Info("retention sweep", "events_deleted", eventsDeleted, "sessions_deleted", sessionsDeleted, "webhooks_deleted", webhooksDeleted, "surveys_deleted", surveysDeleted, "identity_nonces_deleted", identityNoncesDeleted, "audit_deleted", auditDeleted)
 		}
 
 		if _, err := jobClient.Enqueue(ctx, jobs.Spec{
