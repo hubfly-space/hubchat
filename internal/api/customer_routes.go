@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/hubchat/hubchat/internal/audit"
 	"github.com/hubchat/hubchat/internal/authorization"
@@ -48,6 +49,8 @@ func registerCustomerRoutes(mux *http.ServeMux, deps Deps) {
 		requireCapability(deps, authorization.CustomerRead, handleCustomerSessions(deps)))
 	mux.HandleFunc("GET /v1/customers/{id}/360",
 		requireCapability(deps, authorization.CustomerRead, handleCustomer360(deps)))
+	mux.HandleFunc("GET /v1/visitors/{id}/context",
+		requireCapability(deps, authorization.CustomerRead, handleVisitorContext(deps)))
 	mux.HandleFunc("GET /v1/customers/{id}/export",
 		requireCapability(deps, authorization.CustomerReadSensitive, handleExportCustomer(deps)))
 
@@ -85,6 +88,21 @@ func handleCustomer360(deps Deps) http.HandlerFunc {
 				return
 			}
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load customer context.")
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, item)
+	}
+}
+
+func handleVisitorContext(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		item, err := deps.Customer.VisitorContext(r.Context(), actorFromRequest(r).WorkspaceID, r.PathValue("id"))
+		if err != nil {
+			if errors.Is(err, customer.ErrNotFound) {
+				httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Visitor not found.")
+				return
+			}
+			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load visitor context.")
 			return
 		}
 		httpserver.WriteJSON(w, http.StatusOK, item)
@@ -207,7 +225,19 @@ func loadCustomerJSON(r *http.Request, deps Deps, workspaceID string, c customer
 		companyIDs = []string{}
 	}
 	sensitiveKeys := sensitiveAttributeKeys(r, deps, workspaceID)
-	return customerJSON(c, tagIDs, companyIDs, sensitiveKeys, actor.Can(authorization.CustomerReadSensitive))
+	result := customerJSON(c, tagIDs, companyIDs, sensitiveKeys, actor.Can(authorization.CustomerReadSensitive))
+	// Contact sessions are the authoritative live-context source. Keep this
+	// compact profile response useful to the inbox without exposing event
+	// payloads or requiring every panel to fetch a second endpoint.
+	if sessions, sessionErr := deps.Customer.Sessions(r.Context(), workspaceID, c.ID, 1); sessionErr == nil && len(sessions) > 0 {
+		session := sessions[0]
+		result["current_url"] = session.CurrentURL
+		result["presence"] = "offline"
+		if time.Since(session.LastSeenAt) <= 2*time.Minute && session.EndedAt == nil {
+			result["presence"] = "online"
+		}
+	}
+	return result
 }
 
 func sensitiveAttributeKeys(r *http.Request, deps Deps, workspaceID string) map[string]bool {
@@ -577,7 +607,9 @@ func contactSessionJSON(s customer.ContactSession) map[string]any {
 		"id": s.ID, "customer_id": s.CustomerID, "visitor_id": s.VisitorID,
 		"started_at": s.StartedAt, "last_seen_at": s.LastSeenAt, "ended_at": s.EndedAt,
 		"ip_country": s.IPCountry, "browser": s.Browser, "os": s.OS, "device": device,
-		"referrer": s.Referrer, "current_url": s.CurrentURL, "page_views": s.PageViews,
+		"referrer": s.Referrer, "current_url": s.CurrentURL, "current_title": s.CurrentTitle,
+		"language": s.Language, "timezone": s.Timezone, "platform": s.Platform, "user_agent": s.UserAgent,
+		"viewport": s.Viewport, "page_views": s.PageViews,
 	}
 }
 

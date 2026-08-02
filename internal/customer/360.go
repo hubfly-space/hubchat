@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Customer360 is the bounded cross-module snapshot shown on the customer
@@ -20,6 +24,10 @@ type Customer360 struct {
 	TicketsTruncated       bool                    `json:"tickets_truncated"`
 	Events                 []EventReference        `json:"events"`
 	EventsTruncated        bool                    `json:"events_truncated"`
+	PageJourney            []PageVisitReference    `json:"page_journey"`
+	PageJourneyTruncated   bool                    `json:"page_journey_truncated"`
+	CurrentPage            *PageVisitReference     `json:"current_page,omitempty"`
+	Device                 *DeviceReference        `json:"device,omitempty"`
 	Sessions               []SessionReference      `json:"sessions"`
 	SessionsTruncated      bool                    `json:"sessions_truncated"`
 	Feedback               []FeedbackReference     `json:"feedback"`
@@ -32,6 +40,7 @@ type Customer360 struct {
 	IdentitiesTruncated    bool                    `json:"identities_truncated"`
 	Merges                 []MergeReference        `json:"merges"`
 	MergesTruncated        bool                    `json:"merges_truncated"`
+	ContextMetadata        map[string]any          `json:"context_metadata,omitempty"`
 }
 
 type CompanyReference struct {
@@ -76,16 +85,56 @@ type EventReference struct {
 	OccurredAt time.Time `json:"occurred_at"`
 }
 
+type PageVisitReference struct {
+	ID             string             `json:"id"`
+	URL            *string            `json:"url,omitempty"`
+	Title          string             `json:"title,omitempty"`
+	Device         string             `json:"device,omitempty"`
+	Browser        string             `json:"browser,omitempty"`
+	OS             string             `json:"os,omitempty"`
+	Platform       string             `json:"platform,omitempty"`
+	ReferrerOrigin string             `json:"referrer_origin,omitempty"`
+	UserAgent      string             `json:"user_agent,omitempty"`
+	Viewport       *ViewportReference `json:"viewport,omitempty"`
+	OccurredAt     time.Time          `json:"occurred_at"`
+}
+
+type DeviceReference struct {
+	Device         string             `json:"device,omitempty"`
+	Browser        string             `json:"browser,omitempty"`
+	OS             string             `json:"os,omitempty"`
+	Language       string             `json:"language,omitempty"`
+	Timezone       string             `json:"timezone,omitempty"`
+	Platform       string             `json:"platform,omitempty"`
+	ReferrerOrigin string             `json:"referrer_origin,omitempty"`
+	UserAgent      string             `json:"user_agent,omitempty"`
+	Viewport       *ViewportReference `json:"viewport,omitempty"`
+}
+
+type ViewportReference struct {
+	Width            int     `json:"width,omitempty"`
+	Height           int     `json:"height,omitempty"`
+	DevicePixelRatio float64 `json:"device_pixel_ratio,omitempty"`
+}
+
 type SessionReference struct {
-	ID         string     `json:"id"`
-	Device     *string    `json:"device,omitempty"`
-	Browser    *string    `json:"browser,omitempty"`
-	OS         *string    `json:"os,omitempty"`
-	CurrentURL *string    `json:"current_url,omitempty"`
-	PageViews  int        `json:"page_views"`
-	StartedAt  time.Time  `json:"started_at"`
-	LastSeenAt time.Time  `json:"last_seen_at"`
-	EndedAt    *time.Time `json:"ended_at,omitempty"`
+	ID           string             `json:"id"`
+	Device       *string            `json:"device,omitempty"`
+	Browser      *string            `json:"browser,omitempty"`
+	OS           *string            `json:"os,omitempty"`
+	Referrer     *string            `json:"referrer,omitempty"`
+	LandingURL   *string            `json:"landing_url,omitempty"`
+	CurrentURL   *string            `json:"current_url,omitempty"`
+	CurrentTitle *string            `json:"current_title,omitempty"`
+	Language     *string            `json:"language,omitempty"`
+	Timezone     *string            `json:"timezone,omitempty"`
+	Platform     *string            `json:"platform,omitempty"`
+	UserAgent    *string            `json:"user_agent,omitempty"`
+	Viewport     *ViewportReference `json:"viewport,omitempty"`
+	PageViews    int                `json:"page_views"`
+	StartedAt    time.Time          `json:"started_at"`
+	LastSeenAt   time.Time          `json:"last_seen_at"`
+	EndedAt      *time.Time         `json:"ended_at,omitempty"`
 }
 
 type FeedbackReference struct {
@@ -267,8 +316,50 @@ func (s *Service) Customer360(ctx context.Context, workspaceID, customerID strin
 		result.EventsTruncated = true
 	}
 
+	pageRows, err := s.pool.Query(ctx, `
+		SELECT id, payload, occurred_at
+		FROM customer_events
+		WHERE workspace_id=$1 AND customer_id=$2 AND type='page.viewed'
+		ORDER BY occurred_at DESC, id DESC
+		LIMIT $3
+	`, workspaceID, customerID, 11)
+	if err != nil {
+		return nil, fmt.Errorf("customer: load 360 page journey: %w", err)
+	}
+	for pageRows.Next() {
+		var payload map[string]any
+		var id string
+		var occurredAt time.Time
+		if err := pageRows.Scan(&id, &payload, &occurredAt); err != nil {
+			pageRows.Close()
+			return nil, fmt.Errorf("customer: scan 360 page journey: %w", err)
+		}
+		item := pageVisitFromPayload(id, payload, occurredAt)
+		result.PageJourney = append(result.PageJourney, item)
+		if result.Device == nil {
+			result.Device = &DeviceReference{}
+		}
+		mergeDeviceFromPayload(result.Device, payload, item)
+	}
+	if err := pageRows.Err(); err != nil {
+		pageRows.Close()
+		return nil, fmt.Errorf("customer: read 360 page journey: %w", err)
+	}
+	pageRows.Close()
+	if len(result.PageJourney) > 10 {
+		result.PageJourney = result.PageJourney[:10]
+		result.PageJourneyTruncated = true
+	}
+	if len(result.PageJourney) > 0 {
+		result.CurrentPage = &result.PageJourney[0]
+	}
+	result.ContextMetadata, err = s.latestCustomerContextMetadata(ctx, workspaceID, customerID)
+	if err != nil {
+		return nil, fmt.Errorf("customer: load 360 context metadata: %w", err)
+	}
+
 	sessionRows, err := s.pool.Query(ctx, `
-		SELECT id, device, browser, os, current_url, page_views, started_at, last_seen_at, ended_at
+		SELECT id, device, browser, os, referrer, landing_url, current_url, current_title, language, timezone, platform, user_agent, viewport, page_views, started_at, last_seen_at, ended_at
 		FROM contact_sessions
 		WHERE workspace_id=$1 AND customer_id=$2
 		ORDER BY last_seen_at DESC, id DESC
@@ -279,7 +370,7 @@ func (s *Service) Customer360(ctx context.Context, workspaceID, customerID strin
 	}
 	for sessionRows.Next() {
 		var item SessionReference
-		if err := sessionRows.Scan(&item.ID, &item.Device, &item.Browser, &item.OS, &item.CurrentURL, &item.PageViews, &item.StartedAt, &item.LastSeenAt, &item.EndedAt); err != nil {
+		if err := sessionRows.Scan(&item.ID, &item.Device, &item.Browser, &item.OS, &item.Referrer, &item.LandingURL, &item.CurrentURL, &item.CurrentTitle, &item.Language, &item.Timezone, &item.Platform, &item.UserAgent, &item.Viewport, &item.PageViews, &item.StartedAt, &item.LastSeenAt, &item.EndedAt); err != nil {
 			sessionRows.Close()
 			return nil, fmt.Errorf("customer: scan 360 session: %w", err)
 		}
@@ -293,6 +384,37 @@ func (s *Service) Customer360(ctx context.Context, workspaceID, customerID strin
 	if len(result.Sessions) > customer360PageSize {
 		result.Sessions = result.Sessions[:customer360PageSize]
 		result.SessionsTruncated = true
+	}
+	// A session is also a source of live context. A customer can reach the
+	// inbox through an identify call, a form, or another SDK event before the
+	// first page.viewed event is committed. Keep the right-hand context panel
+	// useful in that case, and prefer the session URL when it is newer than the
+	// bounded page-event snapshot.
+	if len(result.Sessions) > 0 {
+		latest := &result.Sessions[0]
+		if result.Device == nil {
+			result.Device = deviceFromSession(latest)
+		} else {
+			sessionDevice := deviceFromSession(latest)
+			if sessionDevice != nil {
+				mergeDeviceFromSession(result.Device, latest)
+			}
+		}
+		if latest.CurrentURL != nil && (result.CurrentPage == nil || latest.LastSeenAt.After(result.CurrentPage.OccurredAt)) {
+			result.CurrentPage = &PageVisitReference{
+				ID:             latest.ID,
+				URL:            latest.CurrentURL,
+				Title:          stringPtrValue(latest.CurrentTitle),
+				Device:         stringPtrValue(latest.Device),
+				Browser:        stringPtrValue(latest.Browser),
+				OS:             stringPtrValue(latest.OS),
+				ReferrerOrigin: stringPtrValue(latest.Referrer),
+				Platform:       stringPtrValue(latest.Platform),
+				UserAgent:      stringPtrValue(latest.UserAgent),
+				Viewport:       latest.Viewport,
+				OccurredAt:     latest.LastSeenAt,
+			}
+		}
 	}
 
 	feedbackRows, err := s.pool.Query(ctx, `
@@ -456,4 +578,65 @@ func (s *Service) Customer360(ctx context.Context, workspaceID, customerID strin
 	}
 
 	return result, nil
+}
+
+func (s *Service) latestCustomerContextMetadata(ctx context.Context, workspaceID, customerID string) (map[string]any, error) {
+	var payload map[string]any
+	err := s.pool.QueryRow(ctx, `
+		SELECT payload
+		FROM customer_events
+		WHERE workspace_id=$1 AND customer_id=$2 AND type='context.updated'
+		ORDER BY occurred_at DESC, id DESC
+		LIMIT 1
+	`, workspaceID, customerID).Scan(&payload)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return sanitizeContextMetadata(payload), nil
+}
+
+func payloadString(payload map[string]any, key string) (string, bool) {
+	value, ok := payload[key].(string)
+	return value, ok && value != ""
+}
+
+func pageURLFromPayload(payload map[string]any) *string {
+	if page, ok := payload["page"].(map[string]any); ok {
+		if origin, ok := payloadString(page, "origin"); ok {
+			path, _ := payloadString(page, "path")
+			value := origin + path
+			return NormalizeObservedURL(&value)
+		}
+	}
+	if value, ok := payloadString(payload, "page_url"); ok {
+		return NormalizeObservedURL(&value)
+	}
+	return nil
+}
+
+// NormalizeObservedURL keeps customer journey URLs useful while preventing
+// query strings and fragments from becoming a second telemetry channel for
+// credentials, email addresses, or other page-local state. It is shared by
+// widget ingestion and the 360 projection so both sources display identically.
+func NormalizeObservedURL(raw *string) *string {
+	if raw == nil {
+		return nil
+	}
+	parsed, err := url.Parse(strings.TrimSpace(*raw))
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return nil
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	parsed.ForceQuery = false
+	parsed.RawPath = ""
+	if parsed.Path == "" {
+		parsed.Path = "/"
+	}
+	value := parsed.String()
+	return &value
 }

@@ -64,6 +64,14 @@ func registerWidgetRoutes(mux *http.ServeMux, deps Deps) {
 
 	mux.HandleFunc("GET /v1/widgets/{id}/identity-secret",
 		requireCapability(deps, authorization.WidgetManage, handleWidgetIdentitySecret(deps)))
+	mux.HandleFunc("GET /v1/customer-command-bindings",
+		requireCapability(deps, authorization.IntegrationManage, handleListCommandBindings(deps)))
+	mux.HandleFunc("POST /v1/customer-command-bindings",
+		requireCapability(deps, authorization.IntegrationManage, Idempotency(deps)(handleCreateCommandBinding(deps))))
+	mux.HandleFunc("PATCH /v1/customer-command-bindings/{id}",
+		requireCapability(deps, authorization.IntegrationManage, Idempotency(deps)(handleUpdateCommandBinding(deps))))
+	mux.HandleFunc("POST /v1/conversations/{id}/customer-commands",
+		requireCapability(deps, authorization.ConversationReply, Idempotency(deps)(handleInvokeCustomerCommand(deps))))
 
 	// -------------------------------------------------------- public surface
 	mux.HandleFunc("GET /v1/widget/config", withPublicCORS(handleWidgetConfig(deps)))
@@ -77,6 +85,8 @@ func registerWidgetRoutes(mux *http.ServeMux, deps Deps) {
 
 	mux.HandleFunc("POST /v1/widget/events", withPublicCORS(widgetIdempotent(handleWidgetTrack(deps))))
 	mux.HandleFunc("OPTIONS /v1/widget/events", corsPreflight)
+	mux.HandleFunc("POST /v1/widget/conversations/{id}/commands/{commandID}/ack", withPublicCORS(widgetIdempotent(handleWidgetCommandAck(deps))))
+	mux.HandleFunc("OPTIONS /v1/widget/conversations/{id}/commands/{commandID}/ack", corsPreflight)
 	mux.HandleFunc("GET /v1/widget/forms", withPublicCORS(handleWidgetListForms(deps)))
 	mux.HandleFunc("OPTIONS /v1/widget/forms", corsPreflight)
 	mux.HandleFunc("GET /v1/widget/forms/{slug}", withPublicCORS(handleWidgetGetForm(deps)))
@@ -108,6 +118,8 @@ func registerWidgetRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/widget/conversations/{id}/messages", withPublicCORS(handleWidgetListMessages(deps)))
 	mux.HandleFunc("POST /v1/widget/conversations/{id}/messages", withPublicCORS(widgetIdempotent(handleWidgetPostMessage(deps))))
 	mux.HandleFunc("OPTIONS /v1/widget/conversations/{id}/messages", corsPreflight)
+	mux.HandleFunc("GET /v1/widget/conversations/{id}/commands", withPublicCORS(handleWidgetPendingCommands(deps)))
+	mux.HandleFunc("OPTIONS /v1/widget/conversations/{id}/commands", corsPreflight)
 	mux.HandleFunc("POST /v1/widget/conversations/{id}/files", withPublicCORS(widgetIdempotent(handleWidgetFileUpload(deps))))
 	mux.HandleFunc("OPTIONS /v1/widget/conversations/{id}/files", corsPreflight)
 	mux.HandleFunc("GET /v1/widget/conversations/{id}/files/{fileID}", withPublicCORS(handleWidgetFileDownload(deps)))
@@ -1275,6 +1287,34 @@ func handleWidgetListMessages(deps Deps) http.HandlerFunc {
 	}
 }
 
+func handleWidgetPendingCommands(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		req := widgetVisitorRequest{PublicKey: query.Get("key"), URL: query.Get("url"), Token: query.Get("token")}
+		workspaceID, visitor, err := resolveVisitorRequest(r, deps, req)
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		limit, cursor, pageErr := PageParams(r)
+		if pageErr != nil || (!cursor.IsZero() && (cursor.At.IsZero() || cursor.ID == "" || cursor.Value != "")) {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed command cursor.")
+			return
+		}
+		page, err := deps.Widget.PendingCommandsPage(r.Context(), workspaceID, r.PathValue("id"), visitor, cursor.At, cursor.ID, limit)
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		var nextCursor *string
+		if page.HasMore && len(page.Items) > 0 {
+			encoded := (Cursor{At: page.Items[len(page.Items)-1].CreatedAt, ID: page.Items[len(page.Items)-1].ID}).Encode()
+			nextCursor = &encoded
+		}
+		httpserver.WriteJSON(w, http.StatusOK, Page[widget.PendingCommand]{Data: page.Items, NextCursor: nextCursor, HasMore: page.HasMore})
+	}
+}
+
 func writeWidgetError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, widget.ErrNotFound), errors.Is(err, conversation.ErrNotFound):
@@ -1301,7 +1341,149 @@ func writeWidgetError(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, widget.ErrWildcardDomain), errors.Is(err, widget.ErrNoInbox),
 		errors.Is(err, conversation.ErrEmptyBody):
 		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, err.Error())
+	case errors.Is(err, widget.ErrCommandBindingInvalid), errors.Is(err, widget.ErrCommandPayloadTooLarge):
+		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, err.Error())
+	case errors.Is(err, widget.ErrCommandBindingDisabled):
+		httpserver.WriteError(w, r, http.StatusConflict, httpserver.CodeConflict, err.Error())
 	default:
 		httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Something went wrong.")
+	}
+}
+
+type commandBindingRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type commandBindingUpdateRequest struct {
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+	Enabled     *bool   `json:"enabled"`
+}
+
+func handleUpdateCommandBinding(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req commandBindingUpdateRequest
+		if err := httpserver.DecodeJSON(r, &req); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed command binding.")
+			return
+		}
+		actor := actorFromRequest(r)
+		current, err := deps.Widget.ListCommandBindings(r.Context(), actor.WorkspaceID)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load command binding.")
+			return
+		}
+		var existing *widget.CommandBinding
+		for i := range current {
+			if current[i].ID == r.PathValue("id") {
+				existing = &current[i]
+				break
+			}
+		}
+		if existing == nil {
+			writeWidgetError(w, r, widget.ErrNotFound)
+			return
+		}
+		enabled := existing.Enabled
+		if req.Enabled != nil {
+			enabled = *req.Enabled
+		}
+		name := existing.Name
+		if req.Name != nil {
+			name = *req.Name
+		}
+		description := existing.Description
+		if req.Description != nil {
+			description = *req.Description
+		}
+		item, err := deps.Widget.UpdateCommandBinding(r.Context(), actor.WorkspaceID, actor.MemberID, r.PathValue("id"), name, description, enabled)
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, item)
+	}
+}
+
+func handleListCommandBindings(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		limit, cursor, err := PageParams(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed command binding cursor.")
+			return
+		}
+		items, err := deps.Widget.ListCommandBindingsPage(r.Context(), actorFromRequest(r).WorkspaceID, cursor.At, cursor.ID, limit+1)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not load command bindings.")
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, NewPage(items, limit, func(item widget.CommandBinding) Cursor {
+			return Cursor{At: item.CreatedAt, ID: item.ID}
+		}))
+	}
+}
+
+func handleCreateCommandBinding(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req commandBindingRequest
+		if err := httpserver.DecodeJSON(r, &req); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed command binding.")
+			return
+		}
+		actor := actorFromRequest(r)
+		item, err := deps.Widget.CreateCommandBinding(r.Context(), actor.WorkspaceID, actor.MemberID, req.Name, req.Description)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, err.Error())
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, item)
+	}
+}
+
+type invokeCommandRequest struct {
+	BindingID string         `json:"binding_id"`
+	Payload   map[string]any `json:"payload"`
+}
+
+func handleInvokeCustomerCommand(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req invokeCommandRequest
+		if err := httpserver.DecodeJSON(r, &req); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed command invocation.")
+			return
+		}
+		actor := actorFromRequest(r)
+		item, err := deps.Widget.InvokeCommand(r.Context(), actor.WorkspaceID, actor.MemberID, r.PathValue("id"), req.BindingID, req.Payload)
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusAccepted, item)
+	}
+}
+
+type widgetCommandAckRequest struct {
+	widgetVisitorRequest
+	Status string `json:"status"`
+}
+
+func handleWidgetCommandAck(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req widgetCommandAckRequest
+		if err := httpserver.DecodeJSON(r, &req); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed command acknowledgement.")
+			return
+		}
+		workspaceID, visitor, err := resolveVisitorRequest(r, deps, req.widgetVisitorRequest)
+		if err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		if err := deps.Widget.AcknowledgeCommand(r.Context(), workspaceID, r.PathValue("id"), visitor, r.PathValue("commandID"), req.Status); err != nil {
+			writeWidgetError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
