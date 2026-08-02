@@ -19,10 +19,12 @@ import {
   idempotencyKey,
   useMutation,
   useQuery,
+  formatDateTime,
   type Paginated,
 } from "@hubchat/shared";
 import { ShieldCheck } from "lucide-react";
 import { useState } from "react";
+import { useWorkspace, workspaceFormatOptions } from "../../app/workspace-context";
 
 const RETENTION_CATEGORIES = [
   { key: "conversations", label: "Conversations and messages", detail: "Including attachments referenced by them." },
@@ -86,6 +88,8 @@ const HOLD_CATEGORY_LABEL: Record<LegalHold["category"], string> = {
 };
 
 function LegalHolds() {
+  const { workspace } = useWorkspace();
+  const dateFormat = workspaceFormatOptions(workspace);
   const [showHistory, setShowHistory] = useState(false);
   const holds = useQuery<Paginated<LegalHold>>(["workspace-legal-holds", showHistory], (signal) =>
     api.get<Paginated<LegalHold>>(`/workspace/legal-holds?limit=50${showHistory ? "&include_released=true" : ""}`, { signal }),
@@ -170,7 +174,7 @@ function LegalHolds() {
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-fg">{HOLD_CATEGORY_LABEL[hold.category]}</p>
                         <p className="mt-1 text-sm text-fg-secondary">{hold.reason}</p>
-                        <p className="mt-1 text-xs text-fg-muted">Placed {new Date(hold.created_at).toLocaleString()}{hold.released_at ? ` · Released ${new Date(hold.released_at).toLocaleString()}` : ""}</p>
+                        <p className="mt-1 text-xs text-fg-muted">Placed {formatDateTime(hold.created_at, dateFormat)}{hold.released_at ? ` · Released ${formatDateTime(hold.released_at, dateFormat)}` : ""}</p>
                       </div>
                       {hold.released_at ? <span className="text-xs text-fg-muted">Released</span> : <Button variant="secondary" size="sm" onClick={() => setReleasing(hold)}>Release hold</Button>}
                     </div>

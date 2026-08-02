@@ -13,9 +13,11 @@ import {
   Section,
   UsageMeter,
   api,
+  formatDateTime,
   useQuery,
 } from "@hubchat/shared";
 import { BarChart3, Info } from "lucide-react";
+import { useWorkspace, workspaceFormatOptions } from "../../app/workspace-context";
 
 type UsageMetric = {
   key: string;
@@ -49,6 +51,8 @@ function Metric({ metric }: { metric: UsageMetric }) {
 
 /** Live usage and deployment ceilings (§23). */
 export default function Limits() {
+  const { workspace } = useWorkspace();
+  const dateFormat = workspaceFormatOptions(workspace);
   const query = useQuery<UsageSnapshot>(["workspace-usage"], (signal) => api.get("/workspace/usage", { signal }));
   const metrics = new Map((query.data?.metrics ?? []).map((metric) => [metric.key, metric]));
 
@@ -64,7 +68,7 @@ export default function Limits() {
           <>
             {GROUPS.map((group) => <Section key={group.title} title={group.title}><Card><CardBody className="space-y-4">{group.keys.map((key) => { const metric = metrics.get(key); return metric ? <Metric key={key} metric={metric} /> : <p key={key} className="text-sm text-fg-muted">{key.replaceAll("_", " ")} is not available.</p>; })}</CardBody></Card></Section>)}
 
-            <Section title="Storage"><Card><CardBody>{metrics.get("storage_bytes") ? <Metric metric={metrics.get("storage_bytes")!} /> : <p className="text-sm text-fg-muted">Storage usage is not available.</p>}<p className="mt-3 text-xs text-fg-muted">Computed {query.data?.computed_at ? new Date(query.data.computed_at).toLocaleString() : "—"}.</p></CardBody></Card></Section>
+            <Section title="Storage"><Card><CardBody>{metrics.get("storage_bytes") ? <Metric metric={metrics.get("storage_bytes")!} /> : <p className="text-sm text-fg-muted">Storage usage is not available.</p>}<p className="mt-3 text-xs text-fg-muted">Computed {query.data?.computed_at ? formatDateTime(query.data.computed_at, dateFormat) : "—"}.</p></CardBody></Card></Section>
 
             <Section title="Per-request ceilings"><Card><CardHeader title="Configured hard limits" description="These values come from the running deployment configuration. Requests exceeding them are rejected rather than silently truncated." /><CardBody><dl className="space-y-2 text-xs">{(query.data?.request_limits ?? []).map((limit) => <div key={limit.key} className="flex items-baseline justify-between gap-3"><dt className="text-fg-muted">{limit.label}</dt><dd className="shrink-0 tabular text-fg-secondary">{displayLimit(limit)}{limit.unit === "count" ? "" : ""}</dd></div>)}</dl></CardBody></Card></Section>
 

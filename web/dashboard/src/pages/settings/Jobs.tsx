@@ -23,6 +23,7 @@ import {
   useMutation,
   useInfinite,
   useQuery,
+  formatDateTime,
   type BadgeTone,
   type Column,
   type Job,
@@ -30,6 +31,7 @@ import {
 } from "@hubchat/shared";
 import { Activity, Ban, CheckCircle2, Mail, RotateCcw, Webhook } from "lucide-react";
 import { useState } from "react";
+import { useWorkspace, workspaceFormatOptions } from "../../app/workspace-context";
 
 const STATE: Record<Job["state"], { label: string; tone: BadgeTone }> = {
   pending: { label: "Queued", tone: "neutral" },
@@ -59,6 +61,8 @@ type OpsSummary = {
 
 /** Background job inspection (§8.7). */
 export default function Jobs() {
+  const { workspace } = useWorkspace();
+  const dateFormat = workspaceFormatOptions(workspace);
   const [filter, setFilter] = useState<"all" | Job["state"]>("all");
   const jobs = useInfinite<Job>(
     ["jobs", filter],
@@ -167,7 +171,7 @@ export default function Jobs() {
           </Callout>
         )}
 
-        {ops.data && <Section title="Operational health" description={"Workspace services as of " + new Date(ops.data.computed_at).toLocaleString() + ". Counts are scoped to this workspace."} actions={<Button variant="secondary" size="sm" leading={<Mail />} loading={testEmail.isPending} onClick={() => void testEmail.mutate(undefined).catch(() => {})}>Send test email</Button>}>
+        {ops.data && <Section title="Operational health" description={"Workspace services as of " + formatDateTime(ops.data.computed_at, dateFormat) + ". Counts are scoped to this workspace."} actions={<Button variant="secondary" size="sm" leading={<Mail />} loading={testEmail.isPending} onClick={() => void testEmail.mutate(undefined).catch(() => {})}>Send test email</Button>}>
           <Card>
             <CardBody className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
               <Metric label="Realtime connections" value={ops.data.realtime.connections} definition="Currently connected dashboard, portal, and widget sessions on this process." />

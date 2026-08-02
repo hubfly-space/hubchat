@@ -20,10 +20,12 @@ import {
   useMutation,
   useQuery,
   type Paginated,
+  formatDateTime,
+  sha256Hex,
 } from "@hubchat/shared";
 import { Download, FileArchive, RefreshCw, Upload } from "lucide-react";
 import { useRef, useState } from "react";
-import { useWorkspace } from "../../app/workspace-context";
+import { useWorkspace, workspaceFormatOptions } from "../../app/workspace-context";
 
 type ExportRequest = {
   id: string;
@@ -95,11 +97,6 @@ function statusLabel(state: string): string {
   return state.replaceAll("_", " ").replace(/^./, (character) => character.toUpperCase());
 }
 
-function displayDate(value?: string): string {
-  if (!value) return "—";
-  return new Date(value).toLocaleString();
-}
-
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof ApiError ? error.message : fallback;
 }
@@ -110,6 +107,8 @@ export default function ImportExport() {
   const [exportKind, setExportKind] = useState<ExportKind>("workspace");
   const [importKind, setImportKind] = useState<"workspace" | "customers_csv" | "companies_csv" | "tickets_csv" | "feedback_csv" | "knowledgebase_markdown">("workspace");
   const [downloadError, setDownloadError] = useState("");
+  const [downloadVerified, setDownloadVerified] = useState("");
+  const [downloadingID, setDownloadingID] = useState<string | null>(null);
   const [exportPreview, setExportPreview] = useState<ExportPreview | null>(null);
   const [previewRows, setPreviewRows] = useState<PreviewSummary[] | null>(null);
   const [previewID, setPreviewID] = useState<string | null>(null);
@@ -118,6 +117,8 @@ export default function ImportExport() {
   const fileInput = useRef<HTMLInputElement>(null);
   const { workspace } = useWorkspace();
   const workspaceId = workspace.id;
+  const dateFormat = workspaceFormatOptions(workspace);
+  const displayDate = (value?: string): string => (value ? formatDateTime(value, dateFormat) : "—");
 
   const exportsQuery = useInfinite<ExportRequest>(
     ["portability-exports", workspaceId],
@@ -164,19 +165,41 @@ export default function ImportExport() {
   };
   const downloadExport = async (request: ExportRequest) => {
     setDownloadError("");
+    setDownloadVerified("");
+    setDownloadingID(request.id);
     try {
       if (!request.file_id) throw new Error("The export file is no longer available.");
-      const response = await fetch(`/api/v1/files/${encodeURIComponent(request.file_id)}`, { headers: { "Hubchat-Workspace-Id": workspaceId } });
+      const manifest = await api.get<ExportManifest>(`/portability/exports/${encodeURIComponent(request.id)}/manifest`, { workspaceId, fresh: true });
+      if (manifest.file_id !== request.file_id) throw new Error("The export manifest does not match the file.");
+      if (!/^[a-f0-9]{64}$/i.test(manifest.checksum)) throw new Error("The export has no valid SHA-256 checksum.");
+
+      const response = await fetch(`/api/v1/files/${encodeURIComponent(request.file_id)}`, {
+        credentials: "include",
+        headers: { "Hubchat-Workspace-Id": workspaceId },
+      });
       if (!response.ok) throw new Error("The export download failed.");
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
+      const bytes = await response.arrayBuffer();
+      if (bytes.byteLength !== manifest.size_bytes) {
+        throw new Error(`The export failed its size check (${bytes.byteLength} of ${manifest.size_bytes} bytes).`);
+      }
+      const actualChecksum = await sha256Hex(bytes);
+      if (actualChecksum.toLowerCase() !== manifest.checksum.toLowerCase()) {
+        throw new Error("The export failed its SHA-256 checksum check; the file was not downloaded.");
+      }
+
+      const url = URL.createObjectURL(new Blob([bytes], { type: response.headers.get("Content-Type") ?? "application/octet-stream" }));
       const anchor = document.createElement("a");
       anchor.href = url;
       anchor.download = `hubchat-${workspaceId}-${request.kind === "workspace" ? "workspace.json.gz" : `${request.kind}.csv`}`;
+      document.body.appendChild(anchor);
       anchor.click();
+      anchor.remove();
       URL.revokeObjectURL(url);
+      setDownloadVerified(`Integrity verified: SHA-256 ${actualChecksum.slice(0, 12)}…`);
     } catch (error) {
       setDownloadError(error instanceof Error ? error.message : "The archive download failed.");
+    } finally {
+      setDownloadingID(null);
     }
   };
   const preview = useMutation<string, { data: Array<{ name: string; rows: number }> }>(
@@ -232,11 +255,12 @@ export default function ImportExport() {
             <Section title="Export history">
               <Card>
                 <CardBody className="p-0">
-                  {exportRows.length === 0 && !exportsQuery.isLoading ? <p className="px-4 py-6 text-sm text-fg-muted">Completed exports will appear here.</p> : <ul className="divide-y divide-line-subtle">{exportRows.map((item) => <li key={item.id} className="flex items-center gap-3 px-4 py-3"><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate font-mono text-xs text-fg">{item.id}</span><Badge tone={statusTone(item.state)}>{statusLabel(item.state)}</Badge></div><p className="mt-1 text-xs text-fg-muted">{exportKindLabel((item.kind || "workspace") as ExportKind)} · {item.row_count === undefined ? "Rows pending" : `${item.row_count.toLocaleString()} rows`} · created {displayDate(item.created_at)}{item.expires_at ? ` · expires ${displayDate(item.expires_at)}` : ""}</p>{item.error && <p className="mt-1 text-xs text-danger">{item.error}</p>}</div>{item.file_id && item.state === "completed" && <div className="flex shrink-0 gap-1"><Button variant="ghost" size="sm" onClick={() => setManifestID(item.id)}>Manifest</Button><Button variant="ghost" size="sm" onClick={() => void downloadExport(item)}>Download</Button></div>}</li>)}</ul>}
+                  {exportRows.length === 0 && !exportsQuery.isLoading ? <p className="px-4 py-6 text-sm text-fg-muted">Completed exports will appear here.</p> : <ul className="divide-y divide-line-subtle">{exportRows.map((item) => <li key={item.id} className="flex items-center gap-3 px-4 py-3"><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate font-mono text-xs text-fg">{item.id}</span><Badge tone={statusTone(item.state)}>{statusLabel(item.state)}</Badge></div><p className="mt-1 text-xs text-fg-muted">{exportKindLabel((item.kind || "workspace") as ExportKind)} · {item.row_count === undefined ? "Rows pending" : `${item.row_count.toLocaleString()} rows`} · created {displayDate(item.created_at)}{item.expires_at ? ` · expires ${displayDate(item.expires_at)}` : ""}</p>{item.error && <p className="mt-1 text-xs text-danger">{item.error}</p>}</div>{item.file_id && item.state === "completed" && <div className="flex shrink-0 gap-1"><Button variant="ghost" size="sm" onClick={() => setManifestID(item.id)}>Manifest</Button><Button variant="ghost" size="sm" loading={downloadingID === item.id} disabled={downloadingID !== null && downloadingID !== item.id} onClick={() => void downloadExport(item)}>Download</Button></div>}</li>)}</ul>}
                 </CardBody>
               </Card>
               <Pagination hasPrevious={false} hasNext={exportsQuery.hasMore} onPrevious={() => undefined} onNext={() => void exportsQuery.fetchNext()} summary={`${exportRows.length} export${exportRows.length === 1 ? "" : "s"} loaded`} />
               {downloadError && <p className="mt-2 text-sm text-danger">{downloadError}</p>}
+              {downloadVerified && <p className="mt-2 text-sm text-success-text">{downloadVerified}</p>}
               {manifestID && <Card className="mt-3"><CardBody>{manifestQuery.isLoading ? <p className="text-sm text-fg-muted">Loading export manifest…</p> : manifestQuery.error ? <div className="space-y-2"><p className="text-sm text-danger">Could not load the export manifest.</p><Button variant="secondary" size="sm" onClick={manifestQuery.refetch}>Retry</Button></div> : manifestQuery.data && <><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-medium text-fg">Export manifest</p><p className="mt-1 text-xs text-fg-muted">{manifestQuery.data.file_name} · {manifestQuery.data.size_bytes.toLocaleString()} bytes · expires {displayDate(manifestQuery.data.expires_at)}</p></div><Button variant="ghost" size="sm" onClick={() => setManifestID(null)}>Dismiss</Button></div><dl className="mt-3 grid gap-3 text-xs sm:grid-cols-3"><div><dt className="text-fg-muted">Rows</dt><dd className="mt-0.5 tabular text-fg">{manifestQuery.data.row_count.toLocaleString()}</dd></div><div><dt className="text-fg-muted">Attachments</dt><dd className="mt-0.5 tabular text-fg">{manifestQuery.data.attachment_count.toLocaleString()} · {manifestQuery.data.attachment_bytes.toLocaleString()} bytes</dd></div><div><dt className="text-fg-muted">SHA-256</dt><dd className="mt-0.5 break-all font-mono text-2xs text-fg-secondary">{manifestQuery.data.checksum || "Not recorded"}</dd></div></dl><div className="mt-3 max-h-48 overflow-auto rounded-md border border-line"><table className="w-full text-left text-xs"><thead className="border-b border-line bg-inset text-fg-muted"><tr><th className="px-3 py-2 font-medium">Table</th><th className="px-3 py-2 text-right font-medium">Rows</th></tr></thead><tbody className="divide-y divide-line-subtle">{manifestQuery.data.tables.filter((table) => table.rows > 0).map((table) => <tr key={table.name}><td className="px-3 py-2 font-mono text-fg-secondary">{table.name}</td><td className="px-3 py-2 text-right tabular text-fg-secondary">{table.rows.toLocaleString()}</td></tr>)}</tbody></table></div></>}</CardBody></Card>}
             </Section>
 
