@@ -6,6 +6,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/netip"
 	"path/filepath"
 	"strings"
 
@@ -75,6 +76,14 @@ func handleDownloadFile(deps Deps) http.HandlerFunc {
 		}
 		if !fileReadableByActor(actor, record) {
 			httpserver.WriteError(w, r, http.StatusForbidden, httpserver.CodeForbidden, "You do not have permission to download this file.")
+			return
+		}
+		ip, _ := netip.ParseAddr(clientIP(r))
+		if err := deps.File.RecordDownload(r.Context(), *record, actor.MemberID, httpserver.RequestIDFrom(r.Context()), ip); err != nil {
+			if deps.Logger != nil {
+				deps.Logger.Error("recording file download audit failed", "file_id", record.ID, "error", err)
+			}
+			httpserver.WriteError(w, r, http.StatusServiceUnavailable, httpserver.CodeUnavailable, "The file download is temporarily unavailable.")
 			return
 		}
 		defer opened.Close()

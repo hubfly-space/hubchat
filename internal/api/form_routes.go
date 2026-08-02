@@ -220,14 +220,19 @@ func formJSON(item form.Form, includeInternal bool) map[string]any {
 		})
 	}
 	result := map[string]any{
-		"id": item.ID, "workspace_id": item.WorkspaceID, "name": item.Name, "slug": item.Slug,
-		"description": item.Description, "purpose": item.Purpose, "routing": item.Routing,
+		"id": item.ID, "name": item.Name, "slug": item.Slug,
+		"description": item.Description, "purpose": item.Purpose,
 		"confirmation": item.Confirmation, "access": item.Access, "fields": fields,
-		"enabled": item.Enabled, "max_submissions": item.MaxSubmissions, "updated_at": item.UpdatedAt, "created_at": item.CreatedAt,
 	}
 	if includeInternal {
+		result["workspace_id"] = item.WorkspaceID
+		result["routing"] = item.Routing
 		result["spam_protection"] = item.SpamProtection
 		result["submission_count"] = item.SubmissionCount
+		result["enabled"] = item.Enabled
+		result["max_submissions"] = item.MaxSubmissions
+		result["updated_at"] = item.UpdatedAt
+		result["created_at"] = item.CreatedAt
 	}
 	return result
 }

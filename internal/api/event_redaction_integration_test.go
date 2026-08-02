@@ -21,9 +21,9 @@ func TestEventStreamRedactsPayloadForAgentsWithoutSensitiveCapability(t *testing
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspaces (id,name,slug) VALUES ('wrk_event_redact','Event Redact','event-redact');
 		INSERT INTO customers (id,workspace_id,name) VALUES ('cus_event_redact','wrk_event_redact','Ada');
-		INSERT INTO customer_events (id,workspace_id,customer_id,type,source,payload) VALUES
+		INSERT INTO customer_events (id,workspace_id,customer_id,type,source,request_id,payload) VALUES
 			('evt_event_redact','wrk_event_redact','cus_event_redact','checkout.started','js_sdk',
-			 '{"order_id":"ord_1","email":"ada@example.com","profile":{"phone_number":"+250780000000","plan":"pro"}}');
+			 'req_event_redact_1', '{"order_id":"ord_1","email":"ada@example.com","profile":{"phone_number":"+250780000000","plan":"pro"}}');
 	`); err != nil {
 		t.Fatal(err)
 	}
@@ -54,6 +54,9 @@ func TestEventStreamRedactsPayloadForAgentsWithoutSensitiveCapability(t *testing
 		Capabilities: map[authorization.Capability]bool{authorization.CustomerRead: true},
 	})
 	agentPayload := agentEvent["payload"].(map[string]any)
+	if agentEvent["request_id"] != "req_event_redact_1" {
+		t.Fatalf("request id = %#v", agentEvent["request_id"])
+	}
 	if agentPayload["email"] != "[REDACTED]" {
 		t.Fatalf("agent email = %#v", agentPayload["email"])
 	}
