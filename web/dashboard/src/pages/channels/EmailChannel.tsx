@@ -18,6 +18,7 @@ import {
   RadioGroup,
   Section,
   Select,
+  Textarea,
   SettingsRow,
   Tabs,
   TabsContent,
@@ -28,10 +29,11 @@ import {
   useInfinite,
   useQuery,
   type Paginated,
+  formatDateTime,
 } from "@hubchat/shared";
 import { AlertTriangle, CheckCircle2, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useWorkspace } from "../../app/workspace-context";
+import { useWorkspace, workspaceFormatOptions } from "../../app/workspace-context";
 
 type Mailbox = {
   id: string;
@@ -54,10 +56,13 @@ type CreatedMailbox = { mailbox: Mailbox; inbound_secret: string };
 type DeliveryEvent = { id: string; provider: string; type: string; recipient?: string | null; bounce_type?: string | null; reason?: string | null; hard: boolean; occurred_at: string };
 type Suppression = { address: string; reason: string; source: string; updated_at: string };
 type EmailStatus = { configured: boolean; host: string; port: number; from_address: string; encryption: string };
+type EmailTemplate = { key: string; label: string; description: string; subject: string; body: string; enabled: boolean; source: "default" | "workspace"; updated_at?: string | null };
+type EmailTemplatePage = { data: EmailTemplate[] };
 
 /** Email channel (§6.15). */
 export default function EmailChannel() {
-  const { inboxes } = useWorkspace();
+  const { inboxes, workspace } = useWorkspace();
+  const dateFormat = workspaceFormatOptions(workspace);
   const [tab, setTab] = useState("outbound");
   const [createOpen, setCreateOpen] = useState(false);
   const [newAddress, setNewAddress] = useState("");
@@ -67,6 +72,9 @@ export default function EmailChannel() {
   const [imapPort, setImapPort] = useState("993");
   const [imapUsername, setImapUsername] = useState("");
   const [imapPassword, setImapPassword] = useState("");
+  const [templateKey, setTemplateKey] = useState("");
+  const [templateDraft, setTemplateDraft] = useState({ subject: "", body: "", enabled: true });
+  const [templatePreview, setTemplatePreview] = useState<{ subject: string; body: string } | null>(null);
   const emailStatus = useQuery<EmailStatus>(["email-status"], (signal) => api.get("/email/status", { signal }));
   const mailboxes = useInfinite<Mailbox>(["email-mailboxes"], (cursor, signal) => api.get<Paginated<Mailbox>>(`/email/mailboxes?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }));
   const [activeID, setActiveID] = useState("");
@@ -85,6 +93,11 @@ export default function EmailChannel() {
     return api.get<Paginated<Suppression>>(`/email/suppressions?${params.toString()}`, { signal });
   });
   const removeSuppression = useMutation<string, void>((address) => api.delete(`/email/mailboxes/${encodeURIComponent(active?.id ?? "")}/suppressions/${encodeURIComponent(address)}`), { invalidates: [["email-suppressions"]] });
+  const templates = useQuery<EmailTemplatePage>(["email-templates"], (signal) => api.get("/email/templates", { signal }));
+  const selectedTemplate = templates.data?.data.find((item) => item.key === templateKey) ?? templates.data?.data[0];
+  const saveTemplate = useMutation<{ key: string; subject: string; body: string; enabled: boolean }, EmailTemplate>(({ key, ...input }) => api.put(`/email/templates/${encodeURIComponent(key)}`, input, { idempotencyKey: idempotencyKey() }), { invalidates: [["email-templates"]] });
+  const resetTemplate = useMutation<string, void>((key) => api.delete(`/email/templates/${encodeURIComponent(key)}`, { idempotencyKey: idempotencyKey() }), { invalidates: [["email-templates"]] });
+  const previewTemplate = useMutation<{ key: string; subject: string; body: string }, { subject: string; body: string }>(({ key, ...input }) => api.post(`/email/templates/${encodeURIComponent(key)}/preview`, input), { onSuccess: setTemplatePreview });
 
   useEffect(() => {
     if (active) {
@@ -96,6 +109,14 @@ export default function EmailChannel() {
       setImapPassword("");
     }
   }, [active]);
+
+  useEffect(() => {
+    if (selectedTemplate) {
+      setTemplateKey((current) => current || selectedTemplate.key);
+      setTemplateDraft({ subject: selectedTemplate.subject, body: selectedTemplate.body, enabled: selectedTemplate.enabled });
+      setTemplatePreview(null);
+    }
+  }, [selectedTemplate]);
 
   return (
     <Page>
@@ -278,7 +299,7 @@ export default function EmailChannel() {
                 </Card>
                 {active?.last_error && <Callout tone="danger" className="mt-3" title="Last IMAP poll failed">{active.last_error}</Callout>}
                 <p className="mt-2 text-2xs text-fg-muted">
-                  {active?.last_polled_at ? `Last checked ${new Date(active.last_polled_at).toLocaleString()}.` : "IMAP has not been checked yet."}
+                  {active?.last_polled_at ? `Last checked ${formatDateTime(active.last_polled_at, dateFormat)}.` : "IMAP has not been checked yet."}
                 </p>
               </Section>
             )}
@@ -315,27 +336,12 @@ export default function EmailChannel() {
           <TabsContent value="templates">
             <Section
               title="Notification templates"
-              description="Plain-text and HTML variants ship with the binary. Overrides are stored per workspace."
+              description="Plain-text customer messages ship with the binary. Overrides are stored per workspace."
             >
-              <Card>
-                <CardBody className="p-0">
-                  <ul className="divide-y divide-line-subtle">
-                    {[
-                      "Ticket created",
-                      "Agent replied",
-                      "Ticket resolved",
-                      "Survey request",
-                      "Portal magic link",
-                      "Transcript delivery",
-                    ].map((template) => (
-                      <li key={template} className="flex items-center gap-3 px-4 py-2.5">
-                        <span className="min-w-0 flex-1 text-sm text-fg">{template}</span>
-                        <Badge tone="neutral">Binary default</Badge>
-                      </li>
-                    ))}
-                  </ul>
-                </CardBody>
-              </Card>
+              {templates.isLoading ? <Callout tone="info">Loading live templates…</Callout> : templates.error ? <Callout tone="danger">Could not load email templates. <Button variant="ghost" size="xs" onClick={templates.refetch}>Retry</Button></Callout> : selectedTemplate ? <div className="grid gap-4 lg:grid-cols-[15rem_minmax(0,1fr)]">
+                <Card><CardBody className="p-2"><div className="space-y-1">{templates.data?.data.map((item) => <Button key={item.key} variant={item.key === selectedTemplate.key ? "secondary" : "ghost"} size="sm" className="w-full justify-start" onClick={() => setTemplateKey(item.key)}>{item.label}<span className="ml-auto text-2xs text-fg-muted">{item.source === "workspace" ? "Custom" : "Default"}</span></Button>)}</div></CardBody></Card>
+                <Card><CardHeader title={selectedTemplate.label} description={selectedTemplate.description} /><CardBody className="space-y-4 pt-0"><Callout tone="info">Plain text only. Variables use the form <code className="font-mono">{"{{.CustomerName}}"}</code>; unsupported variables are rejected before saving.</Callout><Field label="Subject"><Input value={templateDraft.subject} onChange={(event) => setTemplateDraft((current) => ({ ...current, subject: event.target.value }))} /></Field><Field label="Body"><Textarea rows={12} className="font-mono text-xs" value={templateDraft.body} onChange={(event) => setTemplateDraft((current) => ({ ...current, body: event.target.value }))} /></Field><div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-fg-muted">{selectedTemplate.source === "workspace" ? "Workspace override active" : "Using binary default"}</span><div className="flex gap-2"><Button variant="ghost" size="sm" loading={resetTemplate.isPending} onClick={() => void resetTemplate.mutate(selectedTemplate.key).then(() => setTemplatePreview(null)).catch(() => {})}>Reset</Button><Button variant="secondary" size="sm" loading={previewTemplate.isPending} onClick={() => void previewTemplate.mutate({ key: selectedTemplate.key, ...templateDraft }).catch(() => {})}>Preview</Button><Button variant="primary" size="sm" loading={saveTemplate.isPending} onClick={() => void saveTemplate.mutate({ key: selectedTemplate.key, ...templateDraft }).catch(() => {})}>Save template</Button></div></div>{Boolean(saveTemplate.error || previewTemplate.error || resetTemplate.error) && <p className="text-sm text-danger">Could not update this template. Check the subject, body, and variables.</p>}{templatePreview && <div className="rounded-md border border-line-subtle bg-canvas p-3"><p className="text-xs font-medium text-fg">Preview: {templatePreview.subject}</p><pre className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-fg-secondary">{templatePreview.body}</pre></div>}</CardBody></Card>
+              </div> : <Callout tone="info">No email templates are available.</Callout>}
             </Section>
           </TabsContent>
 
@@ -364,7 +370,7 @@ export default function EmailChannel() {
               <Card className="mt-3">
                 <CardHeader title="Delivery event history" description="Provider callbacks are retained for troubleshooting and replay-safe status updates." />
                 <CardBody className="p-0">
-                  {deliveryEvents.isLoading ? <p className="px-4 py-5 text-xs text-fg-muted">Loading delivery events…</p> : deliveryEvents.error ? <div className="flex items-center justify-between gap-3 px-4 py-5"><p className="text-xs text-danger">Could not load delivery events.</p><Button variant="ghost" size="xs" leading={<RefreshCw />} onClick={deliveryEvents.refetch}>Retry</Button></div> : deliveryEvents.items.length ? <><ul className="divide-y divide-line-subtle">{deliveryEvents.items.map((event) => <li key={event.id} className="flex items-start gap-3 px-4 py-2.5"><span className={`mt-1.5 size-2 shrink-0 rounded-full ${event.type === "bounced" ? "bg-danger" : event.type === "delivered" ? "bg-success-text" : "bg-warning-text"}`} /><div className="min-w-0 flex-1"><p className="text-xs text-fg">{event.type} {event.recipient ? `· ${event.recipient}` : ""}</p><p className="text-2xs text-fg-muted">{event.provider}{event.reason ? ` · ${event.reason}` : ""}</p></div><time className="shrink-0 text-2xs tabular text-fg-muted">{new Date(event.occurred_at).toLocaleString()}</time></li>)}</ul>{deliveryEvents.hasMore && <div className="flex justify-center border-t border-line-subtle p-3"><Button variant="secondary" size="xs" loading={deliveryEvents.isFetching} onClick={() => void deliveryEvents.fetchNext()}>Load older events</Button></div>}</> : <p className="px-4 py-5 text-xs text-fg-muted">No delivery events recorded.</p>}
+                  {deliveryEvents.isLoading ? <p className="px-4 py-5 text-xs text-fg-muted">Loading delivery events…</p> : deliveryEvents.error ? <div className="flex items-center justify-between gap-3 px-4 py-5"><p className="text-xs text-danger">Could not load delivery events.</p><Button variant="ghost" size="xs" leading={<RefreshCw />} onClick={deliveryEvents.refetch}>Retry</Button></div> : deliveryEvents.items.length ? <><ul className="divide-y divide-line-subtle">{deliveryEvents.items.map((event) => <li key={event.id} className="flex items-start gap-3 px-4 py-2.5"><span className={`mt-1.5 size-2 shrink-0 rounded-full ${event.type === "bounced" ? "bg-danger" : event.type === "delivered" ? "bg-success-text" : "bg-warning-text"}`} /><div className="min-w-0 flex-1"><p className="text-xs text-fg">{event.type} {event.recipient ? `· ${event.recipient}` : ""}</p><p className="text-2xs text-fg-muted">{event.provider}{event.reason ? ` · ${event.reason}` : ""}</p></div><time className="shrink-0 text-2xs tabular text-fg-muted">{formatDateTime(event.occurred_at, dateFormat)}</time></li>)}</ul>{deliveryEvents.hasMore && <div className="flex justify-center border-t border-line-subtle p-3"><Button variant="secondary" size="xs" loading={deliveryEvents.isFetching} onClick={() => void deliveryEvents.fetchNext()}>Load older events</Button></div>}</> : <p className="px-4 py-5 text-xs text-fg-muted">No delivery events recorded.</p>}
                 </CardBody>
               </Card>
             </Section>

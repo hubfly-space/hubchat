@@ -52,7 +52,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useWorkspace } from "../../app/workspace-context";
 import { WidgetPreview } from "./WidgetPreview";
-import type { Widget } from "@hubchat/shared";
+import type { Widget, WidgetContentFields } from "@hubchat/shared";
 
 type WidgetVersion = {
   id: string;
@@ -65,6 +65,28 @@ type WidgetVersion = {
   note: string | null;
   created_at: string;
 };
+
+const widgetLocaleLabels: Record<string, string> = {
+  en: "English",
+  fr: "Français",
+  es: "Español",
+  de: "Deutsch",
+  pt: "Português",
+  sw: "Kiswahili",
+  ar: "العربية",
+  ja: "日本語",
+};
+
+function normalizeWidgetLocale(value: string): string {
+  return value.trim().toLowerCase().replaceAll("_", "-") || "en";
+}
+
+function widgetLocaleOptions(defaultLanguage: string) {
+  const base = normalizeWidgetLocale(defaultLanguage);
+  const baseLanguage = base.split("-", 1)[0] ?? base;
+  const locales = Array.from(new Set([base, baseLanguage, ...Object.keys(widgetLocaleLabels)]));
+  return locales.map((value) => ({ value, label: widgetLocaleLabels[value] ?? value }));
+}
 
 /**
  * Widget builder (§6.4).
@@ -81,7 +103,7 @@ export default function WidgetBuilder() {
   const navigate = useNavigate();
   const toast = useToast();
   const deploymentOrigin = window.location.origin;
-  const { inboxes } = useWorkspace();
+  const { inboxes, workspace } = useWorkspace();
 
   const widgetQuery = useQuery<Widget>(
     widgetId ? ["widget", widgetId] : null,
@@ -97,6 +119,9 @@ export default function WidgetBuilder() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const baseContentLanguage = normalizeWidgetLocale(workspace.default_language);
+  const contentLanguages = widgetLocaleOptions(baseContentLanguage);
+  const [contentLanguage, setContentLanguage] = useState(baseContentLanguage);
 
   // The server is the source of truth; a fresh load (or a refetch after a
   // successful save) replaces the draft. Local edits between saves live only
@@ -104,9 +129,10 @@ export default function WidgetBuilder() {
   useEffect(() => {
     if (widgetQuery.data) {
       setDraft(widgetQuery.data);
+      setContentLanguage(baseContentLanguage);
       setDirty(false);
     }
-  }, [widgetQuery.data]);
+  }, [baseContentLanguage, widgetQuery.data]);
 
   const save = useMutation<Widget, Widget>(
     (payload) =>
@@ -175,8 +201,31 @@ export default function WidgetBuilder() {
     value: Widget["appearance"][K],
   ) => patch((current) => ({ ...current, appearance: { ...current.appearance, [key]: value } }));
 
-  const setContent = <K extends keyof Widget["content"]>(key: K, value: Widget["content"][K]) =>
-    patch((current) => ({ ...current, content: { ...current.content, [key]: value } }));
+  const activeContent: WidgetContentFields = {
+    ...draft.content,
+    ...(contentLanguage === baseContentLanguage
+      ? {}
+      : draft.content.translations?.[contentLanguage] ??
+        draft.content.translations?.[contentLanguage.split("-", 1)[0] ?? contentLanguage] ?? {}),
+  };
+
+  const setContent = <K extends keyof WidgetContentFields>(key: K, value: WidgetContentFields[K]) =>
+    patch((current) => {
+      if (contentLanguage === baseContentLanguage) {
+        return { ...current, content: { ...current.content, [key]: value } };
+      }
+      const translations = current.content.translations ?? {};
+      return {
+        ...current,
+        content: {
+          ...current.content,
+          translations: {
+            ...translations,
+            [contentLanguage]: { ...(translations[contentLanguage] ?? {}), [key]: value },
+          },
+        },
+      };
+    });
 
   const setBehavior = <K extends keyof Widget["behavior"]>(key: K, value: Widget["behavior"][K]) =>
     patch((current) => ({ ...current, behavior: { ...current.behavior, [key]: value } }));
@@ -488,22 +537,39 @@ export default function WidgetBuilder() {
               {/* --------------------------------------------------- content */}
               <TabsContent value="content">
                 <Callout tone="info" className="mb-4">
-                  Every string here is translatable. Add locales in Settings → General, then switch
-                  languages with the selector above this panel once more than one is configured.
+                  Add translated copy for each locale here. Visitors receive the matching locale with
+                  base-language fallback.
                 </Callout>
+
+                <Card className="mb-4">
+                  <CardBody>
+                    <SettingsRow
+                      label="Content language"
+                      description={`Base content is ${widgetLocaleLabels[baseContentLanguage] ?? baseContentLanguage}.`}
+                    >
+                      <Select
+                        size="sm"
+                        value={contentLanguage}
+                        onValueChange={setContentLanguage}
+                        aria-label="Content language"
+                        options={contentLanguages}
+                      />
+                    </SettingsRow>
+                  </CardBody>
+                </Card>
 
                 <Section title="Header">
                   <Card>
                     <CardBody className="space-y-4">
                       <Field label="Title">
                         <Input
-                          value={draft.content.title}
+                          value={activeContent.title}
                           onChange={(event) => setContent("title", event.target.value)}
                         />
                       </Field>
                       <Field label="Subtitle">
                         <Input
-                          value={draft.content.subtitle}
+                          value={activeContent.subtitle}
                           onChange={(event) => setContent("subtitle", event.target.value)}
                         />
                       </Field>
@@ -517,25 +583,25 @@ export default function WidgetBuilder() {
                       <Field label="Welcome message" description="The first thing a visitor reads.">
                         <Textarea
                           rows={2}
-                          value={draft.content.welcome_message}
+                          value={activeContent.welcome_message}
                           onChange={(event) => setContent("welcome_message", event.target.value)}
                         />
                       </Field>
                       <Field label="Input placeholder">
                         <Input
-                          value={draft.content.input_placeholder}
+                          value={activeContent.input_placeholder}
                           onChange={(event) => setContent("input_placeholder", event.target.value)}
                         />
                       </Field>
                       <Field label="Expected response time">
                         <Input
-                          value={draft.content.response_time_text}
+                          value={activeContent.response_time_text}
                           onChange={(event) => setContent("response_time_text", event.target.value)}
                         />
                       </Field>
                       <Field label="Online message">
                         <Input
-                          value={draft.content.online_message}
+                          value={activeContent.online_message}
                           onChange={(event) => setContent("online_message", event.target.value)}
                         />
                       </Field>
@@ -545,7 +611,7 @@ export default function WidgetBuilder() {
                       >
                         <Textarea
                           rows={2}
-                          value={draft.content.offline_message}
+                          value={activeContent.offline_message}
                           onChange={(event) => setContent("offline_message", event.target.value)}
                         />
                       </Field>
@@ -555,7 +621,7 @@ export default function WidgetBuilder() {
                       >
                         <Textarea
                           rows={2}
-                          value={draft.content.consent_text ?? ""}
+                          value={activeContent.consent_text ?? ""}
                           onChange={(event) => setContent("consent_text", event.target.value || null)}
                           placeholder="By starting a chat you agree to our privacy policy."
                         />
@@ -923,7 +989,7 @@ export function App() {
               style={{ maxWidth: device === "mobile" ? 390 : undefined }}
             >
               <WidgetPreview
-                widget={draft}
+                widget={{ ...draft, content: activeContent }}
                 device={device}
                 theme={previewTheme}
                 state={previewState}

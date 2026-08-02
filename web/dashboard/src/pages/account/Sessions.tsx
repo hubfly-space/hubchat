@@ -14,8 +14,11 @@ import {
   Section,
   useInfinite,
   useMutation,
+  formatDate,
+  formatDateTime,
 } from "@hubchat/shared";
 import { Laptop, LogOut, Smartphone } from "lucide-react";
+import { useWorkspace, workspaceFormatOptions } from "../../app/workspace-context";
 
 type SessionInfo = {
   id: string;
@@ -40,6 +43,8 @@ type TrustedDeviceInfo = {
 
 /** Active session management (§11.1). */
 export default function Sessions() {
+  const { workspace } = useWorkspace();
+  const dateFormat = workspaceFormatOptions(workspace);
   const sessions = useInfinite<SessionInfo>(["auth-sessions"], (cursor, signal) => {
     const params = new URLSearchParams({ limit: "25" });
     if (cursor) params.set("cursor", cursor);
@@ -140,7 +145,7 @@ export default function Sessions() {
                             <p className="text-2xs text-fg-disabled">
                               {session.current
                                 ? "Active now"
-                                : `Last active ${new Date(session.last_seen_at).toLocaleString()}`}
+                                : `Last active ${formatDateTime(session.last_seen_at, dateFormat)}`}
                             </p>
                           </div>
 
@@ -183,7 +188,7 @@ export default function Sessions() {
                             <span className="truncate">{device.name || device.user_agent || "Trusted browser"}</span>
                             {device.current && <Badge tone="success">This device</Badge>}
                           </p>
-                          <p className="mt-0.5 truncate text-xs text-fg-muted">Expires {new Date(device.expires_at).toLocaleDateString()} · {device.ip || "Unknown IP"}</p>
+                          <p className="mt-0.5 truncate text-xs text-fg-muted">Expires {formatDate(device.expires_at, dateFormat)} · {device.ip || "Unknown IP"}</p>
                         </div>
                         <Button variant="ghost" size="sm" loading={revokeTrusted.isPending} onClick={() => void revokeTrusted.mutate(device.id).catch(() => {})}>Revoke</Button>
                       </li>

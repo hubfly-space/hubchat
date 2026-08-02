@@ -21,6 +21,7 @@ import {
   MenuItem,
   MenuSeparator,
   MenuTrigger,
+  Metric,
   Page,
   PageBody,
   PageHeader,
@@ -56,7 +57,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useWorkspace } from "../../app/workspace-context";
+import { useWorkspace, workspaceFormatOptions } from "../../app/workspace-context";
 
 type CustomerEvent = {
   id: string;
@@ -99,7 +100,8 @@ export default function CustomerDetail() {
 
 function CustomerDetailBody({ customer }: { customer: Customer }) {
   const navigate = useNavigate();
-  const { tagById, can } = useWorkspace();
+  const { tagById, can, workspace } = useWorkspace();
+  const dateFormat = workspaceFormatOptions(workspace);
   const [tab, setTab] = useState("activity");
   const [merging, setMerging] = useState(false);
   const [blocking, setBlocking] = useState(false);
@@ -257,7 +259,7 @@ function CustomerDetailBody({ customer }: { customer: Customer }) {
                   <DetailRow label="Language">{customer.language ?? "—"}</DetailRow>
                   <DetailRow label="Timezone">{customer.timezone ?? "—"}</DetailRow>
                   <DetailRow label="First seen">
-                    <Tooltip content={formatDateTime(customer.first_seen_at)}>
+                    <Tooltip content={formatDateTime(customer.first_seen_at, dateFormat)}>
                       <span>{formatRelativeShort(customer.first_seen_at, new Date())} ago</span>
                     </Tooltip>
                   </DetailRow>
@@ -481,6 +483,8 @@ function CustomerDetailBody({ customer }: { customer: Customer }) {
 }
 
 function Customer360Tab({ query, customerID }: { query: ReturnType<typeof useQuery<ApiCustomer360>>; customerID: string }) {
+  const { workspace } = useWorkspace();
+  const dateFormat = workspaceFormatOptions(workspace);
   if (query.isLoading) return <p className="text-sm text-fg-muted">Loading customer context…</p>;
   if (query.error) return <EmptyState icon={UserRound} title="Customer context unavailable" description="Could not load the related feedback, surveys, articles, and identity history." action={<Button variant="secondary" size="sm" onClick={query.refetch}>Try again</Button>} />;
   const data = query.data;
@@ -489,14 +493,45 @@ function Customer360Tab({ query, customerID }: { query: ReturnType<typeof useQue
   return (
     <div className="space-y-5">
       <Callout tone="info">
-        This view combines recent records owned by other modules. Sensitive customer attributes remain behind the audited reveal control in Attributes.
+        This view combines recent support, company, product-usage, and self-service records. Sensitive event payloads remain behind the redacted timeline endpoint, and customer attributes remain behind the audited reveal control in Attributes.
       </Callout>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <Metric label="Companies" value={`${data.companies.length}${data.companies_truncated ? "+" : ""}`} definition="Companies linked to this customer." />
+        <Metric label="Conversations" value={`${data.conversations.length}${data.conversations_truncated ? "+" : ""}`} definition="Recent conversations associated with this customer." />
+        <Metric label="Tickets" value={`${data.tickets.length}${data.tickets_truncated ? "+" : ""}`} definition="Recent tickets associated with this customer." />
+        <Metric label="Events" value={`${data.events.length}${data.events_truncated ? "+" : ""}`} definition="Recent application and page events, without raw payloads." />
+        <Metric label="Sessions" value={`${data.sessions.length}${data.sessions_truncated ? "+" : ""}`} definition="Recent contact sessions recorded for this customer." />
         <MetricCard label="Feedback" value={data.feedback.length} truncated={data.feedback_truncated} />
         <MetricCard label="Survey responses" value={data.surveys.length} truncated={data.surveys_truncated} />
         <MetricCard label="Article feedback" value={data.articles.length} truncated={data.articles_truncated} />
         <MetricCard label="Linked identities" value={data.identities.length} truncated={data.identities_truncated} />
+      </div>
+
+      <Section title="Companies" description="Accounts linked to this customer.">
+        <Card><CardBody className="p-0">
+          {data.companies.length === 0 ? <EmptyState size="sm" title="No linked companies" /> : <ul className="divide-y divide-line-subtle">{data.companies.map((item) => <li key={item.id}><Link to={`/companies/${item.id}`} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-surface-hover"><span className="min-w-0 flex-1"><span className="block truncate text-sm text-fg">{item.name}</span><span className="block text-xs text-fg-muted">{item.domain ?? "No domain"}{item.tier ? ` · ${item.tier}` : ""}</span></span></Link></li>)}</ul>}
+        </CardBody></Card>
+      </Section>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Section title="Conversations" description="Recent support conversations associated with this customer.">
+          <Card><CardBody className="p-0">{data.conversations.length === 0 ? <EmptyState size="sm" title="No conversations" /> : <ul className="divide-y divide-line-subtle">{data.conversations.map((item) => <li key={item.id}><Link to={`/inbox/all/${item.id}`} className="block px-4 py-3 transition-colors hover:bg-surface-hover"><div className="flex items-center justify-between gap-3"><span className="truncate text-sm text-fg">{(item.subject ?? item.last_message_preview) || "Conversation"}</span><Badge tone="neutral">{item.state.replaceAll("_", " ")}</Badge></div><p className="mt-1 truncate text-xs text-fg-muted">{item.channel} · {item.last_message_at ? formatRelativeShort(item.last_message_at, new Date()) + " ago" : "no messages"}</p></Link></li>)}</ul>}</CardBody></Card>
+        </Section>
+
+        <Section title="Tickets" description="Recent structured support work for this customer.">
+          <Card><CardBody className="p-0">{data.tickets.length === 0 ? <EmptyState size="sm" title="No tickets" /> : <ul className="divide-y divide-line-subtle">{data.tickets.map((item) => <li key={item.id}><Link to={`/tickets/${item.id}`} className="block px-4 py-3 transition-colors hover:bg-surface-hover"><div className="flex items-center justify-between gap-3"><span className="truncate text-sm text-fg">{item.prefix}-{item.number} · {item.title}</span><Badge tone="neutral">{item.status.replaceAll("_", " ")}</Badge></div><p className="mt-1 text-xs capitalize text-fg-muted">{item.priority} priority · updated {formatRelativeShort(item.updated_at, new Date())} ago</p></Link></li>)}</ul>}</CardBody></Card>
+        </Section>
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Section title="Recent events" description="Event metadata is shown here; inspect the Activity tab for audited payload redaction.">
+          <Card><CardBody className="p-0">{data.events.length === 0 ? <EmptyState size="sm" title="No events" /> : <ul className="divide-y divide-line-subtle">{data.events.slice(0, 8).map((item) => <li key={item.id} className="flex items-start gap-3 px-4 py-3"><span className="mt-1.5 size-2 shrink-0 rounded-full bg-fg-disabled" /><span className="min-w-0 flex-1"><span className="block font-mono text-xs text-fg">{item.type}</span><span className="block text-2xs text-fg-muted">{item.source}{item.request_id ? ` · request ${item.request_id}` : ""} · {formatRelativeShort(item.occurred_at, new Date())} ago</span></span></li>)}</ul>}</CardBody></Card>
+        </Section>
+
+        <Section title="Contact sessions" description="Recent widget and portal sessions linked to this customer.">
+          <Card><CardBody className="p-0">{data.sessions.length === 0 ? <EmptyState size="sm" title="No sessions" /> : <ul className="divide-y divide-line-subtle">{data.sessions.slice(0, 8).map((item) => <li key={item.id} className="px-4 py-3"><div className="flex items-center justify-between gap-3"><span className="text-sm capitalize text-fg">{item.device ?? "unknown device"}</span><span className="text-2xs tabular text-fg-muted">{item.page_views} page views</span></div><p className="mt-1 truncate text-xs text-fg-muted">{[item.browser, item.os].filter(Boolean).join(" · ") || "Browser details unavailable"} · last seen {formatRelativeShort(item.last_seen_at, new Date())} ago</p></li>)}</ul>}</CardBody></Card>
+        </Section>
       </div>
 
       <Section title="Feedback" description="Ideas this customer submitted, voted on, or follows.">
@@ -507,11 +542,11 @@ function Customer360Tab({ query, customerID }: { query: ReturnType<typeof useQue
 
       <div className="grid gap-5 lg:grid-cols-2">
         <Section title="Survey responses" description="Submitted identified responses associated with this customer.">
-          <Card><CardBody className="p-0">{data.surveys.length === 0 ? <EmptyState size="sm" title="No survey responses" /> : <ul className="divide-y divide-line-subtle">{data.surveys.map((item) => <li key={item.id} className="px-4 py-3"><div className="flex items-center justify-between gap-3"><span className="text-sm text-fg">{item.survey_name}</span><Badge tone="neutral">{item.survey_type.toUpperCase()}{item.score === undefined ? "" : ` · ${item.score}`}</Badge></div>{item.comment && <p className="mt-1 whitespace-pre-wrap text-xs text-fg-secondary">{item.comment}</p>}{item.submitted_at && <p className="mt-1 text-2xs text-fg-muted">{formatDateTime(item.submitted_at)}</p>}</li>)}</ul>}</CardBody></Card>
+          <Card><CardBody className="p-0">{data.surveys.length === 0 ? <EmptyState size="sm" title="No survey responses" /> : <ul className="divide-y divide-line-subtle">{data.surveys.map((item) => <li key={item.id} className="px-4 py-3"><div className="flex items-center justify-between gap-3"><span className="text-sm text-fg">{item.survey_name}</span><Badge tone="neutral">{item.survey_type.toUpperCase()}{item.score === undefined ? "" : ` · ${item.score}`}</Badge></div>{item.comment && <p className="mt-1 whitespace-pre-wrap text-xs text-fg-secondary">{item.comment}</p>}{item.submitted_at && <p className="mt-1 text-2xs text-fg-muted">{formatDateTime(item.submitted_at, dateFormat)}</p>}</li>)}</ul>}</CardBody></Card>
         </Section>
 
         <Section title="Article feedback" description="Knowledge-base helpfulness signals from this customer.">
-          <Card><CardBody className="p-0">{data.articles.length === 0 ? <EmptyState size="sm" title="No article feedback" /> : <ul className="divide-y divide-line-subtle">{data.articles.map((item) => <li key={item.id}><Link to={`/kb/article/${encodeURIComponent(item.slug)}`} className="block px-4 py-3 transition-colors hover:bg-surface-hover"><div className="flex items-center justify-between gap-3"><span className="truncate text-sm text-fg">{item.title}</span><Badge tone={item.helpful ? "success" : "warning"}>{item.helpful ? "Helpful" : "Not helpful"}</Badge></div>{item.comment && <p className="mt-1 line-clamp-2 text-xs text-fg-secondary">{item.comment}</p>}<p className="mt-1 text-2xs text-fg-muted">{formatDateTime(item.created_at)}</p></Link></li>)}</ul>}</CardBody></Card>
+          <Card><CardBody className="p-0">{data.articles.length === 0 ? <EmptyState size="sm" title="No article feedback" /> : <ul className="divide-y divide-line-subtle">{data.articles.map((item) => <li key={item.id}><Link to={`/kb/article/${encodeURIComponent(item.slug)}`} className="block px-4 py-3 transition-colors hover:bg-surface-hover"><div className="flex items-center justify-between gap-3"><span className="truncate text-sm text-fg">{item.title}</span><Badge tone={item.helpful ? "success" : "warning"}>{item.helpful ? "Helpful" : "Not helpful"}</Badge></div>{item.comment && <p className="mt-1 line-clamp-2 text-xs text-fg-secondary">{item.comment}</p>}<p className="mt-1 text-2xs text-fg-muted">{formatDateTime(item.created_at, dateFormat)}</p></Link></li>)}</ul>}</CardBody></Card>
         </Section>
       </div>
 
@@ -521,7 +556,7 @@ function Customer360Tab({ query, customerID }: { query: ReturnType<typeof useQue
         </Section>
 
         <Section title="Merge history" description="Audited identity merges involving this customer.">
-          <Card><CardBody className="p-0">{data.merges.length === 0 ? <EmptyState size="sm" title="No merges recorded" /> : <ul className="divide-y divide-line-subtle">{data.merges.map((item) => <li key={item.id} className="px-4 py-3"><div className="flex items-center justify-between gap-3"><span className="font-mono text-xs text-fg">{item.id}</span><Badge tone={item.reversed_at ? "neutral" : "warning"}>{item.reversed_at ? "Reversed" : "Merged"}</Badge></div><p className="mt-1 text-xs text-fg-muted">{item.winner_id === customerID ? "This customer kept the identity" : "This customer was absorbed"} · {formatDateTime(item.created_at)}</p></li>)}</ul>}</CardBody></Card>
+          <Card><CardBody className="p-0">{data.merges.length === 0 ? <EmptyState size="sm" title="No merges recorded" /> : <ul className="divide-y divide-line-subtle">{data.merges.map((item) => <li key={item.id} className="px-4 py-3"><div className="flex items-center justify-between gap-3"><span className="font-mono text-xs text-fg">{item.id}</span><Badge tone={item.reversed_at ? "neutral" : "warning"}>{item.reversed_at ? "Reversed" : "Merged"}</Badge></div><p className="mt-1 text-xs text-fg-muted">{item.winner_id === customerID ? "This customer kept the identity" : "This customer was absorbed"} · {formatDateTime(item.created_at, dateFormat)}</p></li>)}</ul>}</CardBody></Card>
         </Section>
       </div>
     </div>
