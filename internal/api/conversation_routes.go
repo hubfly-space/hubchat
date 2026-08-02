@@ -383,10 +383,11 @@ func messagePageParams(r *http.Request) (before, after int64, limit int, err err
 }
 
 type postMessageRequest struct {
-	Kind       string   `json:"kind"` // "reply" or "note"
-	AuthorName string   `json:"author_name"`
-	Body       string   `json:"body"`
-	FileIDs    []string `json:"file_ids"`
+	Kind               string   `json:"kind"` // "reply" or "note"
+	AuthorName         string   `json:"author_name"`
+	Body               string   `json:"body"`
+	FileIDs            []string `json:"file_ids"`
+	MentionedMemberIDs []string `json:"mentioned_member_ids"`
 }
 
 func handlePostMessage(deps Deps) http.HandlerFunc {
@@ -421,9 +422,9 @@ func handlePostMessage(deps Deps) http.HandlerFunc {
 		}
 
 		memberID := actor.MemberID
-		msg, err := deps.Conversation.PostMessage(
+		msg, err := deps.Conversation.PostMessageWithMentions(
 			r.Context(), actor.WorkspaceID, conversationID, clientID,
-			kind, "agent", &memberID, authorName, req.Body,
+			kind, "agent", &memberID, authorName, req.Body, req.MentionedMemberIDs,
 		)
 		if err != nil {
 			writeConversationError(w, r, err)
@@ -687,6 +688,7 @@ func writeConversationError(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, conversation.ErrInvalidAssignee),
 		errors.Is(err, conversation.ErrInvalidTeam),
 		errors.Is(err, conversation.ErrInvalidInbox),
+		errors.Is(err, conversation.ErrInvalidMention),
 		errors.Is(err, conversation.ErrTagNotFound),
 		errors.Is(err, conversation.ErrSnoozeInPast),
 		errors.Is(err, conversation.ErrCannotMergeIntoSelf),

@@ -44,6 +44,7 @@ import (
 	"github.com/hubchat/hubchat/internal/search"
 	"github.com/hubchat/hubchat/internal/sla"
 	"github.com/hubchat/hubchat/internal/survey"
+	"github.com/hubchat/hubchat/internal/task"
 	"github.com/hubchat/hubchat/internal/ticket"
 	"github.com/hubchat/hubchat/internal/webhook"
 	"github.com/hubchat/hubchat/internal/widget"
@@ -74,6 +75,7 @@ type Deps struct {
 	Feedback      *feedback.Service
 	Survey        *survey.Service
 	SLA           *sla.Service
+	Task          *task.Service
 	Automation    *automation.Service
 	SavedView     *savedview.Service
 	Analytics     *analytics.Service
@@ -155,6 +157,7 @@ func New(deps Deps) http.Handler {
 	registerFeedbackRoutes(mux, deps)
 	registerSurveyRoutes(mux, deps)
 	registerSLARoutes(mux, deps)
+	registerTaskRoutes(mux, deps)
 	registerAutomationRoutes(mux, deps)
 	registerAnalyticsRoutes(mux, deps)
 	registerEmailChannelRoutes(mux, deps)
