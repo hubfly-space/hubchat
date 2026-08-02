@@ -26,6 +26,7 @@ import {
 import { Download, ScrollText, ShieldCheck, User } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useWorkspace, workspaceFormatOptions } from "../../app/workspace-context";
 
 // Actions Stage 1 modules actually emit. As later stages add their own audit
 // entries, this list grows — it is not exhaustive of every string the
@@ -55,6 +56,8 @@ const KNOWN_ACTIONS = [
 
 /** Audit log (§6.19). */
 export default function AuditLog() {
+  const { workspace } = useWorkspace();
+  const dateFormat = workspaceFormatOptions(workspace);
   const [searchParams] = useSearchParams();
   const actorIdFromLink = searchParams.get("actor_id");
 
@@ -106,7 +109,7 @@ export default function AuditLog() {
       width: "110px",
       numeric: true,
       cell: (entry) => (
-        <Tooltip content={formatDateTime(entry.occurred_at)}>
+        <Tooltip content={formatDateTime(entry.occurred_at, dateFormat)}>
           <span className="text-xs text-fg-muted">{formatRelativeShort(entry.occurred_at, new Date())}</span>
         </Tooltip>
       ),
@@ -200,7 +203,7 @@ export default function AuditLog() {
         {active && (
           <aside className="hidden w-[380px] shrink-0 overflow-y-auto border-l border-line bg-surface p-4 xl:block">
             <p className="mb-1 font-mono text-sm text-fg">{active.action}</p>
-            <p className="mb-4 text-xs text-fg-muted">{formatDateTime(active.occurred_at)}</p>
+            <p className="mb-4 text-xs text-fg-muted">{formatDateTime(active.occurred_at, dateFormat)}</p>
 
             <CodeBlock
               language="json"

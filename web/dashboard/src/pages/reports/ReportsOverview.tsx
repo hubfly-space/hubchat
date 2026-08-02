@@ -10,7 +10,6 @@ import {
   DonutChart,
   Field,
   EmptyState,
-  Input,
   Metric,
   Page,
   PageBody,
@@ -18,12 +17,14 @@ import {
   Section,
   SegmentedControl,
   Switch,
+  Textarea,
   api,
   downloadFile,
   formatCompact,
   formatDuration,
   formatPercent,
-  formatDateTime,
+  formatDateTime as formatDateTimeValue,
+  type FormatOptions,
   idempotencyKey,
   useInfinite,
   useMutation,
@@ -34,7 +35,8 @@ import type { Paginated } from "@hubchat/shared";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useWorkspace } from "../../app/workspace-context";
-import { reportWindow, useAnalyticsRollups, type AnalyticsRollup } from "../../lib/analytics";
+import { workspaceFormatOptions } from "../../app/workspace-context";
+import { latestComputedAt, reportWindow, useAnalyticsRollups, type AnalyticsRollup } from "../../lib/analytics";
 
 export const RANGES = [
   { value: "7d", label: "7 days" },
@@ -49,9 +51,11 @@ type ReportSchedule = { id: string; report_id: string; cadence: string; recipien
 /** Reporting overview backed by the durable event rollups. */
 export default function ReportsOverview() {
   const { workspace } = useWorkspace();
+  const dateFormat = workspaceFormatOptions(workspace);
+  const formatDateTime = (value: string, options: FormatOptions = {}) => formatDateTimeValue(value, { ...dateFormat, ...options });
   const [range, setRange] = useState<string>("30d");
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [recipient, setRecipient] = useState("");
+  const [recipientText, setRecipientText] = useState("");
   const [cadence, setCadence] = useState("weekly");
   const [selectedReportID, setSelectedReportID] = useState("");
   const [deletingReport, setDeletingReport] = useState<SavedReport | null>(null);
@@ -77,6 +81,7 @@ export default function ReportsOverview() {
 
   const conversationPoints = toPoints(conversations.items);
   const ticketPoints = toPoints(tickets.items);
+  const freshness = latestComputedAt(conversations.items, tickets.items);
   const channelSplit = splitChannels(conversations.items);
   const loading = conversations.isFetching || tickets.isFetching || summary.isLoading;
   const failed = conversations.isError || tickets.isError || summary.isError;
@@ -89,11 +94,11 @@ export default function ReportsOverview() {
     }, { idempotencyKey: idempotencyKey() });
     return api.post<ReportSchedule>(`/reports/${encodeURIComponent(report.id)}/schedules`, {
       cadence,
-      recipients: [recipient.trim()],
+      recipients: parseRecipients(recipientText),
       format: "csv",
       options: { hour: 9, minute: 0, timezone: period.timezone },
     }, { idempotencyKey: idempotencyKey() });
-  }, { invalidates: [["saved-reports"]], onSuccess: (created) => { setSelectedReportID(created.report_id); setScheduleOpen(false); setRecipient(""); } });
+  }, { invalidates: [["saved-reports"]], onSuccess: (created) => { setSelectedReportID(created.report_id); setScheduleOpen(false); setRecipientText(""); } });
   const toggleSchedule = useMutation<{ schedule: ReportSchedule; enabled: boolean }, ReportSchedule>(({ schedule: item, enabled }) => api.patch("/reports/" + encodeURIComponent(item.report_id) + "/schedules/" + encodeURIComponent(item.id), {
     report_id: item.report_id,
     cadence: item.cadence,
@@ -135,6 +140,7 @@ export default function ReportsOverview() {
         <Callout tone="info" icon={<Info />} className="mb-5">
           Figures are folded from the append-only event log in UTC day buckets. The selected window is interpreted in {period.timezone}. A rollup is empty until the worker has processed the workspace events.
         </Callout>
+        <p className="-mt-2 mb-5 text-xs text-fg-muted">Rollup data last computed {freshness ? formatDateTime(freshness, { timeZone: period.timezone }) : "not yet"}.</p>
 
         {loading ? <p className="text-sm text-fg-muted">Loading live report rollups…</p> : failed ? <EmptyState icon={Inbox} title="Reports unavailable" description="The analytics rollup API could not be loaded." action={<Button variant="secondary" size="sm" onClick={() => { conversations.refetch(); tickets.refetch(); summary.refetch(); }}>Try again</Button>} /> : (
           <>
@@ -226,10 +232,10 @@ export default function ReportsOverview() {
         <DialogContent
           title="Schedule this report"
           description="A CSV snapshot will be queued from the workspace event rollups."
-          footer={<><Button variant="ghost" size="sm" onClick={() => setScheduleOpen(false)}>Cancel</Button><Button variant="primary" size="sm" loading={schedule.isPending} disabled={!recipient.trim()} onClick={() => void schedule.mutate(undefined).catch(() => {})}>Schedule report</Button></>}
+          footer={<><Button variant="ghost" size="sm" onClick={() => setScheduleOpen(false)}>Cancel</Button><Button variant="primary" size="sm" loading={schedule.isPending} disabled={parseRecipients(recipientText).length === 0} onClick={() => void schedule.mutate(undefined).catch(() => {})}>Schedule report</Button></>}
         >
           <div className="space-y-4 pb-2">
-            <Field label="Recipient" description="Use a single address for this schedule; add more recipients later through the API."><Input type="email" value={recipient} onChange={(event) => setRecipient(event.target.value)} placeholder="ops@example.com" autoFocus /></Field>
+            <Field label="Recipients" description="Enter one email address per line or separate addresses with commas. Up to 20 recipients are supported."><Textarea value={recipientText} onChange={(event) => setRecipientText(event.target.value)} placeholder={"ops@example.com\nalerts@example.com"} autoFocus rows={4} /></Field>
             <Field label="Cadence"><select className="h-9 w-full rounded-md border border-line bg-surface px-3 text-sm text-fg" value={cadence} onChange={(event) => setCadence(event.target.value)}><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></Field>
             {Boolean(schedule.error) && <p className="text-sm text-danger">Could not schedule this report. Check the recipient and try again.</p>}
           </div>
@@ -275,4 +281,13 @@ function splitChannels(items: AnalyticsRollup[]) {
   }
   const tones = [1, 2, 3, 4, 5] as const;
   return [...totals.entries()].map(([key, value], index) => ({ key, label: key, value, tone: tones[index % tones.length] ?? 1 }));
+}
+
+function parseRecipients(value: string): string[] {
+  const seen = new Set<string>();
+  for (const raw of value.split(/[\n,]+/)) {
+    const address = raw.trim().toLowerCase();
+    if (address) seen.add(address);
+  }
+  return [...seen];
 }
