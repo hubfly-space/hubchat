@@ -75,6 +75,58 @@ func TestPublishScheduledPromotesDueArticlesAndAppendsEvent(t *testing.T) {
 	}
 }
 
+func TestPublishedArticleResolutionPrefersRequestedLanguageAndFallsBackToDefault(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+
+	userID := ids.New(ids.PrefixUser)
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id,name,email,password_hash,email_verified_at) VALUES ($1,'KB language owner',$2,'x',now())`, userID, userID+"@example.com"); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	workspaceService := workspace.New(pool, events.New(pool), audit.New(pool))
+	createdWorkspace, err := workspaceService.Bootstrap(ctx, userID, "KB languages", "kb-languages-"+userID[len(userID)-10:])
+	if err != nil {
+		t.Fatalf("bootstrap workspace: %v", err)
+	}
+	actor, err := workspaceService.ActorForUser(ctx, createdWorkspace.ID, userID)
+	if err != nil {
+		t.Fatalf("resolve actor: %v", err)
+	}
+	service := New(pool, Options{})
+	kb, err := service.CreateKnowledgeBase(ctx, createdWorkspace.ID, KnowledgeBaseInput{
+		Name: "Help", Slug: "help", DefaultLanguage: "en", Languages: []string{"en", "fr"},
+	})
+	if err != nil {
+		t.Fatalf("create knowledge base: %v", err)
+	}
+	for _, input := range []ArticleInput{
+		{KnowledgeBaseID: kb.ID, Title: "Getting started", Slug: "getting-started", Body: "English body", State: "published", Language: "en"},
+		{KnowledgeBaseID: kb.ID, Title: "Premiers pas", Slug: "getting-started", Body: "French body", State: "published", Language: "fr"},
+	} {
+		if _, err := service.SaveArticle(ctx, createdWorkspace.ID, actor.MemberID, "", input); err != nil {
+			t.Fatalf("save %s article: %v", input.Language, err)
+		}
+	}
+
+	french, err := service.GetPublishedBySlugSurfaceLanguage(ctx, createdWorkspace.ID, "getting-started", "portal", "fr")
+	if err != nil || french.Body != "French body" || french.Language != "fr" {
+		t.Fatalf("French article = %+v, err=%v", french, err)
+	}
+	fallback, err := service.GetPublishedBySlugSurfaceLanguage(ctx, createdWorkspace.ID, "getting-started", "portal", "sw")
+	if err != nil || fallback.Body != "English body" || fallback.Language != "en" {
+		t.Fatalf("fallback article = %+v, err=%v", fallback, err)
+	}
+	featured, err := service.ListPublished(ctx, createdWorkspace.ID, "fr", 10)
+	if err != nil || len(featured) != 1 || featured[0].Language != "fr" {
+		t.Fatalf("French featured articles = %+v, err=%v", featured, err)
+	}
+	defaultFeatured, err := service.ListPublished(ctx, createdWorkspace.ID, "sw", 10)
+	if err != nil || len(defaultFeatured) != 1 || defaultFeatured[0].Language != "en" {
+		t.Fatalf("fallback featured articles = %+v, err=%v", defaultFeatured, err)
+	}
+}
+
 func TestListChangelogPageIsWorkspaceScopedAndStable(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.Reset(t, pool)

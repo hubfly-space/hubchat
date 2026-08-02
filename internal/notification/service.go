@@ -378,11 +378,13 @@ func preferenceTypeFor(notificationType string) string {
 }
 
 type emailPayload struct {
-	To            string   `json:"to"`
-	Subject       string   `json:"subject"`
-	Body          string   `json:"body"`
-	WorkspaceID   string   `json:"workspace_id,omitempty"`
-	AttachmentIDs []string `json:"attachment_ids,omitempty"`
+	To            string            `json:"to"`
+	Subject       string            `json:"subject"`
+	Body          string            `json:"body"`
+	WorkspaceID   string            `json:"workspace_id,omitempty"`
+	AttachmentIDs []string          `json:"attachment_ids,omitempty"`
+	TemplateKey   string            `json:"template_key,omitempty"`
+	TemplateData  map[string]string `json:"template_data,omitempty"`
 }
 
 func (s *Service) queueEmail(ctx context.Context, workspaceID, memberID, notificationID, preferenceType, title, body, url string) error {
@@ -612,7 +614,7 @@ func (s *Service) NotifyChangelogSubscribers(ctx context.Context, workspaceID, e
 			WorkspaceID: workspaceID,
 			Queue:       "email",
 			Type:        "email.send",
-			Payload:     emailPayload{To: address, Subject: title, Body: message},
+			Payload:     emailPayload{To: address, Subject: title, Body: message, TemplateKey: "changelog_published", TemplateData: map[string]string{"CustomerName": name, "MessageBody": body, "TicketLink": link}},
 			DedupeKey:   "changelog-email:" + sourceEventID + ":" + customerID,
 		})
 		if errors.Is(err, jobs.ErrDuplicate) {
@@ -759,7 +761,7 @@ func (s *Service) NotifyFeedbackSubscribers(ctx context.Context, workspaceID, it
 			WorkspaceID: workspaceID,
 			Queue:       "email",
 			Type:        "email.send",
-			Payload:     emailPayload{To: address, Subject: subject, Body: body},
+			Payload:     emailPayload{To: address, Subject: subject, Body: body, TemplateKey: "feedback_update", TemplateData: map[string]string{"CustomerName": name, "TicketTitle": title, "TicketStatus": strings.ReplaceAll(status, "_", " ")}},
 			DedupeKey:   "feedback-status-email:" + sourceEventID + ":" + customerID,
 		})
 		if errors.Is(err, jobs.ErrDuplicate) {
@@ -809,7 +811,7 @@ func (s *Service) NotifyTicketCustomer(ctx context.Context, workspaceID, ticketI
 		WorkspaceID: workspaceID,
 		Queue:       "email",
 		Type:        "email.send",
-		Payload:     emailPayload{To: address, Subject: subject, Body: body},
+		Payload:     emailPayload{To: address, Subject: subject, Body: body, TemplateKey: ticketCustomerTemplate(eventType), TemplateData: map[string]string{"CustomerName": name, "TicketNumber": number, "TicketTitle": title, "TicketStatus": strings.ReplaceAll(status, "_", " ")}},
 		DedupeKey:   "ticket-status-email:" + sourceEventID + ":" + customerID,
 	})
 	if errors.Is(err, jobs.ErrDuplicate) {
@@ -871,7 +873,8 @@ func (s *Service) NotifyTicketCustomerReply(ctx context.Context, workspaceID str
 		Type:        "email.send",
 		Payload: emailPayload{
 			To: address, Subject: subject, Body: body,
-			WorkspaceID: workspaceID, AttachmentIDs: attachmentIDs,
+			WorkspaceID: workspaceID, AttachmentIDs: attachmentIDs, TemplateKey: "agent_replied",
+			TemplateData: map[string]string{"CustomerName": name, "TicketNumber": number, "TicketTitle": title, "AuthorName": message.AuthorName, "MessageBody": message.Body, "TicketLink": s.ticketLink(ticketID)},
 		},
 		DedupeKey: "ticket-reply-email:" + sourceEventID + ":" + customerID,
 	})
@@ -920,4 +923,11 @@ func ticketCustomerMessage(eventType events.Type, name, number, title, status st
 		return "Ticket " + number + " received", "Hi " + strings.TrimSpace(name) + ",\n\nWe received your request “" + title + "”. Its current status is " + statusLabel + "."
 	}
 	return "Ticket " + number + " update", "Hi " + strings.TrimSpace(name) + ",\n\nYour ticket “" + title + "” is now " + statusLabel + "."
+}
+
+func ticketCustomerTemplate(eventType events.Type) string {
+	if eventType == events.TicketCreated {
+		return "ticket_created"
+	}
+	return "ticket_resolved"
 }

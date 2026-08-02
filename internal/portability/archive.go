@@ -15,7 +15,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const CurrentVersion = 1
+const (
+	CurrentVersion  = 1
+	MaxArchiveBytes = 512 << 20
+)
 
 type Archive struct {
 	Version           int                          `json:"version"`
@@ -30,6 +33,103 @@ type TableSummary struct {
 	Rows     int    `json:"rows"`
 	Existing int    `json:"existing,omitempty"`
 	New      int    `json:"new,omitempty"`
+	Skipped  int    `json:"skipped,omitempty"`
+}
+
+// ArchiveInspection is the bounded, side-effect-free summary produced when an
+// archive is checked before import or restore. It intentionally contains only
+// row metadata; attachment bytes live in the configured object store and are
+// verified separately from the attachment manifest.
+type ArchiveInspection struct {
+	Version           int
+	SourceWorkspaceID string
+	ExportedAt        time.Time
+	Tables            []TableSummary
+	RowCount          int
+	AttachmentCount   int
+	AttachmentBytes   int64
+}
+
+// ValidateArchive checks the versioned archive envelope and its complete table
+// manifest without touching PostgreSQL. Current-version exports are expected to
+// contain every declared table, even when a table has zero rows; accepting an
+// incomplete manifest would make a restore look successful while silently
+// dropping data.
+func ValidateArchive(archive *Archive) (*ArchiveInspection, error) {
+	if archive == nil {
+		return nil, errors.New("portability: archive is missing")
+	}
+	if archive.Version != CurrentVersion {
+		return nil, fmt.Errorf("portability: unsupported archive version %d", archive.Version)
+	}
+	if archive.SourceWorkspaceID == "" {
+		return nil, errors.New("portability: archive source workspace is missing")
+	}
+	if archive.ExportedAt.IsZero() {
+		return nil, errors.New("portability: archive export time is missing")
+	}
+	if archive.Workspace == nil {
+		return nil, errors.New("portability: archive workspace is missing")
+	}
+	workspaceID, ok := archive.Workspace["id"].(string)
+	if !ok || workspaceID == "" || workspaceID != archive.SourceWorkspaceID {
+		return nil, errors.New("portability: archive workspace does not match its source")
+	}
+	if archive.Tables == nil {
+		return nil, errors.New("portability: archive table manifest is missing")
+	}
+
+	known := make(map[string]struct{}, len(tableSpecs))
+	for _, spec := range tableSpecs {
+		known[spec.name] = struct{}{}
+	}
+	for name := range archive.Tables {
+		if _, ok := known[name]; !ok {
+			return nil, fmt.Errorf("portability: archive contains unknown table %q", name)
+		}
+	}
+
+	inspection := &ArchiveInspection{
+		Version:           archive.Version,
+		SourceWorkspaceID: archive.SourceWorkspaceID,
+		ExportedAt:        archive.ExportedAt,
+		Tables:            make([]TableSummary, 0, len(tableSpecs)),
+	}
+	for _, spec := range tableSpecs {
+		rows, ok := archive.Tables[spec.name]
+		if !ok {
+			return nil, fmt.Errorf("portability: archive table %q is missing", spec.name)
+		}
+		for _, raw := range rows {
+			var object map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &object); err != nil || object == nil {
+				if err == nil {
+					err = errors.New("row is not a JSON object")
+				}
+				return nil, fmt.Errorf("portability: invalid %s row: %w", spec.name, err)
+			}
+		}
+		inspection.Tables = append(inspection.Tables, TableSummary{Name: spec.name, Rows: len(rows)})
+		inspection.RowCount += len(rows)
+	}
+
+	for _, raw := range archive.Tables["files"] {
+		var object struct {
+			OwnerType string `json:"owner_type"`
+			SizeBytes int64  `json:"size_bytes"`
+		}
+		if err := json.Unmarshal(raw, &object); err != nil {
+			return nil, fmt.Errorf("portability: invalid files row: %w", err)
+		}
+		if object.SizeBytes < 0 {
+			return nil, errors.New("portability: file row has a negative size")
+		}
+		if object.OwnerType != "workspace" {
+			inspection.AttachmentCount++
+			inspection.AttachmentBytes += object.SizeBytes
+		}
+	}
+	return inspection, nil
 }
 
 var tableSpecs = []struct {
@@ -254,6 +354,11 @@ func Import(ctx context.Context, pool *database.Pool, archive *Archive, targetWo
 	for _, spec := range tableSpecs {
 		rows := archive.Tables[spec.name]
 		summary := TableSummary{Name: spec.name, Rows: len(rows)}
+		if crossWorkspaceAttachmentTable(archive, targetWorkspaceID, spec.name) {
+			summary.Skipped = len(rows)
+			summaries = append(summaries, summary)
+			continue
+		}
 		if spec.direct {
 			ids := archiveIDs(rows)
 			if len(ids) > 0 {
@@ -277,20 +382,12 @@ func Import(ctx context.Context, pool *database.Pool, archive *Archive, targetWo
 	}
 	defer tx.Rollback(ctx)
 	for _, spec := range tableSpecs {
+		if crossWorkspaceAttachmentTable(archive, targetWorkspaceID, spec.name) {
+			continue
+		}
 		for _, raw := range archive.Tables[spec.name] {
-			if spec.direct {
-				var object map[string]any
-				if err := json.Unmarshal(raw, &object); err != nil {
-					return nil, err
-				}
-				object["workspace_id"] = targetWorkspaceID
-				raw, err = json.Marshal(object)
-				if err != nil {
-					return nil, err
-				}
-			}
-			if _, err := tx.Exec(ctx, fmt.Sprintf(`INSERT INTO %s SELECT * FROM jsonb_populate_record(NULL::%s,$1::jsonb) ON CONFLICT DO NOTHING`, spec.name, spec.name), raw); err != nil {
-				return nil, fmt.Errorf("portability: import %s: %w", spec.name, err)
+			if err := insertArchiveRow(ctx, tx, spec, raw, targetWorkspaceID, archive.SourceWorkspaceID); err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -328,13 +425,24 @@ func ImportChunk(ctx context.Context, pool *database.Pool, archive *Archive, tar
 			end = len(rows)
 		}
 		batchSize := end - rowIndex
+		if crossWorkspaceAttachmentTable(archive, targetWorkspaceID, spec.name) {
+			rowIndex = end
+			if rowIndex >= len(rows) {
+				tableIndex++
+				rowIndex = 0
+				for tableIndex < len(tableSpecs) && len(archive.Tables[tableSpecs[tableIndex].name]) == 0 {
+					tableIndex++
+				}
+			}
+			return tableIndex, rowIndex, batchSize, tableIndex >= len(tableSpecs), nil
+		}
 
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			return tableIndex, rowIndex, 0, false, err
 		}
 		for _, raw := range rows[rowIndex:end] {
-			if err := insertArchiveRow(ctx, tx, spec, raw, targetWorkspaceID); err != nil {
+			if err := insertArchiveRow(ctx, tx, spec, raw, targetWorkspaceID, archive.SourceWorkspaceID); err != nil {
 				_ = tx.Rollback(ctx)
 				return tableIndex, rowIndex, 0, false, err
 			}
@@ -377,14 +485,19 @@ func insertArchiveRow(ctx context.Context, tx pgx.Tx, spec struct {
 	name   string
 	where  string
 	direct bool
-}, raw json.RawMessage, targetWorkspaceID string) error {
-	if spec.direct || len(nullableMemberFields[spec.name]) > 0 || requiredMemberRows[spec.name] != "" {
+}, raw json.RawMessage, targetWorkspaceID, sourceWorkspaceID string) error {
+	if spec.direct || len(nullableMemberFields[spec.name]) > 0 || requiredMemberRows[spec.name] != "" || (spec.name == "form_submission_values" && sourceWorkspaceID != targetWorkspaceID) {
 		var object map[string]any
 		if err := json.Unmarshal(raw, &object); err != nil {
 			return err
 		}
 		if spec.direct {
 			object["workspace_id"] = targetWorkspaceID
+		}
+		if spec.name == "form_submission_values" && sourceWorkspaceID != targetWorkspaceID {
+			// The archive carries database rows, not binary objects. Keep the
+			// answer row importable while removing the source-workspace file id.
+			object["file_id"] = nil
 		}
 		if field := requiredMemberRows[spec.name]; field != "" {
 			if rawMember, ok := object[field].(string); ok && rawMember != "" {
@@ -420,6 +533,13 @@ func insertArchiveRow(ctx context.Context, tx pgx.Tx, spec struct {
 		return fmt.Errorf("portability: import %s: %w", spec.name, err)
 	}
 	return nil
+}
+
+func crossWorkspaceAttachmentTable(archive *Archive, targetWorkspaceID, tableName string) bool {
+	if archive == nil || archive.SourceWorkspaceID == "" || archive.SourceWorkspaceID == targetWorkspaceID {
+		return false
+	}
+	return tableName == "files" || tableName == "message_attachments"
 }
 
 func archiveIDs(rows []json.RawMessage) []string {
