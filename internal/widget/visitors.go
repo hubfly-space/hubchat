@@ -2,6 +2,9 @@ package widget
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -73,6 +76,9 @@ func (s *Service) Identify(ctx context.Context, workspaceID string, visitor *Vis
 		if err != nil {
 			return nil, err
 		}
+		if err := s.consumeIdentityNonce(ctx, workspaceID, claims); err != nil {
+			return nil, err
+		}
 		verified = true
 		method = "identity_token"
 		subject := claims.Subject
@@ -113,4 +119,55 @@ func (s *Service) Identify(ctx context.Context, workspaceID string, visitor *Vis
 	}
 	visitor.CustomerID = &found.ID
 	return found, nil
+}
+
+// consumeIdentityNonce atomically claims a verified token's nonce. The
+// unique workspace/nonce key is the replay boundary: concurrent requests with
+// the same signed token can never both proceed, even on different processes.
+func (s *Service) consumeIdentityNonce(ctx context.Context, workspaceID string, claims *identityClaims) error {
+	if claims == nil || claims.Nonce == "" {
+		return ErrIdentityTokenInvalid
+	}
+	var claimed []byte
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO widget_identity_nonces (workspace_id, nonce_hash, expires_at)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (workspace_id, nonce_hash) DO NOTHING
+		RETURNING nonce_hash
+	`, workspaceID, identityNonceHash(claims.Nonce), time.Unix(claims.Expiry, 0)).Scan(&claimed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrIdentityTokenReplayed
+	}
+	if err != nil {
+		return fmt.Errorf("widget: consume identity nonce: %w", err)
+	}
+	return nil
+}
+
+// SweepIdentityNonces removes expired replay guards in bounded batches. A
+// token is already rejected by expiry before this can make it reusable, so
+// deleting old rows does not weaken the active replay window.
+func (s *Service) SweepIdentityNonces(ctx context.Context, before time.Time, limit int) (int64, error) {
+	if before.IsZero() {
+		before = time.Now().UTC()
+	}
+	if limit <= 0 || limit > 5000 {
+		limit = 1000
+	}
+	result, err := s.pool.Exec(ctx, `
+		WITH expired AS (
+			SELECT workspace_id, nonce_hash
+			FROM widget_identity_nonces
+			WHERE expires_at < $1
+			ORDER BY expires_at, workspace_id, nonce_hash
+			LIMIT $2
+		)
+		DELETE FROM widget_identity_nonces n
+		USING expired
+		WHERE n.workspace_id = expired.workspace_id AND n.nonce_hash = expired.nonce_hash
+	`, before, limit)
+	if err != nil {
+		return 0, fmt.Errorf("widget: sweep identity nonces: %w", err)
+	}
+	return result.RowsAffected(), nil
 }

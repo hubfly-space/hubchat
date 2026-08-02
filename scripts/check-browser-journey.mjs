@@ -288,6 +288,8 @@ export async function runBrowserJourney({
         hasStylesheet: Boolean(shadow.querySelector('style[data-hubchat-widget-styles]')),
         hasExternalStylesheet: Boolean(shadow.querySelector('link[data-hubchat-widget-external-styles]')?.sheet),
         stylesheetRules: shadow.querySelector('style[data-hubchat-widget-styles]')?.sheet?.cssRules.length ?? 0,
+        supportsConstructableStylesheets: typeof CSSStyleSheet !== "undefined" && "replaceSync" in CSSStyleSheet.prototype && "adoptedStyleSheets" in (shadow ?? {}),
+        constructableStylesheetCount: shadow?.adoptedStyleSheets?.length ?? 0,
         launcherLabel: launcher.getAttribute("aria-label"),
       };
     })()`);
@@ -300,6 +302,7 @@ export async function runBrowserJourney({
     assert(widgetState.hasStylesheet, "widget CSS was not installed in the shadow root");
     assert(widgetState.hasExternalStylesheet, "widget external CSS fallback did not load under host CSP");
     assert(widgetState.stylesheetRules > 0 || widgetState.widgetFontFamily.includes("Inter"), "widget CSS regression: installed stylesheet contains no usable rules");
+    assert(!widgetState.supportsConstructableStylesheets || widgetState.constructableStylesheetCount > 0, "widget CSS regression: constructable stylesheet was not installed");
 
     const alreadyOpen = await browser.page.evaluate("Boolean(document.querySelector('#hubchat-widget')?.shadowRoot?.querySelector('[role=dialog]'))");
     if (!alreadyOpen) await browser.page.evaluate("document.querySelector('#host-open').click()");

@@ -391,6 +391,9 @@ func TestIdentifySignedTokenVerifiesAndMatchesByExternalID(t *testing.T) {
 	if first.Verification != "verified" {
 		t.Fatalf("expected a signed token to verify the customer, got %q", first.Verification)
 	}
+	if _, err := h.Widget.Identify(ctx, ws.WorkspaceID, visitor1, widget.IdentifyInput{SignedToken: &token1}); !errors.Is(err, widget.ErrIdentityTokenReplayed) {
+		t.Fatalf("expected a signed token replay to be rejected, got %v", err)
+	}
 
 	// …and confirm a second, independent visitor presenting a token for the
 	// same external id resolves to the *same* customer record rather than

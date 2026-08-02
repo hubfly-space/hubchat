@@ -45,6 +45,9 @@ const appRoutes: RouteObject[] = [
     ],
   },
 
+  // ------------------------------------------------------------------- tasks
+  { path: "tasks", element: page(() => import("../pages/tasks/TaskList")) },
+
   // ----------------------------------------------------------------- tickets
   { path: "tickets", element: page(() => import("../pages/tickets/TicketList")) },
   { path: "tickets/:ticketId", element: page(() => import("../pages/tickets/TicketDetail")) },
