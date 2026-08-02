@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 /** SSR-safe layout effect. The portal renders on the server in some deployments. */
 export const useIsomorphicLayoutEffect =
@@ -30,6 +30,37 @@ export function useLocalStorage<T>(key: string, initial: T) {
   }, [key, value]);
 
   return [value, setValue] as const;
+}
+
+export type DashboardPreferences = {
+  afterResolve: "next" | "list" | "stay";
+  markReadOnOpen: boolean;
+  reduceMotion: boolean;
+  showCustomerContext: boolean;
+};
+
+const DEFAULT_DASHBOARD_PREFERENCES: DashboardPreferences = {
+  afterResolve: "next",
+  markReadOnOpen: true,
+  reduceMotion: false,
+  showCustomerContext: true,
+};
+
+/** Browser-scoped workstation behaviour, not workspace policy or permissions. */
+export function useDashboardPreferences() {
+  const [preferences, setPreferences] = useLocalStorage<DashboardPreferences>(
+    "hubchat.dashboard.preferences.v1",
+    DEFAULT_DASHBOARD_PREFERENCES,
+  );
+
+  const setPreference = useCallback(<K extends keyof DashboardPreferences>(
+    key: K,
+    value: DashboardPreferences[K],
+  ) => {
+    setPreferences((current) => ({ ...current, [key]: value }));
+  }, [setPreferences]);
+
+  return { preferences, setPreference };
 }
 
 /** Debounce a rapidly-changing value. Search inputs, filter fields, autosave. */
@@ -159,6 +190,45 @@ export function useNow(intervalMs = 30_000): Date {
   }, [intervalMs]);
 
   return now;
+}
+
+export type FixedVirtualItem = {
+  index: number;
+  start: number;
+  size: number;
+};
+
+/**
+ * Window a long, fixed-height list without adding a third-party runtime.
+ * The caller owns the row height so a density switch can remain explicit and
+ * keyboard navigation can scroll to an item deterministically.
+ */
+export function useFixedVirtualList(count: number, itemSize: number, overscan = 8) {
+  const { ref, height } = useResizeObserver<HTMLDivElement>();
+  const [scrollTop, setScrollTop] = useState(0);
+  const onScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    setScrollTop(event.currentTarget.scrollTop);
+  }, []);
+  const viewportHeight = height || itemSize * (overscan + 1);
+  const first = Math.max(0, Math.floor(scrollTop / itemSize) - overscan);
+  const last = Math.min(count, Math.ceil((scrollTop + viewportHeight) / itemSize) + overscan);
+  const items = useMemo<FixedVirtualItem[]>(
+    () => Array.from({ length: Math.max(0, last - first) }, (_, offset) => {
+      const index = first + offset;
+      return { index, start: index * itemSize, size: itemSize };
+    }),
+    [first, itemSize, last],
+  );
+  const scrollToIndex = useCallback((index: number) => {
+    const element = ref.current;
+    if (!element || index < 0 || index >= count) return;
+    const top = index * itemSize;
+    const bottom = top + itemSize;
+    if (top < element.scrollTop) element.scrollTop = top;
+    else if (bottom > element.scrollTop + element.clientHeight) element.scrollTop = bottom - element.clientHeight;
+  }, [count, itemSize, ref]);
+
+  return { ref, onScroll, items, totalSize: count * itemSize, scrollToIndex };
 }
 
 /** Observe an element's size. Used by virtualised lists and chart containers. */

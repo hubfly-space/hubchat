@@ -29,6 +29,57 @@ export function formatDateTime(value: Date | string | number, opts: FormatOption
   }).format(toDate(value));
 }
 
+/**
+ * Value for a `datetime-local` input in an explicit IANA timezone.
+ *
+ * The input has no timezone information, so using Date#getHours() here would
+ * accidentally make scheduling depend on the agent's browser. Keep this
+ * conversion next to the other explicit formatting helpers instead.
+ */
+export function formatDateTimeLocal(value: Date | string | number, timeZone = "UTC"): string {
+  const parts = zonedDateParts(toDate(value), timeZone);
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+
+/**
+ * Convert a `datetime-local` wall-clock value in an IANA timezone to UTC.
+ * Returns null for malformed values and for wall-clock times skipped by a DST
+ * transition. Ambiguous fall-back times resolve deterministically to the
+ * offset selected by the runtime's timezone data.
+ */
+export function parseDateTimeLocal(value: string, timeZone = "UTC"): string | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const wallClock = Date.UTC(year, month - 1, day, hour, minute);
+  if (
+    !Number.isFinite(wallClock) ||
+    new Date(wallClock).getUTCFullYear() !== year ||
+    new Date(wallClock).getUTCMonth() !== month - 1 ||
+    new Date(wallClock).getUTCDate() !== day ||
+    hour > 23 ||
+    minute > 59
+  ) {
+    return null;
+  }
+
+  let candidate = wallClock;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const offset = timezoneOffset(new Date(candidate), timeZone);
+    const next = wallClock - offset;
+    if (next === candidate) break;
+    candidate = next;
+  }
+
+  const instant = new Date(candidate);
+  return formatDateTimeLocal(instant, timeZone) === value ? instant.toISOString() : null;
+}
+
 /** Date only, e.g. "12 Mar 2026". */
 export function formatDate(value: Date | string | number, opts: FormatOptions = {}): string {
   return new Intl.DateTimeFormat(opts.locale ?? DEFAULT_LOCALE, {
@@ -202,4 +253,27 @@ export function maskSecret(secret: string, visible = 4): string {
 
 function toDate(value: Date | string | number): Date {
   return value instanceof Date ? value : new Date(value);
+}
+
+type ZonedDateParts = { year: string; month: string; day: string; hour: string; minute: string };
+
+function zonedDateParts(value: Date, timeZone: string): ZonedDateParts {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    calendar: "gregory",
+    numberingSystem: "latn",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(value);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  return { year: get("year"), month: get("month"), day: get("day"), hour: get("hour"), minute: get("minute") };
+}
+
+function timezoneOffset(value: Date, timeZone: string): number {
+  const parts = zonedDateParts(value, timeZone);
+  return Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute)) - value.getTime();
 }
