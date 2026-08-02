@@ -157,6 +157,12 @@ export type UseQueryOptions = {
   enabled?: boolean;
   /** Refetch when the tab regains focus. On by default for lists. */
   refetchOnFocus?: boolean;
+  /**
+   * Refetch a mounted query at a bounded interval. This is reserved for
+   * genuinely live surfaces (for example the visitor context panel); normal
+   * lists should use realtime invalidation instead.
+   */
+  refetchInterval?: number;
 };
 
 /**
@@ -170,7 +176,7 @@ export function useQuery<T>(
   fetcher: (signal: AbortSignal) => Promise<T>,
   options: UseQueryOptions = {},
 ): QueryState<T> & { refetch: () => void } {
-  const { staleTime = 10_000, enabled = true, refetchOnFocus = true } = options;
+  const { staleTime = 10_000, enabled = true, refetchOnFocus = true, refetchInterval } = options;
 
   const serialized = key === null ? null : serialize(key);
   const active = enabled && serialized !== null;
@@ -230,6 +236,12 @@ export function useQuery<T>(
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [refetchOnFocus, active, load]);
+
+  useEffect(() => {
+    if (!active || !refetchInterval || refetchInterval <= 0) return;
+    const timer = window.setInterval(() => load(true), refetchInterval);
+    return () => window.clearInterval(timer);
+  }, [active, refetchInterval, load]);
 
   const refetch = useCallback(() => load(true), [load]);
 

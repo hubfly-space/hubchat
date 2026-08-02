@@ -14,7 +14,9 @@ import {
   useQuery,
   type Conversation,
   type Customer,
+  type VisitorContext,
   type Ticket,
+  type ApiCustomer360,
 } from "@hubchat/shared";
 import { BadgeCheck, Mail, MessageSquare, ShieldQuestion, StickyNote, Ticket as TicketIcon } from "lucide-react";
 import { useState } from "react";
@@ -29,13 +31,19 @@ import { useWorkspace, workspaceFormatOptions } from "../../app/workspace-contex
  * from the full profile link so this compact panel stays useful in a narrow
  * inbox column.
  */
-export function CustomerContextPanel({ customerId }: { customerId: string | null }) {
+export function CustomerContextPanel({ customerId, visitorId }: { customerId: string | null; visitorId: string | null }) {
+  const visitor = useQuery<VisitorContext>(
+    !customerId && visitorId ? ["visitor-context", visitorId] : null,
+    (signal) => api.get(`/visitors/${visitorId}/context`, { signal }),
+    { refetchInterval: 15_000 },
+  );
   const customer = useQuery<Customer>(
     customerId ? ["customer", customerId] : null,
     (signal) => api.get(`/customers/${customerId}`, { signal }),
+    { refetchInterval: 15_000 },
   );
 
-  if (!customerId) {
+  if (!customerId && !visitorId) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-center text-xs text-fg-muted">
         No customer is attached to this conversation yet.
@@ -43,10 +51,77 @@ export function CustomerContextPanel({ customerId }: { customerId: string | null
     );
   }
 
+  if (!customerId) {
+    return (
+      <QueryBoundary query={visitor}>
+        {(data) => <AnonymousVisitorContext context={data} />}
+      </QueryBoundary>
+    );
+  }
+
   return (
     <QueryBoundary query={customer}>
       {(data) => <CustomerContext customer={data} />}
     </QueryBoundary>
+  );
+}
+
+function AnonymousVisitorContext({ context }: { context: VisitorContext }) {
+  const currentPage = context.current_page;
+  const device = context.device;
+  return (
+    <div className="flex flex-col">
+      <section className="border-b border-line p-4">
+        <div className="flex flex-col items-center text-center">
+          <Avatar name="Anonymous visitor" seed={context.visitor_id} size="xl" />
+          <h2 className="mt-2.5 text-md font-semibold tracking-tight text-fg">Anonymous visitor</h2>
+          <Badge tone="neutral" leading={<ShieldQuestion />}>Not identified</Badge>
+          <p className="mt-2 text-2xs text-fg-muted">Visitor {context.visitor_id}</p>
+        </div>
+      </section>
+
+      <section className="border-b border-line p-4">
+        <Eyebrow className="mb-2">Live context</Eyebrow>
+        <dl>
+          <DetailRow label="Presence">{context.presence}</DetailRow>
+          <DetailRow label="Current page">
+            {currentPage?.url ? <a className="break-all text-accent-text hover:underline" href={currentPage.url} target="_blank" rel="noreferrer">{currentPage.url}</a> : "—"}
+          </DetailRow>
+          <DetailRow label="Device">{[device?.device, device?.browser, device?.os].filter(Boolean).join(" · ") || "—"}</DetailRow>
+          <DetailRow label="Language">{device?.language || "—"}</DetailRow>
+          <DetailRow label="Timezone">{device?.timezone || "—"}</DetailRow>
+          <DetailRow label="Platform">{device?.platform || "—"}</DetailRow>
+          <DetailRow label="Viewport">{formatViewport(device?.viewport)}</DetailRow>
+          <DetailRow label="Referrer">{device?.referrer_origin || "—"}</DetailRow>
+          {device?.user_agent && <DetailRow label="User agent"><span className="break-all text-2xs">{device.user_agent}</span></DetailRow>}
+          <DetailRow label="Pages viewed">{context.session?.page_views ?? context.page_journey.length}</DetailRow>
+        </dl>
+        <ContextMetadata metadata={context.context_metadata} />
+      </section>
+
+      <section className="border-b border-line p-4">
+        <Eyebrow className="mb-2">Recent pages</Eyebrow>
+        {context.page_journey.length ? (
+          <ul className="flex flex-col gap-px">
+            {context.page_journey.slice(0, 10).map((page) => (
+              <li key={page.id} className="rounded-md px-1.5 py-1.5 hover:bg-fill">
+                <span className="block truncate text-xs text-fg-secondary">{page.title || page.url || "Page visit"}</span>
+                <span className="block truncate text-2xs text-fg-muted">{page.url || "Unknown URL"} · {formatRelativeShort(page.occurred_at, new Date())} ago</span>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="text-2xs text-fg-muted">No page visits recorded yet.</p>}
+      </section>
+
+      <section className="p-4">
+        <Eyebrow className="mb-2">Session</Eyebrow>
+        <dl>
+          <DetailRow label="First seen">{formatRelativeShort(context.first_seen_at, new Date())} ago</DetailRow>
+          <DetailRow label="Last seen">{formatRelativeShort(context.last_seen_at, new Date())} ago</DetailRow>
+          <DetailRow label="Session ID">{context.session?.id ?? "—"}</DetailRow>
+        </dl>
+      </section>
+    </div>
   );
 }
 
@@ -66,6 +141,13 @@ function CustomerContext({ customer }: { customer: Customer }) {
     ["tickets", "customer-history", customer.id],
     (signal) => api.get(`/tickets?customer_id=${encodeURIComponent(customer.id)}&limit=5`, { signal }),
   );
+  const context = useQuery<ApiCustomer360>(
+    ["customer", "360", customer.id],
+    (signal) => api.get(`/customers/${customer.id}/360`, { signal }),
+    { refetchInterval: 15_000 },
+  );
+  const currentPage = context.data?.current_page;
+  const currentSession = context.data?.sessions[0];
 
   return (
     <div className="flex flex-col">
@@ -108,6 +190,8 @@ function CustomerContext({ customer }: { customer: Customer }) {
               </span>
             </DetailRow>
           ))}
+          <DetailRow label="Phone">{customer.phone || "—"}</DetailRow>
+          <DetailRow label="External ID">{customer.external_id || "—"}</DetailRow>
           <DetailRow label="Language">{customer.language ?? "—"}</DetailRow>
           <DetailRow label="Timezone">{customer.timezone ?? "—"}</DetailRow>
           <DetailRow label="First seen">
@@ -128,6 +212,50 @@ function CustomerContext({ customer }: { customer: Customer }) {
 
         <AddTag customer={customer} />
       </section>
+
+      <section className="border-b border-line p-4">
+        <Eyebrow className="mb-2">Live context</Eyebrow>
+        <dl>
+          <DetailRow label="Current page">
+            {currentPage?.url || customer.current_url ? <a className="break-all text-accent-text hover:underline" href={currentPage?.url || customer.current_url || "#"} target="_blank" rel="noreferrer">{currentPage?.url || customer.current_url}</a> : "—"}
+          </DetailRow>
+          {currentPage?.title && <DetailRow label="Page title"><span className="break-words">{currentPage.title}</span></DetailRow>}
+          {!currentPage?.title && currentSession?.current_title && <DetailRow label="Page title"><span className="break-words">{currentSession.current_title}</span></DetailRow>}
+          <DetailRow label="Presence">{customer.presence}</DetailRow>
+          <DetailRow label="Device">
+            {[context.data?.device?.device, context.data?.device?.browser, context.data?.device?.os].filter(Boolean).join(" · ") || "—"}
+          </DetailRow>
+          <DetailRow label="Language">{context.data?.device?.language || customer.language || "—"}</DetailRow>
+          <DetailRow label="Timezone">{context.data?.device?.timezone || customer.timezone || "—"}</DetailRow>
+          <DetailRow label="Platform">{context.data?.device?.platform || "—"}</DetailRow>
+          <DetailRow label="Viewport">{formatViewport(context.data?.device?.viewport)}</DetailRow>
+          <DetailRow label="Referrer">{context.data?.device?.referrer_origin || "—"}</DetailRow>
+          {context.data?.device?.user_agent && <DetailRow label="User agent"><span className="break-all text-2xs">{context.data.device.user_agent}</span></DetailRow>}
+          <DetailRow label="Session pages">{currentSession?.page_views ?? context.data?.page_journey.length ?? 0}</DetailRow>
+          <DetailRow label="Last seen">{customer.last_seen_at ? formatRelativeShort(customer.last_seen_at, new Date()) + " ago" : "—"}</DetailRow>
+        </dl>
+        <ContextMetadata metadata={context.data?.context_metadata} />
+        <Eyebrow className="mb-2 mt-4">Recent pages</Eyebrow>
+        {context.isLoading ? <p className="text-2xs text-fg-muted">Loading page history…</p> : context.error ? <p className="text-2xs text-danger">Could not load page history.</p> : context.data?.page_journey.length ? (
+          <ul className="flex flex-col gap-px">
+            {context.data.page_journey.slice(0, 10).map((page) => <li key={page.id} className="rounded-md px-1.5 py-1.5 hover:bg-fill"><span className="block truncate text-xs text-fg-secondary">{page.title || page.url || "Page visit"}</span><span className="block truncate text-2xs text-fg-muted">{page.url || "Unknown URL"} · {formatRelativeShort(page.occurred_at, new Date())} ago</span></li>)}
+          </ul>
+        ) : <p className="text-2xs text-fg-muted">No page visits recorded yet.</p>}
+      </section>
+
+      {context.data?.companies.length ? <section className="border-b border-line p-4">
+        <Eyebrow className="mb-2">Companies</Eyebrow>
+        <ul className="space-y-1.5">
+          {context.data.companies.map((company) => <li key={company.id} className="flex items-center justify-between gap-3 text-xs"><span className="truncate text-fg-secondary">{company.name}</span><span className="shrink-0 text-2xs text-fg-muted">{company.tier || company.domain || "—"}</span></li>)}
+        </ul>
+      </section> : null}
+
+      {context.data?.events.length ? <section className="border-b border-line p-4">
+        <Eyebrow className="mb-2">Recent activity</Eyebrow>
+        <ul className="space-y-1.5">
+          {context.data.events.slice(0, 8).map((event) => <li key={event.id} className="flex items-baseline justify-between gap-3"><span className="truncate text-xs text-fg-secondary">{event.type.replaceAll(".", " · ")}</span><span className="shrink-0 text-2xs text-fg-muted">{formatRelativeShort(event.occurred_at, new Date())} ago</span></li>)}
+        </ul>
+      </section> : null}
 
       {/* History ----------------------------------------------------------- */}
       <section className="p-4">
@@ -200,6 +328,41 @@ function titleCase(key: string): string {
   return key
     .replace(/[_-]/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatViewport(viewport: { width?: number; height?: number; device_pixel_ratio?: number } | null | undefined): string {
+  if (!viewport?.width || !viewport.height) return "—";
+  return `${viewport.width} × ${viewport.height}${viewport.device_pixel_ratio ? ` · ${viewport.device_pixel_ratio}× DPR` : ""}`;
+}
+
+function ContextMetadata({ metadata }: { metadata?: Record<string, unknown> }) {
+  const entries = Object.entries(metadata ?? {});
+  if (entries.length === 0) return null;
+  return (
+    <div className="mt-4">
+      <Eyebrow className="mb-2">Shared context</Eyebrow>
+      <dl>
+        {entries.map(([key, value]) => (
+          <DetailRow key={key} label={titleCase(key)}>
+            <span className="break-words">{formatContextValue(value)}</span>
+          </DetailRow>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+function formatContextValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "[unavailable]";
+    }
+  }
+  return String(value);
 }
 
 function VerificationBadge({ verification }: { verification: Customer["verification"] }) {

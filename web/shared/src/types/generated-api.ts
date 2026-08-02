@@ -218,6 +218,10 @@ export type ApiCustomer360 = {
   "tickets_truncated": boolean;
   "events": ApiCustomer360Event[];
   "events_truncated": boolean;
+  "page_journey": ApiCustomer360PageVisit[];
+  "page_journey_truncated": boolean;
+  "current_page"?: ApiCustomer360PageVisit | null;
+  "device"?: ApiCustomer360Device | null;
   "sessions": ApiCustomer360Session[];
   "sessions_truncated": boolean;
   "feedback": ApiCustomer360Feedback[];
@@ -230,6 +234,9 @@ export type ApiCustomer360 = {
   "identities_truncated": boolean;
   "merges": ApiCustomer360Merge[];
   "merges_truncated": boolean;
+  "context_metadata"?: {
+  [key: string]: unknown;
+};
 };
 
 export type ApiCustomer360Article = {
@@ -258,6 +265,22 @@ export type ApiCustomer360Conversation = {
   "last_message_preview": string;
   "last_message_at"?: string | null;
   "created_at": ApiTimestamp;
+};
+
+export type ApiCustomer360Device = {
+  "device"?: string;
+  "browser"?: string;
+  "os"?: string;
+  "language"?: string;
+  "timezone"?: string;
+  "platform"?: string;
+  "referrer_origin"?: string;
+  "user_agent"?: string;
+  "viewport"?: {
+  "width"?: number;
+  "height"?: number;
+  "device_pixel_ratio"?: number;
+};
 };
 
 export type ApiCustomer360Event = {
@@ -301,12 +324,42 @@ export type ApiCustomer360Merge = {
   "created_at": ApiTimestamp;
 };
 
+export type ApiCustomer360PageVisit = {
+  "id": ApiId;
+  "url"?: string | null;
+  "title"?: string;
+  "device"?: string;
+  "browser"?: string;
+  "os"?: string;
+  "platform"?: string;
+  "referrer_origin"?: string;
+  "user_agent"?: string;
+  "viewport"?: {
+  "width"?: number;
+  "height"?: number;
+  "device_pixel_ratio"?: number;
+};
+  "occurred_at": ApiTimestamp;
+};
+
 export type ApiCustomer360Session = {
   "id": ApiId;
   "device"?: string | null;
   "browser"?: string | null;
   "os"?: string | null;
+  "referrer"?: string | null;
+  "landing_url"?: string | null;
   "current_url"?: string | null;
+  "current_title"?: string | null;
+  "language"?: string | null;
+  "timezone"?: string | null;
+  "platform"?: string | null;
+  "user_agent"?: string | null;
+  "viewport"?: {
+  "width"?: number;
+  "height"?: number;
+  "device_pixel_ratio"?: number;
+} | null;
   "page_views": number;
   "started_at": ApiTimestamp;
   "last_seen_at": ApiTimestamp;
@@ -716,6 +769,22 @@ export type ApiUpdateTicketRequest = {
   "expected_version": number;
 };
 
+export type ApiVisitorContext = {
+  "visitor_id": ApiId;
+  "customer_id"?: string | null;
+  "presence": string;
+  "first_seen_at": ApiTimestamp;
+  "last_seen_at": ApiTimestamp;
+  "current_page"?: ApiCustomer360PageVisit | null;
+  "page_journey": ApiCustomer360PageVisit[];
+  "page_journey_truncated": boolean;
+  "device"?: ApiCustomer360Device | null;
+  "session"?: ApiCustomer360Session | null;
+  "context_metadata"?: {
+  [key: string]: unknown;
+};
+};
+
 export type ApiWidgetArticle = {
   "slug": string;
   "title": string;
@@ -839,6 +908,7 @@ export type ApiOperationId =
   | "getConversationsIdTranscript"
   | "getCustomer"
   | "getCustomer360"
+  | "getCustomerCommandBindings"
   | "getCustomersIdExport"
   | "getCustomersIdSessions"
   | "getCustomersIdTimeline"
@@ -900,11 +970,13 @@ export type ApiOperationId =
   | "getTicketsIdChildren"
   | "getTicketsIdFollowers"
   | "getTicketsIdLinks"
+  | "getVisitorsIdContext"
   | "getWebhooksId"
   | "getWebhooksIdDeliveries"
   | "getWidgetArticles"
   | "getWidgetArticlesSlug"
   | "getWidgetConfig"
+  | "getWidgetConversationsIdCommands"
   | "getWidgetConversationsIdFilesFileID"
   | "getWidgetConversationsIdMessages"
   | "getWidgetFeedbackBoards"
@@ -978,6 +1050,7 @@ export type ApiOperationId =
   | "patchConversationsIdPriority"
   | "patchConversationsIdState"
   | "patchConversationsIdTeam"
+  | "patchCustomerCommandBindingsId"
   | "patchCustomersIdAttributes"
   | "patchCustomersIdOwner"
   | "patchFeedbackItemsIdStatus"
@@ -1029,11 +1102,13 @@ export type ApiOperationId =
   | "postBlockedContacts"
   | "postCompanies"
   | "postCompaniesIdTags"
+  | "postConversationsIdCustomerCommands"
   | "postConversationsIdMerge"
   | "postConversationsIdMessagesMessageIDRedact"
   | "postConversationsIdRead"
   | "postConversationsIdSnooze"
   | "postConversationsIdTags"
+  | "postCustomerCommandBindings"
   | "postCustomersIdAttributesKeyReveal"
   | "postCustomersIdTags"
   | "postCustomersMerge"
@@ -1072,6 +1147,7 @@ export type ApiOperationId =
   | "postWebhooksIdTest"
   | "postWidgetArticlesSlugFeedback"
   | "postWidgetConversations"
+  | "postWidgetConversationsIdCommandsCommandIDAck"
   | "postWidgetConversationsIdFiles"
   | "postWidgetConversationsIdMessages"
   | "postWidgetEvents"
@@ -1424,6 +1500,9 @@ export type ApiOperationCatalog = {
 }; };
   "getCustomer": { method: "GET"; path: "/v1/customers/{id}"; request: unknown; response: ApiCustomer; };
   "getCustomer360": { method: "GET"; path: "/v1/customers/{id}/360"; request: unknown; response: ApiCustomer360; };
+  "getCustomerCommandBindings": { method: "GET"; path: "/v1/customer-command-bindings"; request: unknown; response: {
+  [key: string]: unknown;
+}; };
   "getCustomersIdExport": { method: "GET"; path: "/v1/customers/{id}/export"; request: unknown; response: {
   [key: string]: unknown;
 }; };
@@ -1593,6 +1672,7 @@ export type ApiOperationCatalog = {
   "getTicketsIdLinks": { method: "GET"; path: "/v1/tickets/{id}/links"; request: unknown; response: {
   [key: string]: unknown;
 }; };
+  "getVisitorsIdContext": { method: "GET"; path: "/v1/visitors/{id}/context"; request: unknown; response: ApiVisitorContext; };
   "getWebhooksId": { method: "GET"; path: "/v1/webhooks/{id}"; request: unknown; response: {
   [key: string]: unknown;
 }; };
@@ -1604,6 +1684,9 @@ export type ApiOperationCatalog = {
   [key: string]: unknown;
 }; };
   "getWidgetConfig": { method: "GET"; path: "/v1/widget/config"; request: unknown; response: {
+  [key: string]: unknown;
+}; };
+  "getWidgetConversationsIdCommands": { method: "GET"; path: "/v1/widget/conversations/{id}/commands"; request: unknown; response: {
   [key: string]: unknown;
 }; };
   "getWidgetConversationsIdFilesFileID": { method: "GET"; path: "/v1/widget/conversations/{id}/files/{fileID}"; request: unknown; response: {
@@ -1821,6 +1904,11 @@ export type ApiOperationCatalog = {
   [key: string]: unknown;
 }; };
   "patchConversationsIdTeam": { method: "PATCH"; path: "/v1/conversations/{id}/team"; request: {
+  [key: string]: unknown;
+}; response: {
+  [key: string]: unknown;
+}; };
+  "patchCustomerCommandBindingsId": { method: "PATCH"; path: "/v1/customer-command-bindings/{id}"; request: {
   [key: string]: unknown;
 }; response: {
   [key: string]: unknown;
@@ -2080,6 +2168,11 @@ export type ApiOperationCatalog = {
 }; response: {
   [key: string]: unknown;
 }; };
+  "postConversationsIdCustomerCommands": { method: "POST"; path: "/v1/conversations/{id}/customer-commands"; request: {
+  [key: string]: unknown;
+}; response: {
+  [key: string]: unknown;
+}; };
   "postConversationsIdMerge": { method: "POST"; path: "/v1/conversations/{id}/merge"; request: {
   [key: string]: unknown;
 }; response: {
@@ -2101,6 +2194,11 @@ export type ApiOperationCatalog = {
   [key: string]: unknown;
 }; };
   "postConversationsIdTags": { method: "POST"; path: "/v1/conversations/{id}/tags"; request: {
+  [key: string]: unknown;
+}; response: {
+  [key: string]: unknown;
+}; };
+  "postCustomerCommandBindings": { method: "POST"; path: "/v1/customer-command-bindings"; request: {
   [key: string]: unknown;
 }; response: {
   [key: string]: unknown;
@@ -2291,6 +2389,11 @@ export type ApiOperationCatalog = {
   [key: string]: unknown;
 }; };
   "postWidgetConversations": { method: "POST"; path: "/v1/widget/conversations"; request: {
+  [key: string]: unknown;
+}; response: {
+  [key: string]: unknown;
+}; };
+  "postWidgetConversationsIdCommandsCommandIDAck": { method: "POST"; path: "/v1/widget/conversations/{id}/commands/{commandID}/ack"; request: {
   [key: string]: unknown;
 }; response: {
   [key: string]: unknown;

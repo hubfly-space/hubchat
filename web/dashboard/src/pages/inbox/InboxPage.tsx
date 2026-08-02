@@ -192,7 +192,7 @@ export default function InboxPage() {
           )}
           aria-label="Customer context"
         >
-          <CustomerContextPanel customerId={conversation.customer_id} />
+          <CustomerContextPanel customerId={conversation.customer_id} visitorId={conversation.visitor_id ?? null} />
         </aside>
       )}
     </div>
