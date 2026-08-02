@@ -5,7 +5,27 @@
 
 version: 2
 updates:
-  - package-ecosystem: "" # See documentation for possible values
-    directory: "/" # Location of package manifests
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/web/dashboard"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/web/portal"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/web/shared"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/web/widget"
     schedule:
       interval: "weekly"

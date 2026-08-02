@@ -3,6 +3,8 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"io"
@@ -116,6 +118,61 @@ func TestAdminCLIResetPasswordAndCreateValidation(t *testing.T) {
 	}
 	if exportResult["action"] != "exported" || exportResult["path"] != archivePath {
 		t.Fatalf("unexpected workspace export output: %#v", exportResult)
+	}
+	out, err = captureCLIOutput(t, func() error {
+		return workspaceCommand([]string{"verify", "--file", archivePath, "--json"})
+	})
+	if err != nil {
+		t.Fatalf("workspace verify: %v", err)
+	}
+	var verificationResult struct {
+		Action            string `json:"action"`
+		Path              string `json:"path"`
+		Checksum          string `json:"checksum"`
+		SizeBytes         int64  `json:"size_bytes"`
+		Version           int    `json:"version"`
+		SourceWorkspaceID string `json:"source_workspace_id"`
+		RowCount          int    `json:"row_count"`
+	}
+	if err := json.Unmarshal([]byte(out), &verificationResult); err != nil {
+		t.Fatalf("decode workspace verification output %q: %v", out, err)
+	}
+	if verificationResult.Action != "verified" || verificationResult.Path != archivePath || verificationResult.Checksum == "" || verificationResult.SizeBytes <= 0 || verificationResult.Version != 1 || verificationResult.SourceWorkspaceID != workspaceID || verificationResult.RowCount < 1 {
+		t.Fatalf("unexpected workspace verification output: %+v", verificationResult)
+	}
+	compressed, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatalf("read archive for malformed copy: %v", err)
+	}
+	gzipReader, err := gzip.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		t.Fatalf("open archive for malformed copy: %v", err)
+	}
+	payload, err := io.ReadAll(gzipReader)
+	_ = gzipReader.Close()
+	if err != nil {
+		t.Fatalf("read archive payload for malformed copy: %v", err)
+	}
+	malformed, err := os.CreateTemp("", "hubchat-cli-malformed-*.json.gz")
+	if err != nil {
+		t.Fatalf("create malformed archive: %v", err)
+	}
+	malformedPath := malformed.Name()
+	t.Cleanup(func() { _ = os.Remove(malformedPath) })
+	malformedWriter := gzip.NewWriter(malformed)
+	if _, err := malformedWriter.Write(append(payload, []byte("\n{}")...)); err != nil {
+		t.Fatalf("write malformed archive: %v", err)
+	}
+	if err := malformedWriter.Close(); err != nil {
+		t.Fatalf("close malformed archive: %v", err)
+	}
+	if err := malformed.Close(); err != nil {
+		t.Fatalf("close malformed file: %v", err)
+	}
+	if _, err := captureCLIOutput(t, func() error {
+		return workspaceCommand([]string{"verify", "--file", malformedPath, "--json"})
+	}); err == nil {
+		t.Fatal("workspace verify accepted trailing JSON data")
 	}
 	out, err = captureCLIOutput(t, func() error {
 		return workspaceCommand([]string{"import", "--workspace", workspaceID, "--file", archivePath, "--dry-run", "--json"})

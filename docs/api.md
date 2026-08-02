@@ -74,6 +74,21 @@ header. Dashboard reports always send the active workspace timezone.
 in the standard cursor page envelope. Preserve the query string and pass the
 opaque `next_cursor` unchanged when requesting another page.
 
+`POST /api/v1/events` records the originating HTTP request correlation id on
+each event. `GET /api/v1/events` returns it as `request_id`, when the event was
+created through an HTTP request; widget and older events may return `null`.
+The dashboard event explorer can search by this id, making a support request
+id from an error response traceable to the event that arrived with it.
+
+Hosted portal forms use the resolved portal workspace and never accept a
+workspace ID from the browser: `GET /api/v1/portal/forms` lists enabled public
+forms (plus authenticated forms for a valid portal session), and
+`GET /api/v1/portal/forms/{slug}` returns one form. File fields upload to
+`POST /api/v1/portal/forms/{slug}/files` before the idempotent submission at
+`POST /api/v1/portal/forms/{slug}/submissions`. Authenticated forms return
+`401` without a valid customer portal session; hidden conditional answers and
+client-supplied customer IDs are not trusted or stored.
+
 The automation content endpoints separate safe support use from configuration:
 `GET /api/v1/automation/replies` and its `/{id}/use` action require
 `conversation.reply`, so agents can use approved saved replies without
@@ -170,6 +185,12 @@ GET /api/v1/widget/feedback/boards/{slug}/items accept limit and cursor;
 the widget endpoint also preserves the requested status, sort, search, and
 visitor identity across pages.
 
+Survey question conditions are deterministic and use
+`{"question_index":0,"operator":"is","value":"bug"}`. A condition may
+reference only an earlier question and supports `is`, `is_not`, `contains`,
+`is_set`, and `is_not_set`. Hidden questions are not required, submitted, or
+stored; the portal applies the same visibility rule before sending a response.
+
 Conversation message history is bounded as well. The authenticated and widget
 message endpoints return the newest window by default, expose `has_more` and
 `next_cursor` for older history, and accept the cursor opaquely as `cursor`.
@@ -203,7 +224,14 @@ the included table summaries and estimated row count; it does not create a job
 or file. A completed archive is stored in the configured file backend for seven
 days, after which the scheduler deletes the archive bytes and retains the
 export request as an `expired` audit record. `GET /api/v1/portability/exports/{id}/manifest`
-therefore works only while the archive remains available.
+therefore works only while the archive remains available. The manifest includes
+each non-archive attachment's id, filename, MIME type, size, owner, and
+checksum. Binary objects are intentionally not embedded in the JSON row
+archive. When importing into a different workspace, file rows and message
+attachment links are skipped and file-valued form answers are cleared; the
+preview reports those skipped rows so an operator cannot mistake a data-only
+import for a binary restore. Restore the attachment object store separately
+and verify it against the manifest before serving the target workspace.
 
 Portal custom domains use `POST /api/v1/portals/{id}/domains`, then a TXT record
 at `_hubchat-verification.<domain>` containing the returned verification token.

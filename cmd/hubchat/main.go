@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,6 +38,7 @@ import (
 	"github.com/hubchat/hubchat/internal/customer"
 	"github.com/hubchat/hubchat/internal/database"
 	"github.com/hubchat/hubchat/internal/emailchannel"
+	"github.com/hubchat/hubchat/internal/emailtemplate"
 	"github.com/hubchat/hubchat/internal/events"
 	"github.com/hubchat/hubchat/internal/feedback"
 	filemodule "github.com/hubchat/hubchat/internal/file"
@@ -377,6 +379,7 @@ func wireAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) (*appl
 	apiKeyService := apikey.New(pool)
 	webhookService := webhook.New(pool, cfg.Security.SecretKey, jobClient)
 	emailChannelService := emailchannel.New(pool, cfg.Security.SecretKey, conversationService, customerService, inboxService, jobClient)
+	emailTemplateService := emailtemplate.New(pool)
 	knowledgebaseService := knowledgebase.New(pool, knowledgebase.Options{Events: eventLog})
 	feedbackService := feedback.New(pool, eventLog, auditLog)
 	surveyService := survey.New(pool, survey.Options{Jobs: jobClient, PublicURL: cfg.Server.PublicURL, Events: eventLog})
@@ -412,7 +415,7 @@ func wireAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) (*appl
 		pool.Close()
 		return nil, fmt.Errorf("file storage: %w", err)
 	}
-	fileService := filemodule.New(pool, fileStore)
+	fileService := filemodule.New(pool, fileStore, auditLog)
 	emailChannelService.SetFileService(fileService)
 	notificationService.SetFileService(fileService)
 	portabilityService := portability.New(pool, fileService, jobClient)
@@ -424,40 +427,41 @@ func wireAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) (*appl
 	hub := realtime.NewHub(logger, cfg.Realtime.OutboundQueueSize)
 
 	deps := api.Deps{
-		Pool:          pool,
-		Logger:        logger,
-		Auth:          authService,
-		Workspace:     workspaceService,
-		Conversation:  conversationService,
-		Inbox:         inboxService,
-		Customer:      customerService,
-		Search:        searchService,
-		Ticket:        ticketService,
-		Widget:        widgetService,
-		File:          fileService,
-		Portal:        portalService,
-		Notification:  notificationService,
-		Form:          formService,
-		APIKeys:       apiKeyService,
-		Webhook:       webhookService,
-		Knowledgebase: knowledgebaseService,
-		Feedback:      feedbackService,
-		Survey:        surveyService,
-		SLA:           slaService,
-		Task:          taskService,
-		Automation:    automationService,
-		SavedView:     savedViewService,
-		Analytics:     analyticsService,
-		EmailChannel:  emailChannelService,
-		Portability:   portabilityService,
-		Hub:           hub,
-		Events:        eventLog,
-		Audit:         auditLog,
-		Jobs:          jobClient,
-		PublicURL:     cfg.Server.PublicURL,
-		Config:        cfg,
-		CookieDomain:  cfg.Security.CookieDomain,
-		CookieSecure:  cfg.Security.CookieSecure,
+		Pool:           pool,
+		Logger:         logger,
+		Auth:           authService,
+		Workspace:      workspaceService,
+		Conversation:   conversationService,
+		Inbox:          inboxService,
+		Customer:       customerService,
+		Search:         searchService,
+		Ticket:         ticketService,
+		Widget:         widgetService,
+		File:           fileService,
+		Portal:         portalService,
+		Notification:   notificationService,
+		Form:           formService,
+		APIKeys:        apiKeyService,
+		Webhook:        webhookService,
+		Knowledgebase:  knowledgebaseService,
+		Feedback:       feedbackService,
+		Survey:         surveyService,
+		SLA:            slaService,
+		Task:           taskService,
+		Automation:     automationService,
+		SavedView:      savedViewService,
+		Analytics:      analyticsService,
+		EmailChannel:   emailChannelService,
+		EmailTemplates: emailTemplateService,
+		Portability:    portabilityService,
+		Hub:            hub,
+		Events:         eventLog,
+		Audit:          auditLog,
+		Jobs:           jobClient,
+		PublicURL:      cfg.Server.PublicURL,
+		Config:         cfg,
+		CookieDomain:   cfg.Security.CookieDomain,
+		CookieSecure:   cfg.Security.CookieSecure,
 	}
 
 	var wsHandler http.Handler
@@ -476,7 +480,7 @@ func wireAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) (*appl
 
 	if cfg.Jobs.Enabled && (cfg.Server.Has(config.RoleWorker) || cfg.Server.Has(config.RoleScheduler)) {
 		app.Worker = jobs.NewWorker(pool, logger, cfg.Jobs)
-		registerJobHandlers(app.Worker, jobClient, mailer.New(cfg.Email, logger), fileService, emailChannelService, portabilityService, automationService, conversationService, customerService, webhookService, surveyService, widgetService, auditLog, slaService, analyticsService, knowledgebaseService, logger)
+		registerJobHandlers(app.Worker, jobClient, mailer.New(cfg.Email, logger), fileService, emailChannelService, emailTemplateService, portabilityService, automationService, conversationService, customerService, webhookService, surveyService, widgetService, auditLog, slaService, analyticsService, knowledgebaseService, logger)
 
 		if cfg.Server.Has(config.RoleScheduler) {
 			// Primes the self-perpetuating snooze-wake tick (see JobWakeSnoozed's
@@ -584,13 +588,20 @@ func openEmailAttachment(ctx context.Context, files *filemodule.Service, workspa
 // answerable by reading it, rather than by grepping for Register calls.
 func registerJobHandlers(
 	worker *jobs.Worker, jobClient *jobs.Client, sender *mailer.SMTPSender,
-	fileService *filemodule.Service, emailChannelService *emailchannel.Service, portabilityService *portability.Service, automationService *automation.Service, conversationService *conversation.Service, customerService *customer.Service, webhookService *webhook.Service, surveyService *survey.Service, widgetService *widget.Service, auditLog *audit.Log, slaService *sla.Service, analyticsService *analytics.Service, knowledgebaseService *knowledgebase.Service, logger *slog.Logger,
+	fileService *filemodule.Service, emailChannelService *emailchannel.Service, emailTemplateService *emailtemplate.Service, portabilityService *portability.Service, automationService *automation.Service, conversationService *conversation.Service, customerService *customer.Service, webhookService *webhook.Service, surveyService *survey.Service, widgetService *widget.Service, auditLog *audit.Log, slaService *sla.Service, analyticsService *analytics.Service, knowledgebaseService *knowledgebase.Service, logger *slog.Logger,
 ) {
 	worker.Register(api.JobEmailSend, func(ctx context.Context, job *jobs.Job) error {
 		var payload api.EmailPayload
 		if err := job.Decode(&payload); err != nil {
 			// A payload that will never parse is not worth five attempts.
 			return jobs.Permanent(err)
+		}
+		if payload.TemplateKey != "" && payload.WorkspaceID != "" && emailTemplateService != nil {
+			subject, body, renderErr := emailTemplateService.Render(ctx, payload.WorkspaceID, payload.TemplateKey, payload.TemplateData)
+			if renderErr != nil {
+				return jobs.Permanent(fmt.Errorf("render customer email template: %w", renderErr))
+			}
+			payload.Subject, payload.Body = subject, body
 		}
 
 		message := mailer.Message{
@@ -1676,6 +1687,19 @@ func workspaceCommand(args []string) error {
 			return fmt.Errorf("workspace: unknown argument %q", args[i])
 		}
 	}
+	// Verification is deliberately offline: an operator should be able to
+	// validate a downloaded archive before configuring or connecting to the
+	// target installation.
+	if subcommand == "verify" {
+		if input == "" {
+			return errors.New("workspace verify requires --file FILE")
+		}
+		_, verification, err := verifyWorkspaceArchive(input)
+		if err != nil {
+			return err
+		}
+		return writeArchiveVerification(jsonOutput, input, verification)
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -1725,6 +1749,9 @@ func workspaceCommand(args []string) error {
 		if fileErr != nil {
 			return fileErr
 		}
+		if _, _, err := verifyWorkspaceArchive(output); err != nil {
+			return fmt.Errorf("workspace export: verify generated archive: %w", err)
+		}
 		return writeArchiveSummary(jsonOutput, "exported", output, summaries)
 	case "import":
 		if input == "" {
@@ -1747,7 +1774,7 @@ func workspaceCommand(args []string) error {
 		}
 		return writeArchiveSummary(jsonOutput, label, input, summaries)
 	default:
-		return fmt.Errorf("unknown workspace subcommand %q (use export or import)", subcommand)
+		return fmt.Errorf("unknown workspace subcommand %q (use export, import, or verify)", subcommand)
 	}
 }
 
@@ -1762,21 +1789,105 @@ func resolveWorkspaceID(ctx context.Context, pool *database.Pool, slug string) (
 	return id, nil
 }
 
-func readArchive(path string) (*portability.Archive, error) {
-	data, err := os.ReadFile(path)
+type archiveVerification struct {
+	Action            string                     `json:"action"`
+	Path              string                     `json:"path"`
+	SizeBytes         int64                      `json:"size_bytes"`
+	Checksum          string                     `json:"checksum"`
+	Version           int                        `json:"version"`
+	SourceWorkspaceID string                     `json:"source_workspace_id"`
+	ExportedAt        time.Time                  `json:"exported_at"`
+	RowCount          int                        `json:"row_count"`
+	AttachmentCount   int                        `json:"attachment_count"`
+	AttachmentBytes   int64                      `json:"attachment_bytes"`
+	Tables            []portability.TableSummary `json:"tables"`
+}
+
+func verifyWorkspaceArchive(path string) (*portability.Archive, *archiveVerification, error) {
+	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var reader io.Reader = bytes.NewReader(data)
-	if gzipReader, gzipErr := gzip.NewReader(bytes.NewReader(data)); gzipErr == nil {
-		defer gzipReader.Close()
-		reader = gzipReader
+	defer file.Close()
+	stat, err := file.Stat()
+	if err != nil {
+		return nil, nil, err
 	}
+	if stat.IsDir() || stat.Size() <= 0 {
+		return nil, nil, errors.New("workspace archive: file is empty or not a regular file")
+	}
+	if stat.Size() > portability.MaxArchiveBytes {
+		return nil, nil, fmt.Errorf("workspace archive: compressed file exceeds the %d MiB limit", portability.MaxArchiveBytes/(1<<20))
+	}
+	compressed, err := io.ReadAll(io.LimitReader(file, portability.MaxArchiveBytes+1))
+	if err != nil {
+		return nil, nil, fmt.Errorf("workspace archive: read file: %w", err)
+	}
+	if int64(len(compressed)) > portability.MaxArchiveBytes {
+		return nil, nil, fmt.Errorf("workspace archive: compressed file exceeds the %d MiB limit", portability.MaxArchiveBytes/(1<<20))
+	}
+
+	gzipReader, err := gzip.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		return nil, nil, fmt.Errorf("workspace archive: open gzip: %w", err)
+	}
+	gzipReader.Multistream(false)
+	limited := &io.LimitedReader{R: gzipReader, N: portability.MaxArchiveBytes + 1}
 	var archive portability.Archive
-	if err := json.NewDecoder(reader).Decode(&archive); err != nil {
+	decoder := json.NewDecoder(limited)
+	if err := decoder.Decode(&archive); err != nil {
+		_ = gzipReader.Close()
+		return nil, nil, fmt.Errorf("workspace archive: decode JSON: %w", err)
+	}
+	var trailing any
+	trailingErr := decoder.Decode(&trailing)
+	closeErr := gzipReader.Close()
+	if limited.N <= 0 {
+		return nil, nil, fmt.Errorf("workspace archive: decompressed content exceeds the %d MiB limit", portability.MaxArchiveBytes/(1<<20))
+	}
+	if trailingErr != io.EOF {
+		if trailingErr == nil {
+			return nil, nil, errors.New("workspace archive: trailing JSON data is not allowed")
+		}
+		return nil, nil, fmt.Errorf("workspace archive: invalid trailing JSON: %w", trailingErr)
+	}
+	if closeErr != nil {
+		return nil, nil, fmt.Errorf("workspace archive: close gzip: %w", closeErr)
+	}
+	inspection, err := portability.ValidateArchive(&archive)
+	if err != nil {
+		return nil, nil, err
+	}
+	sum := sha256.Sum256(compressed)
+	return &archive, &archiveVerification{
+		Action:            "verified",
+		Path:              path,
+		SizeBytes:         int64(len(compressed)),
+		Checksum:          filemodule.ChecksumHex(sum[:]),
+		Version:           inspection.Version,
+		SourceWorkspaceID: inspection.SourceWorkspaceID,
+		ExportedAt:        inspection.ExportedAt,
+		RowCount:          inspection.RowCount,
+		AttachmentCount:   inspection.AttachmentCount,
+		AttachmentBytes:   inspection.AttachmentBytes,
+		Tables:            inspection.Tables,
+	}, nil
+}
+
+func readArchive(path string) (*portability.Archive, error) {
+	archive, _, err := verifyWorkspaceArchive(path)
+	if err != nil {
 		return nil, fmt.Errorf("workspace import: invalid archive: %w", err)
 	}
-	return &archive, nil
+	return archive, nil
+}
+
+func writeArchiveVerification(jsonOutput bool, path string, verification *archiveVerification) error {
+	if jsonOutput {
+		return json.NewEncoder(os.Stdout).Encode(verification)
+	}
+	fmt.Printf("Workspace archive verified: %s\nSHA-256: %s\n%d rows across %d tables; %d attachments (%d bytes).\n", path, verification.Checksum, verification.RowCount, len(verification.Tables), verification.AttachmentCount, verification.AttachmentBytes)
+	return nil
 }
 
 func writeArchiveSummary(jsonOutput bool, action, path string, summaries []portability.TableSummary) error {
@@ -1872,6 +1983,7 @@ Admin flags:
 Workspace flags:
   hubchat workspace export --workspace ID|--slug SLUG --out FILE.json.gz [--json]
   hubchat workspace import --workspace ID|--slug SLUG --file FILE [--dry-run] [--json]
+  hubchat workspace verify --file FILE.json.gz [--json]
 
 Job flags:
   hubchat jobs list [--workspace ID] [--state STATE] [--queue QUEUE] [--json]
