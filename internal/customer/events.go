@@ -112,18 +112,19 @@ type CustomerEvent struct {
 	Type        string
 	Source      string
 	URL         *string
+	RequestID   *string
 	Payload     map[string]any
 	OccurredAt  time.Time
 }
 
 const customerEventColumns = `
-	id, workspace_id, customer_id, visitor_id, session_id, type, source, url, payload, occurred_at
+	id, workspace_id, customer_id, visitor_id, session_id, type, source, url, request_id, payload, occurred_at
 `
 
 func scanCustomerEvent(row interface{ Scan(dest ...any) error }) (*CustomerEvent, error) {
 	var e CustomerEvent
 	err := row.Scan(
-		&e.ID, &e.WorkspaceID, &e.CustomerID, &e.VisitorID, &e.SessionID, &e.Type, &e.Source, &e.URL, &e.Payload, &e.OccurredAt,
+		&e.ID, &e.WorkspaceID, &e.CustomerID, &e.VisitorID, &e.SessionID, &e.Type, &e.Source, &e.URL, &e.RequestID, &e.Payload, &e.OccurredAt,
 	)
 	if err != nil {
 		return nil, err
@@ -135,12 +136,12 @@ func scanCustomerEvent(row interface{ Scan(dest ...any) error }) (*CustomerEvent
 }
 
 func (r *repository) insertCustomerEvent(
-	ctx context.Context, id, workspaceID string, customerID, sessionID *string, eventType, source string, url *string, payload map[string]any,
+	ctx context.Context, id, workspaceID string, customerID, sessionID *string, eventType, source string, url *string, requestID string, payload map[string]any,
 ) error {
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO customer_events (id, workspace_id, customer_id, session_id, type, source, url, payload)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, id, workspaceID, customerID, sessionID, eventType, source, url, payload)
+		INSERT INTO customer_events (id, workspace_id, customer_id, session_id, type, source, url, request_id, payload)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''), $9)
+	`, id, workspaceID, customerID, sessionID, eventType, source, url, requestID, payload)
 	return err
 }
 
@@ -271,6 +272,22 @@ func (s *Service) SessionsPage(ctx context.Context, workspaceID, customerID stri
 func (s *Service) IngestEvent(
 	ctx context.Context, workspaceID, customerID, eventType, source string, url *string, payload map[string]any,
 ) (*CustomerEvent, error) {
+	return s.ingestEvent(ctx, workspaceID, customerID, eventType, source, url, "", payload)
+}
+
+// IngestEventWithRequestID is the authenticated ingestion variant. Keeping
+// the original method preserves the SDK/widget service boundary, while HTTP
+// handlers can attach their request correlation id for the developer event
+// explorer and support diagnostics.
+func (s *Service) IngestEventWithRequestID(
+	ctx context.Context, workspaceID, customerID, eventType, source string, url *string, requestID string, payload map[string]any,
+) (*CustomerEvent, error) {
+	return s.ingestEvent(ctx, workspaceID, customerID, eventType, source, url, requestID, payload)
+}
+
+func (s *Service) ingestEvent(
+	ctx context.Context, workspaceID, customerID, eventType, source string, url *string, requestID string, payload map[string]any,
+) (*CustomerEvent, error) {
 	if eventType == "" {
 		return nil, ErrEmptyEventType
 	}
@@ -298,7 +315,7 @@ func (s *Service) IngestEvent(
 	}
 
 	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := s.repo.insertCustomerEvent(ctx, id, workspaceID, custID, nil, eventType, source, url, payload); err != nil {
+		if err := s.repo.insertCustomerEvent(ctx, id, workspaceID, custID, nil, eventType, source, url, requestID, payload); err != nil {
 			return err
 		}
 		// One fixed log type for every application event, the same way
@@ -310,6 +327,7 @@ func (s *Service) IngestEvent(
 			WorkspaceID: workspaceID, Type: events.EventReceived,
 			EntityType: "customer", EntityID: derefOrEmptyStr(custID),
 			ActorType: events.ActorSystem,
+			RequestID: requestID,
 			Data:      map[string]any{"type": eventType, "source": source, "customer_id": custID},
 		})
 	})
@@ -318,7 +336,7 @@ func (s *Service) IngestEvent(
 	}
 	return &CustomerEvent{
 		ID: id, WorkspaceID: workspaceID, CustomerID: custID, Type: eventType, Source: source,
-		URL: url, Payload: payload, OccurredAt: time.Now().UTC(),
+		URL: url, RequestID: optionalRequestID(requestID), Payload: payload, OccurredAt: time.Now().UTC(),
 	}, nil
 }
 
@@ -350,6 +368,13 @@ func derefOrEmptyStr(v *string) string {
 		return ""
 	}
 	return *v
+}
+
+func optionalRequestID(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func jsonSize(v map[string]any) (int64, error) {

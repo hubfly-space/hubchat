@@ -231,7 +231,7 @@ func TestIngestEventValidatesSourceAndSizeAndPowersTheTimeline(t *testing.T) {
 		t.Fatalf("expected ErrEmptyEventType, got %v", err)
 	}
 
-	if _, err := svc.IngestEvent(ctx, wsID, cust, "page.viewed", "rest_api", nil, map[string]any{"path": "/pricing"}); err != nil {
+	if _, err := svc.IngestEventWithRequestID(ctx, wsID, cust, "page.viewed", "rest_api", nil, "req_event_trace_1", map[string]any{"path": "/pricing"}); err != nil {
 		t.Fatalf("ingest: %v", err)
 	}
 	if _, err := svc.IngestEvent(ctx, wsID, cust, "checkout.started", "rest_api", nil, map[string]any{"amount": 42.0}); err != nil {
@@ -247,6 +247,9 @@ func TestIngestEventValidatesSourceAndSizeAndPowersTheTimeline(t *testing.T) {
 	}
 	if timeline[0].Type != "checkout.started" {
 		t.Fatalf("expected the timeline newest-first, got %s first", timeline[0].Type)
+	}
+	if timeline[1].RequestID == nil || *timeline[1].RequestID != "req_event_trace_1" {
+		t.Fatalf("request id was not persisted on the customer event: %v", timeline[1].RequestID)
 	}
 	firstPage, err := svc.Timeline(ctx, wsID, cust, time.Time{}, "", 1)
 	if err != nil || len(firstPage) != 1 {
