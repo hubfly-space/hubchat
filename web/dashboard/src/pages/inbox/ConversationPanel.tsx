@@ -27,6 +27,7 @@ import {
   useAllPages,
   useMutation,
   useQuery,
+  useToast,
   type Conversation,
   type ConversationLink,
   type Customer,
@@ -84,6 +85,7 @@ export function ConversationPanel({
 }) {
   const navigate = useNavigate();
   const { memberById, members, tagById, viewer, can, workspace } = useWorkspace();
+  const toast = useToast();
   const [managingTags, setManagingTags] = useState(false);
   const [merging, setMerging] = useState(false);
   const [linking, setLinking] = useState(false);
@@ -133,30 +135,54 @@ export function ConversationPanel({
 
   const setAssignee = useMutation<string | null, unknown>(
     (assigneeId) => api.patch(`/conversations/${conversation.id}/assignee`, { assignee_id: assigneeId }),
-    { invalidates: [["conversations"], ["conversation", conversation.id]] },
+    {
+      invalidates: [["conversations"], ["conversation", conversation.id]],
+      onSuccess: () => toast.success({ title: "Assignment updated", description: "The conversation queue was updated." }),
+      onError: (error) => toast.error({ title: "Could not update assignment", description: error instanceof ApiError ? error.message : "Try again." }),
+    },
   );
   const setPriority = useMutation<string, unknown>(
     (priority) => api.patch(`/conversations/${conversation.id}/priority`, { priority }),
-    { invalidates: [["conversations"], ["conversation", conversation.id]] },
+    {
+      invalidates: [["conversations"], ["conversation", conversation.id]],
+      onSuccess: () => toast.success({ title: "Priority updated" }),
+      onError: (error) => toast.error({ title: "Could not update priority", description: error instanceof ApiError ? error.message : "Try again." }),
+    },
   );
   const setState = useMutation<string, unknown>(
     (state) => api.patch(`/conversations/${conversation.id}/state`, { state }),
-    { invalidates: [["conversations"], ["conversation", conversation.id]] },
+    {
+      invalidates: [["conversations"], ["conversation", conversation.id]],
+      onSuccess: (state) => toast.success({ title: state === "resolved" ? "Conversation resolved" : "Conversation state updated" }),
+      onError: (error) => toast.error({ title: "Could not update conversation state", description: error instanceof ApiError ? error.message : "Try again." }),
+    },
   );
   const snooze = useMutation<string, unknown>(
     (until) => api.post(`/conversations/${conversation.id}/snooze`, { until }),
-    { invalidates: [["conversations"], ["conversation", conversation.id]] },
+    {
+      invalidates: [["conversations"], ["conversation", conversation.id]],
+      onSuccess: () => toast.success({ title: "Conversation snoozed", description: "It will return to the queue at the selected time." }),
+      onError: (error) => toast.error({ title: "Could not snooze conversation", description: error instanceof ApiError ? error.message : "Try again." }),
+    },
   );
   const setInbox = useMutation<string, unknown>(
     (inboxId) => api.patch(`/conversations/${conversation.id}/inbox`, { inbox_id: inboxId }),
-    { invalidates: [["conversations"], ["conversation", conversation.id]] },
+    {
+      invalidates: [["conversations"], ["conversation", conversation.id]],
+      onSuccess: () => toast.success({ title: "Inbox updated" }),
+      onError: (error) => toast.error({ title: "Could not move conversation", description: error instanceof ApiError ? error.message : "Try again." }),
+    },
   );
   const toggleFollow = useMutation<void, unknown>(
     () =>
       isFollowing
         ? api.delete(`/conversations/${conversation.id}/followers/me`)
         : api.put(`/conversations/${conversation.id}/followers/me`),
-    { invalidates: [["conversations"], ["conversation", conversation.id]] },
+    {
+      invalidates: [["conversations"], ["conversation", conversation.id]],
+      onSuccess: () => toast.success({ title: isFollowing ? "Conversation unfollowed" : "Conversation followed" }),
+      onError: (error) => toast.error({ title: "Could not update follow state", description: error instanceof ApiError ? error.message : "Try again." }),
+    },
   );
   const convertToTicket = useMutation<void, { id: string }>(
     () => api.post(`/conversations/${conversation.id}/ticket`, {}, { idempotencyKey: idempotencyKey() }),
