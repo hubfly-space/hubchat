@@ -29,6 +29,7 @@ import {
   useInfinite,
   useMutation,
   useQuery,
+  useToast,
 } from "@hubchat/shared";
 import { CalendarClock, Download, Inbox, Info, Trash2 } from "lucide-react";
 import type { Paginated } from "@hubchat/shared";
@@ -60,6 +61,7 @@ export default function ReportsOverview() {
   const [selectedReportID, setSelectedReportID] = useState("");
   const [deletingReport, setDeletingReport] = useState<SavedReport | null>(null);
   const [deletingSchedule, setDeletingSchedule] = useState<ReportSchedule | null>(null);
+  const toast = useToast();
   const period = reportWindow(range, workspace.timezone);
   const conversations = useAnalyticsRollups(["reports", "conversations", range, period.timezone], "conversations.created", period.from, period.to, period.timezone);
   const tickets = useAnalyticsRollups(["reports", "tickets", range, period.timezone], "tickets.created", period.from, period.to, period.timezone);
@@ -119,7 +121,9 @@ export default function ReportsOverview() {
     },
   });
   const exportCSV = () => {
-    void downloadFile(`/analytics/export.csv?metrics=${encodeURIComponent("conversations.created,tickets.created")}&from=${encodeURIComponent(period.from)}&to=${encodeURIComponent(period.to)}&timezone=${encodeURIComponent(period.timezone)}`, `hubchat-reports-${range}.csv`, workspace.id).catch(() => undefined);
+    void downloadFile(`/analytics/export.csv?metrics=${encodeURIComponent("conversations.created,tickets.created")}&from=${encodeURIComponent(period.from)}&to=${encodeURIComponent(period.to)}&timezone=${encodeURIComponent(period.timezone)}`, `hubchat-reports-${range}.csv`, workspace.id)
+      .then(() => toast.success({ title: "Report exported", description: `Downloaded the ${range} report as CSV.` }))
+      .catch((error) => toast.error({ title: "Could not export report", description: error instanceof Error ? error.message : "Try again." }));
   };
 
   return (
