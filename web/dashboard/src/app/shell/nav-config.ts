@@ -70,6 +70,8 @@ export type NavSection = {
   groups?: NavGroup[];
   /** Rendered in the rail's lower cluster instead of the primary cluster. */
   footer?: boolean;
+  /** Keep deep-linkable tools available without giving them a permanent rail slot. */
+  railHidden?: boolean;
 };
 
 /**
@@ -142,6 +144,7 @@ export const NAV_SECTIONS: NavSection[] = [
     icon: Lightbulb,
     to: "/feedback",
     match: "/feedback",
+    railHidden: true,
     groups: [
       {
         label: null,
@@ -155,7 +158,7 @@ export const NAV_SECTIONS: NavSection[] = [
 
   {
     id: "content",
-    label: "Content",
+    label: "Self-service",
     icon: BookOpen,
     to: "/kb",
     match: "/kb",
@@ -174,6 +177,7 @@ export const NAV_SECTIONS: NavSection[] = [
         items: [
           { label: "Surveys", to: "/surveys", icon: Star, matchPrefix: true },
           { label: "Forms", to: "/forms", icon: ClipboardList, matchPrefix: true },
+          { label: "Feedback", to: "/feedback", icon: Lightbulb, matchPrefix: true },
         ],
       },
     ],
@@ -231,6 +235,7 @@ export const NAV_SECTIONS: NavSection[] = [
     to: "/automation/rules",
     match: "/automation",
     capability: "automation.manage",
+    railHidden: true,
     groups: [
       {
         label: "Rules",
@@ -263,6 +268,7 @@ export const NAV_SECTIONS: NavSection[] = [
     to: "/developers/keys",
     match: "/developers",
     capability: "integration.manage",
+    railHidden: true,
     groups: [
       {
         label: "Access",
@@ -329,6 +335,14 @@ export const NAV_SECTIONS: NavSection[] = [
           { label: "Notifications", to: "/settings/notifications", icon: Activity },
           { label: "Background jobs", to: "/settings/jobs", icon: Activity },
           { label: "Usage & limits", to: "/settings/limits", icon: Gauge },
+        ],
+      },
+      {
+        label: "Tools",
+        items: [
+          { label: "Automation", to: "/automation/rules", icon: Workflow, matchPrefix: true },
+          { label: "SLA policies", to: "/sla/policies", icon: Timer, matchPrefix: true },
+          { label: "Developer tools", to: "/developers/keys", icon: Code2, matchPrefix: true },
         ],
       },
     ],
