@@ -107,6 +107,20 @@ export default function Onboarding() {
       </header>
 
       <main className="mx-auto max-w-3xl px-6 py-12">
+        <ol aria-label="Onboarding progress" className="mb-8 grid grid-cols-5 gap-1.5">
+          {order.map((item, itemIndex) => {
+            const complete = itemIndex < index;
+            const current = itemIndex === index;
+            return (
+              <li key={item} className="min-w-0">
+                <div className={cn("h-1 rounded-full", complete ? "bg-success" : current ? "bg-accent" : "bg-chart-track")} />
+                <p className={cn("mt-1 truncate text-2xs", current ? "font-medium text-fg" : "text-fg-muted")}>
+                  {item === "usecase" ? "Goal" : item === "surface" ? "Surface" : item === "install" ? "Install" : item === "invite" ? "Team" : "Inbox"}
+                </p>
+              </li>
+            );
+          })}
+        </ol>
         {step === "usecase" && (
           <Shell title="What will you use Hubchat for first?" description="This helps you choose a sensible starting surface. Nothing here is permanent." onNext={next}>
             <RadioGroup
@@ -137,11 +151,12 @@ export default function Onboarding() {
         {step === "surface" && (
           <Shell title="Choose how customers reach you" description="You can add every other channel later — this only guides the first install." onNext={next}>
             <div className="grid gap-3 sm:grid-cols-2">
-              <SurfaceCard icon={<MessageSquare />} title="Website widget" detail="A launcher on your app or marketing site. Live chat, help articles, and ticket forms." selected />
-              <SurfaceCard icon={<Radio />} title="Customer portal" detail="A hosted, branded site where customers track tickets and browse guides." />
-              <SurfaceCard icon={<Mail />} title="Email" detail="Forward an existing support address into this inbox." />
-              <SurfaceCard icon={<Ticket />} title="Embedded form" detail="A standalone form you can drop into any page." />
+              <SurfaceCard icon={<MessageSquare />} title="Website widget" detail="Recommended first step: live chat, help articles, and ticket forms in one surface." selected />
+              <SurfaceCard icon={<Radio />} title="Customer portal" detail="Available after setup for hosted ticket and knowledge-base access." />
+              <SurfaceCard icon={<Mail />} title="Email" detail="Available after setup once outbound and inbound email are configured." />
+              <SurfaceCard icon={<Ticket />} title="Embedded form" detail="Available after setup for focused support requests." />
             </div>
+            <Callout tone="info" className="mt-4">The first-run path creates a widget because it is the fastest way to prove the full loop: customer message → inbox → agent reply.</Callout>
           </Shell>
         )}
 
@@ -249,10 +264,14 @@ function InstallStep({
             <div className="flex items-center gap-3"><span className={cn("grid size-8 shrink-0 place-items-center rounded-full", active.last_seen_at ? "bg-success-subtle text-success-text" : "bg-fill text-fg-muted")}>{active.last_seen_at ? <Check className="size-4" strokeWidth={3} /> : <span className="size-2 animate-pulse rounded-full bg-current" />}</span><div className="min-w-0"><p className="text-sm font-medium text-fg">{active.last_seen_at ? "Widget detected" : "Waiting for the first widget load"}</p><p className="text-xs text-fg-muted">{active.last_seen_at ? `Last seen ${formatDateTime(active.last_seen_at, dateFormat)}` : "Install the snippet on an allowlisted hostname, then this check will update automatically."}</p></div><Badge className="ml-auto" tone={active.last_seen_at ? "success" : "warning"}>{active.last_seen_at ? "Connected" : "Not detected"}</Badge></div>
             <div className="flex flex-wrap items-end gap-2"><Field className="min-w-[16rem] flex-1" label="Allowed hostname" htmlFor="onboarding-widget-domain" description="Use a hostname, for example app.example.com."><Input id="onboarding-widget-domain" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="app.example.com" /></Field><Button variant="secondary" size="md" disabled={!normalizedDomain || addDomain.isPending || active.domains.includes(normalizedDomain)} loading={addDomain.isPending} onClick={() => void addDomain.mutate({ domain: normalizedDomain }).catch(() => {})}>{active.domains.includes(normalizedDomain) ? "Allowlisted" : "Allow hostname"}</Button></div>
             {Boolean(addDomain.error) && <p className="text-sm text-danger">{addDomain.error instanceof ApiError ? addDomain.error.message : "Could not allowlist that hostname."}</p>}
+            {!active.domains.length && <p className="text-xs text-warning-text">Add the hostname before testing the widget. Requests from other origins will be rejected.</p>}
           </CardBody></Card>
 
           <div className="mt-5"><CodeBlock filename="index.html" code={snippet} /></div>
-          <div className="mt-3 flex justify-end"><Button variant="ghost" size="sm" leading={<Copy />} onClick={() => void copySnippet()}>{copied ? "Copied" : "Copy install snippet"}</Button></div>
+          <div className="mt-3 flex flex-wrap justify-end gap-2">
+            <Button variant="secondary" size="sm" disabled={!active.id} onClick={() => window.location.assign(`/app/channels/widgets/${active.id}`)}>Open widget preview</Button>
+            <Button variant="ghost" size="sm" leading={<Copy />} onClick={() => void copySnippet()}>{copied ? "Copied" : "Copy install snippet"}</Button>
+          </div>
         </>
       )}
     </Shell>
