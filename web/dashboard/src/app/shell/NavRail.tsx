@@ -18,7 +18,7 @@ export function NavRail({ unreadCount }: { unreadCount: number }) {
   const { can } = useWorkspace();
 
   const visible = NAV_SECTIONS.filter(
-    (section) => !section.capability || can(section.capability),
+    (section) => !section.railHidden && (!section.capability || can(section.capability)),
   );
   const primary = visible.filter((section) => !section.footer);
   const footer = visible.filter((section) => section.footer);
