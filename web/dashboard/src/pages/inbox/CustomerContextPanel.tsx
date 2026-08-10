@@ -104,9 +104,14 @@ function AnonymousVisitorContext({ context }: { context: VisitorContext }) {
         {context.page_journey.length ? (
           <ul className="flex flex-col gap-px">
             {context.page_journey.slice(0, 10).map((page) => (
-              <li key={page.id} className="rounded-md px-1.5 py-1.5 hover:bg-fill">
-                <span className="block truncate text-xs text-fg-secondary">{page.title || page.url || "Page visit"}</span>
-                <span className="block truncate text-2xs text-fg-muted">{page.url || "Unknown URL"} · {formatRelativeShort(page.occurred_at, new Date())} ago</span>
+              <li key={page.id} className="rounded-md hover:bg-fill">
+                {page.url ? <a href={page.url} target="_blank" rel="noreferrer" className="block px-1.5 py-1.5">
+                  <span className="block truncate text-xs text-accent-text">{page.title || page.url}</span>
+                  <span className="block truncate text-2xs text-fg-muted">{page.url} · {formatRelativeShort(page.occurred_at, new Date())} ago</span>
+                </a> : <div className="px-1.5 py-1.5">
+                  <span className="block truncate text-xs text-fg-secondary">{page.title || "Page visit"}</span>
+                  <span className="block truncate text-2xs text-fg-muted">Unknown URL · {formatRelativeShort(page.occurred_at, new Date())} ago</span>
+                </div>}
               </li>
             ))}
           </ul>
@@ -179,6 +184,17 @@ function CustomerContext({ customer }: { customer: Customer }) {
         </div>
       </section>
 
+      <section className="border-b border-line p-4">
+        <Eyebrow className="mb-2">At a glance</Eyebrow>
+        <div className="grid grid-cols-2 gap-2">
+          <SummaryCell label="Presence" value={customer.presence || "Unknown"} />
+          <SummaryCell label="Identity" value={customer.verification === "verified" ? "Verified" : "Unverified"} />
+          <SummaryCell label="Open tickets" value={tickets.isLoading ? "…" : String((tickets.data?.data ?? []).filter((item) => !["resolved", "closed"].includes(item.status)).length)} />
+          <SummaryCell label="Recent conversations" value={history.isLoading ? "…" : String(history.data?.data.length ?? 0)} />
+        </div>
+        {currentPage?.title ? <p className="mt-3 truncate text-xs text-fg-secondary" title={currentPage.title}>Currently viewing: {currentPage.title}</p> : null}
+      </section>
+
       {/* Attributes ---------------------------------------------------------- */}
       <section className="border-b border-line p-4">
         <Eyebrow className="mb-2">Details</Eyebrow>
@@ -238,7 +254,7 @@ function CustomerContext({ customer }: { customer: Customer }) {
         <Eyebrow className="mb-2 mt-4">Recent pages</Eyebrow>
         {context.isLoading ? <p className="text-2xs text-fg-muted">Loading page history…</p> : context.error ? <p className="text-2xs text-danger">Could not load page history.</p> : context.data?.page_journey.length ? (
           <ul className="flex flex-col gap-px">
-            {context.data.page_journey.slice(0, 10).map((page) => <li key={page.id} className="rounded-md px-1.5 py-1.5 hover:bg-fill"><span className="block truncate text-xs text-fg-secondary">{page.title || page.url || "Page visit"}</span><span className="block truncate text-2xs text-fg-muted">{page.url || "Unknown URL"} · {formatRelativeShort(page.occurred_at, new Date())} ago</span></li>)}
+            {context.data.page_journey.slice(0, 10).map((page) => <li key={page.id} className="rounded-md hover:bg-fill">{page.url ? <a href={page.url} target="_blank" rel="noreferrer" className="block px-1.5 py-1.5"><span className="block truncate text-xs text-accent-text">{page.title || page.url}</span><span className="block truncate text-2xs text-fg-muted">{page.url} · {formatRelativeShort(page.occurred_at, new Date())} ago</span></a> : <div className="px-1.5 py-1.5"><span className="block truncate text-xs text-fg-secondary">{page.title || "Page visit"}</span><span className="block truncate text-2xs text-fg-muted">Unknown URL · {formatRelativeShort(page.occurred_at, new Date())} ago</span></div>}</li>)}
           </ul>
         ) : <p className="text-2xs text-fg-muted">No page visits recorded yet.</p>}
       </section>
@@ -253,7 +269,7 @@ function CustomerContext({ customer }: { customer: Customer }) {
       {context.data?.events.length ? <section className="border-b border-line p-4">
         <Eyebrow className="mb-2">Recent activity</Eyebrow>
         <ul className="space-y-1.5">
-          {context.data.events.slice(0, 8).map((event) => <li key={event.id} className="flex items-baseline justify-between gap-3"><span className="truncate text-xs text-fg-secondary">{event.type.replaceAll(".", " · ")}</span><span className="shrink-0 text-2xs text-fg-muted">{formatRelativeShort(event.occurred_at, new Date())} ago</span></li>)}
+          {context.data.events.slice(0, 8).map((event) => <li key={event.id} className="flex items-baseline justify-between gap-3"><span className="truncate text-xs text-fg-secondary">{humanEventType(event.type)}</span><span className="shrink-0 text-2xs text-fg-muted">{formatRelativeShort(event.occurred_at, new Date())} ago</span></li>)}
         </ul>
       </section> : null}
 
@@ -328,6 +344,16 @@ function titleCase(key: string): string {
   return key
     .replace(/[_-]/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function humanEventType(value: string): string {
+  return value
+    .replace(/[._-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function SummaryCell({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-md border border-line-subtle bg-inset px-2.5 py-2"><p className="text-2xs text-fg-muted">{label}</p><p className="mt-0.5 truncate text-xs font-medium capitalize text-fg">{value}</p></div>;
 }
 
 function formatViewport(viewport: { width?: number; height?: number; device_pixel_ratio?: number } | null | undefined): string {
