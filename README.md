@@ -166,7 +166,11 @@ docs/                 architecture and engineering guidelines
 | [Widget SDK](docs/widget-sdk.md) | Browser loader commands, identity, events, and TypeScript declarations |
 | [Security](docs/security.md) | Tenant isolation, identity verification, the threat model |
 | [Deployment](docs/deployment.md) | Release artifacts, migrations, roles, rollout checks, and restore verification |
+| [Release process](docs/release-process.md) | Clean release checks, database safety, and release-note requirements |
+| [Localization](docs/localization.md) | Supported customer-surface locales and RTL verification |
 | [Contributing](CONTRIBUTING.md) | How to propose and land a change |
+| [Security policy](SECURITY.md) | Private vulnerability reporting and supported-version policy |
+| [Code of conduct](CODE_OF_CONDUCT.md) | Community participation expectations and reporting |
 | [ADRs](docs/adr/) | Decisions that would otherwise be re-argued |
 
 ---
