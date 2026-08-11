@@ -42,3 +42,4 @@ Thumbs.db
 
 .claude
 .material
+scripts/deploy-alwaysdata.sh

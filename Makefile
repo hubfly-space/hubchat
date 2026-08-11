@@ -122,6 +122,12 @@ production-browser-check: build ## Production binary check plus Chrome widget/po
 checksums: ## Produce SHA256 checksums for release artifacts
 	cd $(DIST) && sha256sum * > SHA256SUMS
 
+## ---------------------------------------------------------------- deploy
+
+.PHONY: deploy
+deploy: build ## Build and deploy
+	./scripts/deploy-alwaysdata.sh
+
 ## ---------------------------------------------------------------- quality
 
 .PHONY: check
