@@ -344,6 +344,8 @@ export type ApiCustomer360PageVisit = {
 
 export type ApiCustomer360Session = {
   "id": ApiId;
+  "ip_prefix"?: string | null;
+  "ip_country"?: string | null;
   "device"?: string | null;
   "browser"?: string | null;
   "os"?: string | null;
