@@ -504,6 +504,7 @@ export type ContactSession = {
   last_seen_at: Timestamp;
   ended_at: Timestamp | null;
   ip_country: string | null;
+  ip_prefix?: string | null;
   browser: string | null;
   os: string | null;
   device: "desktop" | "mobile" | "tablet" | "unknown";
@@ -566,7 +567,7 @@ export type VisitorContext = {
     user_agent?: string;
     viewport?: { width?: number; height?: number; device_pixel_ratio?: number };
   };
-  session?: Pick<ContactSession, "id" | "referrer" | "landing_url" | "current_url" | "current_title" | "language" | "timezone" | "platform" | "user_agent" | "viewport" | "page_views" | "started_at" | "last_seen_at" | "ended_at"> & {
+  session?: Pick<ContactSession, "id" | "ip_prefix" | "ip_country" | "referrer" | "landing_url" | "current_url" | "current_title" | "language" | "timezone" | "platform" | "user_agent" | "viewport" | "page_views" | "started_at" | "last_seen_at" | "ended_at"> & {
     device?: string;
     browser?: string;
     os?: string;
