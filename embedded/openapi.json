@@ -17938,6 +17938,18 @@
           "id": {
             "$ref": "#/components/schemas/Id"
           },
+          "ip_prefix": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ip_country": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "device": {
             "type": [
               "string",
