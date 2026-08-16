@@ -606,7 +606,7 @@ func contactSessionJSON(s customer.ContactSession) map[string]any {
 	return map[string]any{
 		"id": s.ID, "customer_id": s.CustomerID, "visitor_id": s.VisitorID,
 		"started_at": s.StartedAt, "last_seen_at": s.LastSeenAt, "ended_at": s.EndedAt,
-		"ip_country": s.IPCountry, "browser": s.Browser, "os": s.OS, "device": device,
+		"ip_prefix": s.IPPrefix, "ip_country": s.IPCountry, "browser": s.Browser, "os": s.OS, "device": device,
 		"referrer": s.Referrer, "current_url": s.CurrentURL, "current_title": s.CurrentTitle,
 		"language": s.Language, "timezone": s.Timezone, "platform": s.Platform, "user_agent": s.UserAgent,
 		"viewport": s.Viewport, "page_views": s.PageViews,
