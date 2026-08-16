@@ -33,6 +33,7 @@ import (
 	"github.com/hubchat/hubchat/internal/feedback"
 	"github.com/hubchat/hubchat/internal/file"
 	"github.com/hubchat/hubchat/internal/form"
+	"github.com/hubchat/hubchat/internal/geoip"
 	"github.com/hubchat/hubchat/internal/httpserver"
 	"github.com/hubchat/hubchat/internal/inbox"
 	"github.com/hubchat/hubchat/internal/jobs"
@@ -66,6 +67,7 @@ type Deps struct {
 	Search         *search.Service
 	Ticket         *ticket.Service
 	Widget         *widget.Service
+	GeoIP          *geoip.Resolver
 	File           *file.Service
 	Portal         *portal.Service
 	Notification   *notification.Service
