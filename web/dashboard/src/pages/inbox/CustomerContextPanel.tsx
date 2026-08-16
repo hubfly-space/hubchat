@@ -69,6 +69,7 @@ export function CustomerContextPanel({ customerId, visitorId }: { customerId: st
 function AnonymousVisitorContext({ context }: { context: VisitorContext }) {
   const currentPage = context.current_page;
   const device = context.device;
+  const pageJourney = context.page_journey ?? [];
   return (
     <div className="flex flex-col">
       <section className="border-b border-line p-4">
@@ -84,6 +85,8 @@ function AnonymousVisitorContext({ context }: { context: VisitorContext }) {
         <Eyebrow className="mb-2">Live context</Eyebrow>
         <dl>
           <DetailRow label="Presence">{context.presence}</DetailRow>
+          <DetailRow label="Approx. location">{context.session?.ip_country || "—"}</DetailRow>
+          <DetailRow label="Network">{context.session?.ip_prefix || "—"}</DetailRow>
           <DetailRow label="Current page">
             {currentPage?.url ? <a className="break-all text-accent-text hover:underline" href={currentPage.url} target="_blank" rel="noreferrer">{currentPage.url}</a> : "—"}
           </DetailRow>
@@ -94,16 +97,16 @@ function AnonymousVisitorContext({ context }: { context: VisitorContext }) {
           <DetailRow label="Viewport">{formatViewport(device?.viewport)}</DetailRow>
           <DetailRow label="Referrer">{device?.referrer_origin || "—"}</DetailRow>
           {device?.user_agent && <DetailRow label="User agent"><span className="break-all text-2xs">{device.user_agent}</span></DetailRow>}
-          <DetailRow label="Pages viewed">{context.session?.page_views ?? context.page_journey.length}</DetailRow>
+          <DetailRow label="Pages viewed">{context.session?.page_views ?? pageJourney.length}</DetailRow>
         </dl>
         <ContextMetadata metadata={context.context_metadata} />
       </section>
 
       <section className="border-b border-line p-4">
         <Eyebrow className="mb-2">Recent pages</Eyebrow>
-        {context.page_journey.length ? (
+        {pageJourney.length ? (
           <ul className="flex flex-col gap-px">
-            {context.page_journey.slice(0, 10).map((page) => (
+            {pageJourney.slice(0, 10).map((page) => (
               <li key={page.id} className="rounded-md hover:bg-fill">
                 {page.url ? <a href={page.url} target="_blank" rel="noreferrer" className="block px-1.5 py-1.5">
                   <span className="block truncate text-xs text-accent-text">{page.title || page.url}</span>
@@ -153,6 +156,7 @@ function CustomerContext({ customer }: { customer: Customer }) {
   );
   const currentPage = context.data?.current_page;
   const currentSession = context.data?.sessions[0];
+  const pageJourney = context.data?.page_journey ?? [];
 
   return (
     <div className="flex flex-col">
@@ -238,6 +242,8 @@ function CustomerContext({ customer }: { customer: Customer }) {
           {currentPage?.title && <DetailRow label="Page title"><span className="break-words">{currentPage.title}</span></DetailRow>}
           {!currentPage?.title && currentSession?.current_title && <DetailRow label="Page title"><span className="break-words">{currentSession.current_title}</span></DetailRow>}
           <DetailRow label="Presence">{customer.presence}</DetailRow>
+          <DetailRow label="Approx. location">{currentSession?.ip_country || "—"}</DetailRow>
+          <DetailRow label="Network">{currentSession?.ip_prefix || "—"}</DetailRow>
           <DetailRow label="Device">
             {[context.data?.device?.device, context.data?.device?.browser, context.data?.device?.os].filter(Boolean).join(" · ") || "—"}
           </DetailRow>
@@ -247,14 +253,14 @@ function CustomerContext({ customer }: { customer: Customer }) {
           <DetailRow label="Viewport">{formatViewport(context.data?.device?.viewport)}</DetailRow>
           <DetailRow label="Referrer">{context.data?.device?.referrer_origin || "—"}</DetailRow>
           {context.data?.device?.user_agent && <DetailRow label="User agent"><span className="break-all text-2xs">{context.data.device.user_agent}</span></DetailRow>}
-          <DetailRow label="Session pages">{currentSession?.page_views ?? context.data?.page_journey.length ?? 0}</DetailRow>
+          <DetailRow label="Session pages">{currentSession?.page_views ?? pageJourney.length}</DetailRow>
           <DetailRow label="Last seen">{customer.last_seen_at ? formatRelativeShort(customer.last_seen_at, new Date()) + " ago" : "—"}</DetailRow>
         </dl>
         <ContextMetadata metadata={context.data?.context_metadata} />
         <Eyebrow className="mb-2 mt-4">Recent pages</Eyebrow>
-        {context.isLoading ? <p className="text-2xs text-fg-muted">Loading page history…</p> : context.error ? <p className="text-2xs text-danger">Could not load page history.</p> : context.data?.page_journey.length ? (
+        {context.isLoading ? <p className="text-2xs text-fg-muted">Loading page history…</p> : context.error ? <p className="text-2xs text-danger">Could not load page history.</p> : pageJourney.length ? (
           <ul className="flex flex-col gap-px">
-            {context.data.page_journey.slice(0, 10).map((page) => <li key={page.id} className="rounded-md hover:bg-fill">{page.url ? <a href={page.url} target="_blank" rel="noreferrer" className="block px-1.5 py-1.5"><span className="block truncate text-xs text-accent-text">{page.title || page.url}</span><span className="block truncate text-2xs text-fg-muted">{page.url} · {formatRelativeShort(page.occurred_at, new Date())} ago</span></a> : <div className="px-1.5 py-1.5"><span className="block truncate text-xs text-fg-secondary">{page.title || "Page visit"}</span><span className="block truncate text-2xs text-fg-muted">Unknown URL · {formatRelativeShort(page.occurred_at, new Date())} ago</span></div>}</li>)}
+            {pageJourney.slice(0, 10).map((page) => <li key={page.id} className="rounded-md hover:bg-fill">{page.url ? <a href={page.url} target="_blank" rel="noreferrer" className="block px-1.5 py-1.5"><span className="block truncate text-xs text-accent-text">{page.title || page.url}</span><span className="block truncate text-2xs text-fg-muted">{page.url} · {formatRelativeShort(page.occurred_at, new Date())} ago</span></a> : <div className="px-1.5 py-1.5"><span className="block truncate text-xs text-fg-secondary">{page.title || "Page visit"}</span><span className="block truncate text-2xs text-fg-muted">Unknown URL · {formatRelativeShort(page.occurred_at, new Date())} ago</span></div>}</li>)}
           </ul>
         ) : <p className="text-2xs text-fg-muted">No page visits recorded yet.</p>}
       </section>
