@@ -33,7 +33,7 @@ type VisitorContext struct {
 // visitor. The workspace predicate is required even though visitor ids are
 // opaque, because ids are not an authorization mechanism.
 func (s *Service) VisitorContext(ctx context.Context, workspaceID, visitorID string) (*VisitorContext, error) {
-	var result VisitorContext
+	result := VisitorContext{PageJourney: []PageVisitReference{}}
 	if err := s.pool.QueryRow(ctx, `
 		SELECT id, customer_id, first_seen_at, last_seen_at
 		FROM visitors
@@ -133,12 +133,12 @@ func (s *Service) latestContextMetadata(ctx context.Context, workspaceID, visito
 func (s *Service) latestVisitorSession(ctx context.Context, workspaceID, visitorID string) (*SessionReference, error) {
 	var item SessionReference
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, device, browser, os, referrer, landing_url, current_url, current_title, language, timezone, platform, user_agent, viewport, page_views, started_at, last_seen_at, ended_at
+		SELECT id, ip_prefix, ip_country, device, browser, os, referrer, landing_url, current_url, current_title, language, timezone, platform, user_agent, viewport, page_views, started_at, last_seen_at, ended_at
 		FROM contact_sessions
 		WHERE workspace_id=$1 AND visitor_id=$2
 		ORDER BY last_seen_at DESC, id DESC
 		LIMIT 1
-	`, workspaceID, visitorID).Scan(&item.ID, &item.Device, &item.Browser, &item.OS, &item.Referrer, &item.LandingURL, &item.CurrentURL, &item.CurrentTitle, &item.Language, &item.Timezone, &item.Platform, &item.UserAgent, &item.Viewport, &item.PageViews, &item.StartedAt, &item.LastSeenAt, &item.EndedAt)
+	`, workspaceID, visitorID).Scan(&item.ID, &item.IPPrefix, &item.IPCountry, &item.Device, &item.Browser, &item.OS, &item.Referrer, &item.LandingURL, &item.CurrentURL, &item.CurrentTitle, &item.Language, &item.Timezone, &item.Platform, &item.UserAgent, &item.Viewport, &item.PageViews, &item.StartedAt, &item.LastSeenAt, &item.EndedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
