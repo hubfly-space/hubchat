@@ -746,7 +746,6 @@ export function Widget({
               placeholder={content.input_placeholder}
               disabled={!config.online}
               offlineMessage={content.offline_message}
-              accent={appearance.accent}
               files={attachments}
               uploading={uploading}
               error={attachmentError}
@@ -1376,7 +1375,6 @@ function Composer({
   placeholder,
   disabled,
   offlineMessage,
-  accent,
   files,
   uploading,
   error,
@@ -1389,7 +1387,6 @@ function Composer({
   placeholder: string;
   disabled: boolean;
   offlineMessage: string;
-  accent: string;
   files: File[];
   uploading: boolean;
   error: string;
@@ -1397,7 +1394,7 @@ function Composer({
 }) {
   const t = useWidgetText();
   return (
-    <div data-hubchat-widget-composer className="shrink-0 border-t border-line bg-surface p-2">
+    <div data-hubchat-widget-composer className="shrink-0 border-t border-line-subtle bg-surface px-3 pb-3 pt-2.5">
       {disabled && (
         <p className="mb-2 rounded-md bg-fill px-2.5 py-1.5 text-[11px] leading-normal text-fg-muted">
           {offlineMessage}
@@ -1406,7 +1403,7 @@ function Composer({
       {files.length > 0 && <p className="mb-2 truncate rounded-md bg-fill px-2.5 py-1.5 text-[11px] text-fg-muted">{uploading ? t("uploading", "Uploading…") : files.map((file) => file.name).join(", ")}</p>}
       {error && <p className="mb-2 rounded-md bg-danger-subtle px-2.5 py-1.5 text-[11px] text-danger-text">{error}</p>}
 
-      <div className="flex items-end gap-2 rounded-md border border-line bg-inset px-2.5 py-1.5 focus-within:border-accent">
+      <div className="flex items-end gap-1.5 rounded-lg border border-line bg-inset px-2 py-1.5 shadow-1 transition-[border-color,box-shadow] hover:border-line-strong focus-within:border-accent focus-within:shadow-[0_0_0_3px_var(--hc-accent-subtle)]">
         <textarea
           ref={ref}
           rows={1}
@@ -1425,11 +1422,11 @@ function Composer({
           }}
           placeholder={placeholder}
           aria-label={t("message", "Message")}
-          className="max-h-24 min-w-0 flex-1 resize-none bg-transparent py-1 text-sm leading-normal text-fg outline-none"
+          className="max-h-24 min-w-0 flex-1 resize-none bg-transparent px-1 py-1.5 text-sm leading-normal text-fg outline-none"
         />
 
-        <label aria-label={t("attach_file", "Attach a file")} className="cursor-pointer pb-1.5 text-fg-muted">
-          <Paperclip className="size-4" />
+        <label aria-label={t("attach_file", "Attach a file")} className="group grid size-7 shrink-0 cursor-pointer place-items-center rounded-md text-fg-muted transition-colors hover:bg-fill hover:text-fg-secondary">
+          <Paperclip className="size-4 transition-transform group-hover:-rotate-12" />
           <input type="file" multiple className="sr-only" onChange={(event) => { onChooseFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
         </label>
 
@@ -1438,10 +1435,10 @@ function Composer({
           onClick={onSend}
           disabled={!value.trim()}
           aria-label={t("send_request", "Send")}
-          className="pb-1.5 transition-opacity disabled:opacity-30"
-          style={{ color: accent }}
+          className="grid size-7 shrink-0 place-items-center rounded-md text-white shadow-1 transition-[background-color,opacity,transform] hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-30"
+          style={{ backgroundColor: "var(--hc-accent)", color: "var(--hc-accent-fg)" }}
         >
-          <Send className="size-4" />
+          <Send className="size-3.5" />
         </button>
       </div>
     </div>
