@@ -170,6 +170,13 @@ func ClientIP(r *http.Request, trusted []net.IPNet) string {
 	return forwarded
 }
 
+// RequestClientIP applies the same trusted-proxy policy used by rate limiting
+// to application features that need the caller address. It never trusts a
+// forwarded address supplied directly by an untrusted client.
+func RequestClientIP(r *http.Request, trustedProxies []string) string {
+	return ClientIP(r, parseTrustedProxies(trustedProxies))
+}
+
 func parseTrustedProxies(cidrs []string) []net.IPNet {
 	var nets []net.IPNet
 	for _, entry := range cidrs {
