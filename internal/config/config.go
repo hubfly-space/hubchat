@@ -153,9 +153,12 @@ type Security struct {
 	CSRFEnabled     bool
 
 	TrustedProxies []string
-	RateLimitRPM   int
-	LoginAttempts  int
-	LockoutWindow  time.Duration
+	// GeoIPDatabasePath points to a local MaxMind-compatible country/city DB.
+	// Empty disables lookup while still allowing masked prefixes to be stored.
+	GeoIPDatabasePath string
+	RateLimitRPM      int
+	LoginAttempts     int
+	LockoutWindow     time.Duration
 }
 
 type Realtime struct {
@@ -307,6 +310,9 @@ func Load() (Config, error) {
 
 	if v := os.Getenv("HUBCHAT_SECRET_KEY"); v != "" {
 		cfg.Security.SecretKey = []byte(v)
+	}
+	if v := os.Getenv("HUBCHAT_GEOIP_DATABASE_PATH"); v != "" {
+		cfg.Security.GeoIPDatabasePath = v
 	}
 
 	if v := os.Getenv("HUBCHAT_DATA_DIR"); v != "" {
