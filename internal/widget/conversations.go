@@ -126,10 +126,14 @@ func (s *Service) visitorAuthorName(ctx context.Context, workspaceID string, vis
 // customer when one exists and left anonymous otherwise (IngestEvent
 // tolerates an empty customer id for exactly this case).
 func (s *Service) Track(ctx context.Context, workspaceID string, visitor *Visitor, eventType string, pageURL *string, payload map[string]any) (*customer.CustomerEvent, error) {
+	return s.TrackWithNetwork(ctx, workspaceID, visitor, eventType, pageURL, payload, nil)
+}
+
+func (s *Service) TrackWithNetwork(ctx context.Context, workspaceID string, visitor *Visitor, eventType string, pageURL *string, payload map[string]any, network *customer.NetworkContext) (*customer.CustomerEvent, error) {
 	customerID := ""
 	if visitor.CustomerID != nil {
 		customerID = *visitor.CustomerID
 	}
 	pageURL = customer.NormalizeObservedURL(pageURL)
-	return s.customer.IngestVisitorEvent(ctx, workspaceID, visitor.ID, customerID, eventType, "js_sdk", pageURL, payload)
+	return s.customer.IngestVisitorEventWithNetwork(ctx, workspaceID, visitor.ID, customerID, eventType, "js_sdk", pageURL, payload, network)
 }
