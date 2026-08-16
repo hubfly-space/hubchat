@@ -119,6 +119,8 @@ type ViewportReference struct {
 
 type SessionReference struct {
 	ID           string             `json:"id"`
+	IPPrefix     *string            `json:"ip_prefix,omitempty"`
+	IPCountry    *string            `json:"ip_country,omitempty"`
 	Device       *string            `json:"device,omitempty"`
 	Browser      *string            `json:"browser,omitempty"`
 	OS           *string            `json:"os,omitempty"`
@@ -359,7 +361,7 @@ func (s *Service) Customer360(ctx context.Context, workspaceID, customerID strin
 	}
 
 	sessionRows, err := s.pool.Query(ctx, `
-		SELECT id, device, browser, os, referrer, landing_url, current_url, current_title, language, timezone, platform, user_agent, viewport, page_views, started_at, last_seen_at, ended_at
+		SELECT id, ip_prefix, ip_country, device, browser, os, referrer, landing_url, current_url, current_title, language, timezone, platform, user_agent, viewport, page_views, started_at, last_seen_at, ended_at
 		FROM contact_sessions
 		WHERE workspace_id=$1 AND customer_id=$2
 		ORDER BY last_seen_at DESC, id DESC
@@ -370,7 +372,7 @@ func (s *Service) Customer360(ctx context.Context, workspaceID, customerID strin
 	}
 	for sessionRows.Next() {
 		var item SessionReference
-		if err := sessionRows.Scan(&item.ID, &item.Device, &item.Browser, &item.OS, &item.Referrer, &item.LandingURL, &item.CurrentURL, &item.CurrentTitle, &item.Language, &item.Timezone, &item.Platform, &item.UserAgent, &item.Viewport, &item.PageViews, &item.StartedAt, &item.LastSeenAt, &item.EndedAt); err != nil {
+		if err := sessionRows.Scan(&item.ID, &item.IPPrefix, &item.IPCountry, &item.Device, &item.Browser, &item.OS, &item.Referrer, &item.LandingURL, &item.CurrentURL, &item.CurrentTitle, &item.Language, &item.Timezone, &item.Platform, &item.UserAgent, &item.Viewport, &item.PageViews, &item.StartedAt, &item.LastSeenAt, &item.EndedAt); err != nil {
 			sessionRows.Close()
 			return nil, fmt.Errorf("customer: scan 360 session: %w", err)
 		}
