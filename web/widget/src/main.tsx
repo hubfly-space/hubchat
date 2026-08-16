@@ -48,7 +48,7 @@ const criticalStyles = `
   font-size: 13.5px;
   line-height: 1.55;
 }
-[data-hubchat-widget-root][data-theme="dark"] { color: #f7f8fa; background: #0f1114; }
+[data-hubchat-widget-root][data-theme="dark"] { color: #f7f8fa; background: transparent; }
 [data-hubchat-widget-root] button,
 [data-hubchat-widget-root] input,
 [data-hubchat-widget-root] textarea,
