@@ -14,9 +14,11 @@ import (
 
 	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/conversation"
+	"github.com/hubchat/hubchat/internal/customer"
 	"github.com/hubchat/hubchat/internal/feedback"
 	"github.com/hubchat/hubchat/internal/file"
 	formmodule "github.com/hubchat/hubchat/internal/form"
+	"github.com/hubchat/hubchat/internal/geoip"
 	"github.com/hubchat/hubchat/internal/httpserver"
 	"github.com/hubchat/hubchat/internal/knowledgebase"
 	"github.com/hubchat/hubchat/internal/widget"
@@ -711,7 +713,14 @@ func handleWidgetTrack(deps Deps) http.HandlerFunc {
 			writeWidgetError(w, r, err)
 			return
 		}
-		if _, err := deps.Widget.Track(r.Context(), workspaceID, visitor, req.Type, req.PageURL, req.Payload); err != nil {
+		var network *customer.NetworkContext
+		if deps.GeoIP != nil {
+			result := deps.GeoIP.Lookup(httpserver.RequestClientIP(r, deps.Config.Security.TrustedProxies))
+			network = &customer.NetworkContext{IPPrefix: result.Prefix, CountryCode: result.CountryCode, CountryName: result.CountryName}
+		} else {
+			network = &customer.NetworkContext{IPPrefix: geoip.Mask(httpserver.RequestClientIP(r, deps.Config.Security.TrustedProxies))}
+		}
+		if _, err := deps.Widget.TrackWithNetwork(r.Context(), workspaceID, visitor, req.Type, req.PageURL, req.Payload, network); err != nil {
 			writeWidgetError(w, r, err)
 			return
 		}
@@ -794,7 +803,7 @@ func handleWidgetSubmitForm(deps Deps) http.HandlerFunc {
 			writeWidgetError(w, r, err)
 			return
 		}
-		input := formmodule.SubmissionInput{Values: req.Values, FileIDs: req.FileIDs, VisitorID: visitor.ID, SourceURL: req.URL, IP: clientIP(r), UserAgent: r.UserAgent()}
+		input := formmodule.SubmissionInput{Values: req.Values, FileIDs: req.FileIDs, VisitorID: visitor.ID, SourceURL: req.URL, IP: geoip.Mask(httpserver.RequestClientIP(r, deps.Config.Security.TrustedProxies)), UserAgent: r.UserAgent()}
 		if visitor.CustomerID != nil {
 			input.CustomerID = *visitor.CustomerID
 		}
