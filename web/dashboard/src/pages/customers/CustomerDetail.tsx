@@ -73,6 +73,7 @@ type ContactSession = {
   last_seen_at: string;
   ended_at: string | null;
   ip_country?: string | null;
+  ip_prefix?: string | null;
   browser: string | null;
   os: string | null;
   device: string;
