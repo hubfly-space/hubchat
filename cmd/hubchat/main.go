@@ -43,6 +43,7 @@ import (
 	"github.com/hubchat/hubchat/internal/feedback"
 	filemodule "github.com/hubchat/hubchat/internal/file"
 	formmodule "github.com/hubchat/hubchat/internal/form"
+	"github.com/hubchat/hubchat/internal/geoip"
 	"github.com/hubchat/hubchat/internal/httpserver"
 	"github.com/hubchat/hubchat/internal/ids"
 	"github.com/hubchat/hubchat/internal/inbox"
@@ -371,6 +372,11 @@ func wireAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) (*appl
 	conversationService := conversation.New(pool, eventLog, auditLog)
 	inboxService := inbox.New(pool, eventLog, auditLog)
 	customerService := customer.New(pool, eventLog, auditLog, cfg.Limits)
+	geoIPResolver, err := geoip.Open(cfg.Security.GeoIPDatabasePath)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("open GeoIP database: %w", err)
+	}
 	searchService := search.New(conversationService, customerService)
 	ticketService := ticket.New(pool, workspaceService, eventLog, auditLog)
 	portalService := portal.New(pool, portal.Options{SessionLifetime: cfg.Security.SessionLifetime})
@@ -437,6 +443,7 @@ func wireAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) (*appl
 		Search:         searchService,
 		Ticket:         ticketService,
 		Widget:         widgetService,
+		GeoIP:          geoIPResolver,
 		File:           fileService,
 		Portal:         portalService,
 		Notification:   notificationService,
@@ -475,7 +482,10 @@ func wireAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) (*appl
 			WS:    wsHandler,
 			Ready: deps.Ready,
 		},
-		closeDB: pool.Close,
+		closeDB: func() {
+			_ = geoIPResolver.Close()
+			pool.Close()
+		},
 	}
 
 	if cfg.Jobs.Enabled && (cfg.Server.Has(config.RoleWorker) || cfg.Server.Has(config.RoleScheduler)) {
