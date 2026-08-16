@@ -35,6 +35,7 @@ type ContactSession struct {
 	CustomerID   *string
 	VisitorID    *string
 	WidgetID     *string
+	IPPrefix     *string
 	IPCountry    *string
 	Browser      *string
 	OS           *string
@@ -56,7 +57,7 @@ type ContactSession struct {
 }
 
 const contactSessionColumns = `
-	id, workspace_id, customer_id, visitor_id, widget_id, ip_country, browser, os, device,
+	id, workspace_id, customer_id, visitor_id, widget_id, ip_prefix, ip_country, browser, os, device,
 	referrer, landing_url, current_url, current_title, language, timezone, platform, user_agent,
 	viewport, page_views, consent, started_at, last_seen_at, ended_at
 `
@@ -64,7 +65,7 @@ const contactSessionColumns = `
 func scanContactSession(row interface{ Scan(dest ...any) error }) (*ContactSession, error) {
 	var s ContactSession
 	err := row.Scan(
-		&s.ID, &s.WorkspaceID, &s.CustomerID, &s.VisitorID, &s.WidgetID, &s.IPCountry, &s.Browser, &s.OS, &s.Device,
+		&s.ID, &s.WorkspaceID, &s.CustomerID, &s.VisitorID, &s.WidgetID, &s.IPPrefix, &s.IPCountry, &s.Browser, &s.OS, &s.Device,
 		&s.Referrer, &s.LandingURL, &s.CurrentURL, &s.CurrentTitle, &s.Language, &s.Timezone, &s.Platform, &s.UserAgent,
 		&s.Viewport, &s.PageViews, &s.Consent, &s.StartedAt, &s.LastSeenAt, &s.EndedAt,
 	)
@@ -291,6 +292,24 @@ func (s *Service) IngestEvent(
 func (s *Service) IngestVisitorEvent(
 	ctx context.Context, workspaceID, visitorID, customerID, eventType, source string, url *string, payload map[string]any,
 ) (*CustomerEvent, error) {
+	return s.ingestVisitorEvent(ctx, workspaceID, visitorID, customerID, eventType, source, url, payload, nil)
+}
+
+type NetworkContext struct {
+	IPPrefix    string
+	CountryCode string
+	CountryName string
+}
+
+func (s *Service) IngestVisitorEventWithNetwork(
+	ctx context.Context, workspaceID, visitorID, customerID, eventType, source string, url *string, payload map[string]any, network *NetworkContext,
+) (*CustomerEvent, error) {
+	return s.ingestVisitorEvent(ctx, workspaceID, visitorID, customerID, eventType, source, url, payload, network)
+}
+
+func (s *Service) ingestVisitorEvent(
+	ctx context.Context, workspaceID, visitorID, customerID, eventType, source string, url *string, payload map[string]any, network *NetworkContext,
+) (*CustomerEvent, error) {
 	if eventType == "" {
 		return nil, ErrEmptyEventType
 	}
@@ -324,12 +343,12 @@ func (s *Service) IngestVisitorEvent(
 		if errors.Is(err, pgx.ErrNoRows) {
 			if _, err = tx.Exec(ctx, `
 				INSERT INTO contact_sessions (
-					id, workspace_id, customer_id, visitor_id, browser, os, device, referrer,
+					id, workspace_id, customer_id, visitor_id, ip_prefix, ip_country, browser, os, device, referrer,
 					landing_url, current_url, current_title, language, timezone, platform, user_agent,
 					viewport, page_views
-				) VALUES ($1,$2,NULLIF($3,''),$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),$9,$10,NULLIF($11,''),NULLIF($12,''),NULLIF($13,''),NULLIF($14,''),NULLIF($15,''),$16,$17)
+				) VALUES ($1,$2,NULLIF($3,''),$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),NULLIF($9,''),NULLIF($10,''),$11,$12,NULLIF($13,''),NULLIF($14,''),NULLIF($15,''),NULLIF($16,''),NULLIF($17,''),$18,$19)
 			`, sessionID, workspaceID, customerID, visitorID,
-				boundedSessionString(payload, "browser"), boundedSessionString(payload, "os"), boundedSessionString(payload, "device"), boundedSessionString(payload, "referrer_origin"),
+				networkPrefix(network), networkCountry(network), boundedSessionString(payload, "browser"), boundedSessionString(payload, "os"), boundedSessionString(payload, "device"), boundedSessionString(payload, "referrer_origin"),
 				url, url, boundedSessionString(payload, "title"), boundedSessionString(payload, "language"), boundedSessionString(payload, "timezone"), boundedSessionString(payload, "platform"), boundedSessionString(payload, "user_agent"),
 				viewportJSONValue(payload), pageViewsFor(eventType)); err != nil {
 				return err
@@ -341,13 +360,14 @@ func (s *Service) IngestVisitorEvent(
 			if _, err = tx.Exec(ctx, `
 				UPDATE contact_sessions SET
 					customer_id=COALESCE(NULLIF($3,''),customer_id),
-					browser=COALESCE(NULLIF($4,''),browser), os=COALESCE(NULLIF($5,''),os), device=COALESCE(NULLIF($6,''),device),
-					current_url=COALESCE($7,current_url), current_title=COALESCE(NULLIF($8,''),current_title),
-					language=COALESCE(NULLIF($9,''),language), timezone=COALESCE(NULLIF($10,''),timezone),
-					platform=COALESCE(NULLIF($11,''),platform), user_agent=COALESCE(NULLIF($12,''),user_agent),
-					viewport=COALESCE($13,viewport), page_views=page_views+$14, last_seen_at=now()
+					ip_prefix=COALESCE(NULLIF($4,''),ip_prefix), ip_country=COALESCE(NULLIF($5,''),ip_country),
+					browser=COALESCE(NULLIF($6,''),browser), os=COALESCE(NULLIF($7,''),os), device=COALESCE(NULLIF($8,''),device),
+					current_url=COALESCE($9,current_url), current_title=COALESCE(NULLIF($10,''),current_title),
+					language=COALESCE(NULLIF($11,''),language), timezone=COALESCE(NULLIF($12,''),timezone),
+					platform=COALESCE(NULLIF($13,''),platform), user_agent=COALESCE(NULLIF($14,''),user_agent),
+					viewport=COALESCE($15,viewport), page_views=page_views+$16, last_seen_at=now()
 				WHERE workspace_id=$1 AND id=$2
-			`, workspaceID, sessionID, customerID, boundedSessionString(payload, "browser"), boundedSessionString(payload, "os"), boundedSessionString(payload, "device"), url,
+			`, workspaceID, sessionID, customerID, networkPrefix(network), networkCountry(network), boundedSessionString(payload, "browser"), boundedSessionString(payload, "os"), boundedSessionString(payload, "device"), url,
 				boundedSessionString(payload, "title"), boundedSessionString(payload, "language"), boundedSessionString(payload, "timezone"), boundedSessionString(payload, "platform"), boundedSessionString(payload, "user_agent"), viewportJSONValue(payload), pageViewsFor(eventType)); err != nil {
 				return err
 			}
@@ -425,6 +445,23 @@ func stringPointer(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+func networkPrefix(network *NetworkContext) string {
+	if network == nil {
+		return ""
+	}
+	return network.IPPrefix
+}
+
+func networkCountry(network *NetworkContext) string {
+	if network == nil {
+		return ""
+	}
+	if network.CountryName != "" {
+		return network.CountryName + " (" + network.CountryCode + ")"
+	}
+	return network.CountryCode
 }
 func emptyStringPointer(value string) *string { return stringPointer(value) }
 
