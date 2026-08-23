@@ -1,6 +1,9 @@
 import { Search, X } from "lucide-react";
 import {
+  Children,
+  cloneElement,
   forwardRef,
+  isValidElement,
   useId,
   type InputHTMLAttributes,
   type ReactNode,
@@ -259,6 +262,26 @@ export function Field({
   const generatedId = useId();
   const controlId = htmlFor ?? generatedId;
   const describedBy = error ? `${controlId}-error` : description ? `${controlId}-desc` : undefined;
+  let controlWired = false;
+  const wiredChildren = Children.map(children, (child) => {
+    if (controlWired || !isValidElement<Record<string, unknown>>(child)) return child;
+
+    const childId = typeof child.props.id === "string" ? child.props.id : undefined;
+    if (childId && childId !== controlId) return child;
+
+    controlWired = true;
+    const existingDescription =
+      typeof child.props["aria-describedby"] === "string"
+        ? child.props["aria-describedby"]
+        : undefined;
+    const ariaDescribedBy = [existingDescription, describedBy].filter(Boolean).join(" ") || undefined;
+
+    return cloneElement(child, {
+      id: childId ?? controlId,
+      "aria-describedby": ariaDescribedBy,
+      "aria-invalid": error ? true : child.props["aria-invalid"],
+    });
+  });
 
   return (
     <div
@@ -284,8 +307,8 @@ export function Field({
       )}
 
       <div className={cn("flex flex-col gap-1.5", orientation === "horizontal" && "min-w-0")}>
-        <div id={describedBy ? undefined : controlId} className="contents">
-          {children}
+        <div className="contents">
+          {wiredChildren}
         </div>
 
         {error ? (
