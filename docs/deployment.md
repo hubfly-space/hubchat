@@ -95,6 +95,31 @@ or configure the S3-compatible adapter and keep local disk for temporary state
 only. Secrets belong in the environment file or a secret manager, never in the
 unit file or repository.
 
+## Optional DevLite observability
+
+Set `DEVLITE_API_KEY` in the deployment secret store to enable DevLite. The
+integration mirrors Hubchat's structured `slog` records, groups error-valued
+records, automatically instruments HTTP requests, slow requests, and panics,
+reports the running release, and emits 30-second Go runtime, PostgreSQL pool,
+and job-queue gauges.
+
+```bash
+DEVLITE_API_KEY=dl_live_xxxxx
+DEVLITE_ENVIRONMENT=production
+DEVLITE_SERVICE_NAME=hubchat
+DEVLITE_RELEASE=v1.2.3
+DEVLITE_SAMPLE_RATE=1
+DEVLITE_FLUSH_INTERVAL=5s
+DEVLITE_METRICS_INTERVAL=30s
+```
+
+`DEVLITE_ENDPOINT` is optional and should be set only for a self-hosted DevLite
+ingest API. Hubchat requires it to be an absolute HTTPS URL. Request bodies,
+query strings, and headers are never sent; SDK scrubbing and source-context
+error capture remain enabled. Telemetry uses a bounded queue, performs network
+delivery only from its background flusher, times requests out after two
+seconds, and cannot prevent the service from starting or shutting down.
+
 ## Readiness and rollout checks
 
 After the process starts, require all of these before routing customer traffic:
