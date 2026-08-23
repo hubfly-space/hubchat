@@ -51,7 +51,7 @@ type Server struct {
 }
 
 // New builds the router and returns a server ready to Start.
-func New(cfg config.Config, logger *slog.Logger, assets Assets, routes Routes) (*Server, error) {
+func New(cfg config.Config, logger *slog.Logger, assets Assets, routes Routes, observers ...func(http.Handler) http.Handler) (*Server, error) {
 	mux := http.NewServeMux()
 
 	// ------------------------------------------------------------- health
@@ -152,11 +152,15 @@ func New(cfg config.Config, logger *slog.Logger, assets Assets, routes Routes) (
 		http.Redirect(w, r, "/app/", http.StatusFound)
 	})
 
-	handler := Chain(mux,
-		RequestID,
-		Recover(logger),
-		Logger(logger),
-	)
+	middleware := []func(http.Handler) http.Handler{RequestID}
+	// Observers sit outside Hubchat's recorder/recovery pair. DevLite's
+	// ResponseWriter then wraps the real server writer, so its Hijacker support
+	// remains usable through Logger's standard Unwrap chain for WebSockets.
+	// Recover reports the original panic and stack through the observed slog
+	// handler before returning the safe 500 response.
+	middleware = append(middleware, observers...)
+	middleware = append(middleware, Recover(logger), Logger(logger))
+	handler := Chain(mux, middleware...)
 
 	return &Server{
 		cfg:    cfg,
