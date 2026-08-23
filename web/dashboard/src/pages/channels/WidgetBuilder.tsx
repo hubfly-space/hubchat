@@ -124,15 +124,15 @@ export default function WidgetBuilder() {
   const [contentLanguage, setContentLanguage] = useState(baseContentLanguage);
 
   // The server is the source of truth; a fresh load (or a refetch after a
-  // successful save) replaces the draft. Local edits between saves live only
-  // in this component's state until they are explicitly published.
+  // successful save) replaces the draft. A background focus/realtime refetch
+  // must not erase unpublished edits while the builder is dirty.
   useEffect(() => {
-    if (widgetQuery.data) {
+    if (widgetQuery.data && !dirty) {
       setDraft(widgetQuery.data);
       setContentLanguage(baseContentLanguage);
       setDirty(false);
     }
-  }, [baseContentLanguage, widgetQuery.data]);
+  }, [baseContentLanguage, dirty, widgetQuery.data]);
 
   const save = useMutation<Widget, Widget>(
     (payload) =>
