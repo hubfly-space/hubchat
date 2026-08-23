@@ -33,6 +33,7 @@ const appRoutes: RouteObject[] = [
 
   // ---------------------------------------------------------------- overview
   { path: "overview", element: page(() => import("../pages/Overview")) },
+  { path: "workspaces/new", element: page(() => import("../pages/setup/CreateWorkspace")) },
 
   // ------------------------------------------------------------------- inbox
   {
