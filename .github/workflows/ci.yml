@@ -22,6 +22,8 @@ jobs:
           node-version: 22.x
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Build embedded browser assets
+        run: make web
       - run: make check
       - run: make build
 
@@ -46,6 +48,16 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.x'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build embedded browser assets
+        run: make web
       - run: HUBCHAT_TEST_DATABASE_URL='postgres://hubchat:hubchat@localhost:5432/hubchat_test?sslmode=disable' make test-integration
 
   capacity:
@@ -69,6 +81,16 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.x'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build embedded browser assets
+        run: make web
       - name: Migrate capacity database
         run: HUBCHAT_DATABASE_URL='postgres://hubchat:hubchat@localhost:5432/hubchat_capacity?sslmode=disable' go run ./cmd/hubchat migrate
       - name: Run PostgreSQL capacity gate
