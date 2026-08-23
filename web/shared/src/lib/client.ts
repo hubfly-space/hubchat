@@ -116,7 +116,8 @@ export async function request<T>(
   body?: unknown,
   options: RequestOptions = {},
 ): Promise<T> {
-  const key = `${method} ${path} ${body === undefined ? "" : JSON.stringify(body)}`;
+  const resolvedOptions = withDashboardWorkspace(options);
+  const key = `${method} ${resolvedOptions.workspaceId ?? ""} ${path} ${body === undefined ? "" : JSON.stringify(body)}`;
 
   const shareable = method === "GET" && !options.fresh;
   if (shareable) {
@@ -124,7 +125,7 @@ export async function request<T>(
     if (existing) return existing;
   }
 
-  const promise = execute<T>(method, path, body, options);
+  const promise = execute<T>(method, path, body, resolvedOptions);
 
   if (shareable) {
     inFlight.set(key, promise);
@@ -136,6 +137,27 @@ export async function request<T>(
   }
 
   return promise;
+}
+
+/**
+ * Dashboard pages share one selected-workspace preference. Treat it as the
+ * default request scope so a page cannot silently fall back to the user's
+ * first membership merely because one call site omitted an option. Public
+ * widget/portal surfaces do not set this key, and explicit scopes always win.
+ */
+function withDashboardWorkspace(options: RequestOptions): RequestOptions {
+  if (options.workspaceId || typeof window === "undefined") return options;
+
+  try {
+    const stored = window.localStorage.getItem("hubchat.workspace");
+    if (!stored) return options;
+    const workspaceId = JSON.parse(stored);
+    return typeof workspaceId === "string" && workspaceId
+      ? { ...options, workspaceId }
+      : options;
+  } catch {
+    return options;
+  }
 }
 
 async function execute<T>(
