@@ -98,6 +98,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const connection = useRealtimeConnection(bootstrap.data?.workspace.id);
   useWorkspaceInvalidation();
 
+  const switchWorkspace = useCallback((id: string) => {
+    // Persist synchronously so requests started by the next route render are
+    // scoped correctly; the storage hook's effect remains the fallback for
+    // browsers where localStorage is unavailable.
+    try {
+      window.localStorage.setItem("hubchat.workspace", JSON.stringify(id));
+    } catch {
+      /* private browsing or quota errors leave this as a session-only switch */
+    }
+    setActiveId(id);
+  }, [setActiveId]);
+
   const can = useCallback(
     (capability: Capability) => bootstrap.data?.viewer.capabilities.includes(capability) ?? false,
     [bootstrap.data],
@@ -122,7 +134,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       inboxes: data.inboxes,
       tags: data.tags,
       can,
-      switchWorkspace: setActiveId,
+      switchWorkspace,
       isLive: connection === "open",
       memberById: (id) => (id ? memberIndex.get(id) : undefined),
       // Customers and companies are deliberately not in the bootstrap payload:
@@ -132,7 +144,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       companyById: () => undefined,
       tagById: (id) => tagIndex.get(id),
     };
-  }, [bootstrap.data, can, setActiveId, connection]);
+  }, [bootstrap.data, can, switchWorkspace, connection]);
 
   if (bootstrap.isLoading) return <BootstrapSkeleton />;
 
