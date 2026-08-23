@@ -41,7 +41,11 @@ func requireUser(deps Deps, next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		next(w, r.WithContext(context.WithValue(r.Context(), currentUserKey, user)))
+		ctx := context.WithValue(r.Context(), currentUserKey, user)
+		if deps.Telemetry != nil {
+			deps.Telemetry.Identify(ctx, user.ID, "", "agent")
+		}
+		next(w, r.WithContext(ctx))
 	}
 }
 
