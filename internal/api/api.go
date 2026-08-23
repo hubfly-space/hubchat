@@ -100,6 +100,11 @@ type Deps struct {
 	Audit  *audit.Log
 	Jobs   *jobs.Client
 
+	// Telemetry receives only stable local identifiers. It is optional and
+	// must never be given session tokens, API key material, customer content,
+	// names, or email addresses.
+	Telemetry RequestTelemetry
+
 	// PublicURL is how browsers reach this deployment. Links in outbound email
 	// are built from it rather than from the request Host, which an attacker
 	// controls (§11.4).
@@ -113,6 +118,13 @@ type Deps struct {
 
 	CookieDomain string
 	CookieSecure bool
+}
+
+// RequestTelemetry is the narrow user-impact hook required by authentication
+// middleware. Keeping the interface here avoids coupling API handlers to any
+// particular observability vendor.
+type RequestTelemetry interface {
+	Identify(ctx context.Context, id, workspaceID, kind string)
 }
 
 // New builds the /api/v1 router. Routes are written relative to this
@@ -224,6 +236,9 @@ func requireActor(deps Deps, next http.HandlerFunc) http.HandlerFunc {
 				}
 				actor := &authorization.Actor{MemberID: memberID, WorkspaceID: principal.WorkspaceID, Role: "api_key", Capabilities: capabilities}
 				ctx := authorization.WithActor(r.Context(), actor)
+				if deps.Telemetry != nil {
+					deps.Telemetry.Identify(ctx, principal.KeyID, principal.WorkspaceID, "api_key")
+				}
 				next(w, r.WithContext(ctx))
 				return
 			}
@@ -277,6 +292,9 @@ func requireActor(deps Deps, next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		ctx := authorization.WithActor(r.Context(), actor)
+		if deps.Telemetry != nil {
+			deps.Telemetry.Identify(ctx, user.ID, workspaceID, "agent")
+		}
 		next(w, r.WithContext(ctx))
 	}
 }
