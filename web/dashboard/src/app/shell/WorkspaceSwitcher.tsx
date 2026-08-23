@@ -65,7 +65,7 @@ export function WorkspaceSwitcher() {
         <MenuItem icon={<Settings2 />} onSelect={() => navigate("/settings/general")}>
           Workspace settings
         </MenuItem>
-        <MenuItem icon={<Plus />} onSelect={() => navigate("/onboarding")}>
+        <MenuItem icon={<Plus />} onSelect={() => navigate("/workspaces/new")}>
           Create workspace
         </MenuItem>
       </MenuContent>
