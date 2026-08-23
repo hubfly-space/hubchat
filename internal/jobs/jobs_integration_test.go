@@ -338,7 +338,10 @@ func TestPanickingHandlerIsContained(t *testing.T) {
 	done := make(chan struct{})
 	var once sync.Once
 
-	worker := newWorker(t, pool)
+	// Keep this lifecycle assertion sequential: with a pool of workers the
+	// follow-up job may signal completion while the panicking job is still
+	// committing its terminal state, making shutdown race the assertion.
+	worker := newWorkerWithConcurrency(t, pool, 1)
 	worker.Register("test.panic", func(context.Context, *jobs.Job) error {
 		panic("handler exploded")
 	})
@@ -393,9 +396,14 @@ func TestScheduledJobIsNotClaimedEarly(t *testing.T) {
 
 func newWorker(t *testing.T, pool *database.Pool) *jobs.Worker {
 	t.Helper()
+	return newWorkerWithConcurrency(t, pool, 4)
+}
+
+func newWorkerWithConcurrency(t *testing.T, pool *database.Pool, concurrency int) *jobs.Worker {
+	t.Helper()
 
 	cfg := config.Default().Jobs
-	cfg.Concurrency = 4
+	cfg.Concurrency = concurrency
 	// Tight so the tests do not spend their time asleep.
 	cfg.PollInterval = 20 * time.Millisecond
 	cfg.LeaseDuration = 5 * time.Second
