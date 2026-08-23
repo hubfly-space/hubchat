@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseRoles(t *testing.T) {
 	roles, err := ParseRoles("worker, scheduler")
@@ -58,5 +61,22 @@ func TestOAuthBuiltInProfilesSupplySafeDefaults(t *testing.T) {
 func TestOAuthGenericProfileRejectsUnknownProfile(t *testing.T) {
 	if err := applyOAuthProfileDefaults(&OAuth{Provider: "acme", Profile: "unknown"}); err == nil {
 		t.Fatal("unknown OAuth profile was accepted")
+	}
+}
+
+func TestDevLiteSecretIsRedactedAndConfigurationIsValidated(t *testing.T) {
+	cfg := Default()
+	cfg.Observability.DevLite.APIKey = "dl_live_test_secret"
+	cfg.Observability.DevLite.Endpoint = "http://insecure.example/v1/events"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "DEVLITE_ENDPOINT") {
+		t.Fatalf("Validate() error = %v, want insecure DevLite endpoint rejection", err)
+	}
+
+	redacted := cfg.Redacted()
+	if redacted.Observability.DevLite.APIKey != "xxxxx" {
+		t.Fatalf("redacted DevLite key = %q, want mask", redacted.Observability.DevLite.APIKey)
+	}
+	if strings.Contains(redacted.Observability.DevLite.APIKey, "test_secret") {
+		t.Fatal("redacted configuration retained DevLite key material")
 	}
 }
