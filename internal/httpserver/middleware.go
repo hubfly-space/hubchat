@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
@@ -56,6 +57,7 @@ func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
 					}
 
 					logger.ErrorContext(r.Context(), "panic recovered",
+						slog.Any("error", fmt.Errorf("panic recovered: %v", recovered)),
 						slog.Any("panic", recovered),
 						slog.String("path", r.URL.Path),
 						slog.String("request_id", RequestIDFrom(r.Context())),
