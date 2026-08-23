@@ -59,6 +59,7 @@ import (
 	"github.com/hubchat/hubchat/internal/sla"
 	"github.com/hubchat/hubchat/internal/survey"
 	"github.com/hubchat/hubchat/internal/task"
+	"github.com/hubchat/hubchat/internal/telemetry"
 	"github.com/hubchat/hubchat/internal/ticket"
 	"github.com/hubchat/hubchat/internal/webhook"
 	"github.com/hubchat/hubchat/internal/widget"
@@ -146,7 +147,7 @@ func serve(args []string) error {
 		return err
 	}
 
-	logger := newLogger(cfg)
+	baseLogger := newLogger(cfg)
 
 	if err := cfg.Validate(); err != nil {
 		// Configuration problems are reported as a list, because an operator
@@ -154,8 +155,19 @@ func serve(args []string) error {
 		return fmt.Errorf("configuration is not usable:\n%w", err)
 	}
 
+	observer, telemetryErr := telemetry.New(cfg.Observability.DevLite, baseLogger, version, commit)
+	if telemetryErr != nil {
+		// Observability must never make the support service unavailable. Invalid
+		// values are caught by Config.Validate; any remaining SDK failure is
+		// reported locally and the process continues without the remote sink.
+		baseLogger.Warn("devlite initialization failed", slog.Any("error", telemetryErr))
+	}
+	defer observer.Close()
+	logger := observer.Logger(baseLogger.Handler())
+
 	assets, err := loadAssets(cfg)
 	if err != nil {
+		logger.Error("could not load browser assets", slog.Any("error", err))
 		return err
 	}
 
@@ -170,11 +182,13 @@ func serve(args []string) error {
 		slog.String("public_url", cfg.Server.PublicURL.String()),
 	)
 
-	app, err := wireAPI(ctx, cfg, logger)
+	app, err := wireAPI(ctx, cfg, logger, observer)
 	if err != nil {
+		logger.Error("could not initialize hubchat", slog.Any("error", err))
 		return err
 	}
 	defer app.Close()
+	observer.StartMetrics(ctx, cfg.Observability.DevLite.MetricsInterval, app.pool, app.jobs)
 
 	// Background roles run alongside the HTTP server in the same process by
 	// default (§8.5). They are started before the listener so that work
@@ -233,11 +247,15 @@ func serve(args []string) error {
 
 	var serverErr error
 	if cfg.Server.Has(config.RoleHTTP) {
-		server, err := httpserver.New(cfg, logger, assets, app.Routes)
+		server, err := httpserver.New(cfg, logger, assets, app.Routes, observer.Middleware)
 		if err != nil {
+			logger.Error("could not initialize http server", slog.Any("error", err))
 			return err
 		}
 		serverErr = server.Start(ctx)
+		if serverErr != nil {
+			logger.Error("http server stopped with an error", slog.Any("error", serverErr))
+		}
 	} else {
 		// A worker/scheduler-only process has no listener to block on. Keep the
 		// same signal-driven lifetime as the HTTP process so orchestration can
@@ -290,6 +308,8 @@ type application struct {
 	AutomationListener   *events.Listener
 	EmailListener        *events.Listener
 	NotificationListener *events.Listener
+	pool                 *database.Pool
+	jobs                 *jobs.Client
 	closeDB              func()
 }
 
@@ -314,7 +334,7 @@ func (a *application) Close() {
 // responding 503. That lets `hubchat doctor` and asset-serving smoke tests run
 // without a database, while a real deployment's config.Validate() (which does
 // require the database URL) still refuses to start improperly configured.
-func wireAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) (*application, error) {
+func wireAPI(ctx context.Context, cfg config.Config, logger *slog.Logger, observer *telemetry.Client) (*application, error) {
 	if cfg.Database.URL == "" {
 		return &application{}, nil
 	}
@@ -465,6 +485,7 @@ func wireAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) (*appl
 		Events:         eventLog,
 		Audit:          auditLog,
 		Jobs:           jobClient,
+		Telemetry:      observer,
 		PublicURL:      cfg.Server.PublicURL,
 		Config:         cfg,
 		CookieDomain:   cfg.Security.CookieDomain,
@@ -482,6 +503,8 @@ func wireAPI(ctx context.Context, cfg config.Config, logger *slog.Logger) (*appl
 			WS:    wsHandler,
 			Ready: deps.Ready,
 		},
+		pool: pool,
+		jobs: jobClient,
 		closeDB: func() {
 			_ = geoIPResolver.Close()
 			pool.Close()
