@@ -204,7 +204,7 @@ function WorkspaceStep({
             id="ws-slug"
             inputSize="lg"
             required
-            pattern="[a-z0-9][a-z0-9-]{1,38}[a-z0-9]"
+            pattern="[a-z0-9](?:[a-z0-9]|-){1,38}[a-z0-9]"
             value={slug}
             onChange={(event) => {
               setSlugTouched(true);
