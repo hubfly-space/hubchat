@@ -192,6 +192,21 @@ type Observability struct {
 	LogLevel        string
 	MetricsEnabled  bool
 	TracingEndpoint string
+	DevLite         DevLite
+}
+
+// DevLite configures the optional outbound observability sink. APIKey is the
+// only enabling switch: an empty key leaves Hubchat's normal slog output and
+// request handling completely unchanged.
+type DevLite struct {
+	APIKey          string // secret
+	Endpoint        string
+	Environment     string
+	ServiceName     string
+	Release         string
+	SampleRate      float64
+	FlushInterval   time.Duration
+	MetricsInterval time.Duration
 }
 
 // Default returns the configuration a fresh installation runs with. Everything
@@ -259,6 +274,13 @@ func Default() Config {
 			LogFormat:      "text",
 			LogLevel:       "info",
 			MetricsEnabled: true,
+			DevLite: DevLite{
+				Environment:     "development",
+				ServiceName:     "hubchat",
+				SampleRate:      1,
+				FlushInterval:   5 * time.Second,
+				MetricsInterval: 30 * time.Second,
+			},
 		},
 	}
 }
@@ -392,6 +414,42 @@ func Load() (Config, error) {
 	}
 	if v := os.Getenv("HUBCHAT_LOG_LEVEL"); v != "" {
 		cfg.Observability.LogLevel = v
+	}
+	if v := os.Getenv("DEVLITE_API_KEY"); v != "" {
+		cfg.Observability.DevLite.APIKey = v
+	}
+	if v := os.Getenv("DEVLITE_ENDPOINT"); v != "" {
+		cfg.Observability.DevLite.Endpoint = v
+	}
+	if v := os.Getenv("DEVLITE_ENVIRONMENT"); v != "" {
+		cfg.Observability.DevLite.Environment = v
+	}
+	if v := os.Getenv("DEVLITE_SERVICE_NAME"); v != "" {
+		cfg.Observability.DevLite.ServiceName = v
+	}
+	if v := os.Getenv("DEVLITE_RELEASE"); v != "" {
+		cfg.Observability.DevLite.Release = v
+	}
+	if v := os.Getenv("DEVLITE_SAMPLE_RATE"); v != "" {
+		rate, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return cfg, fmt.Errorf("DEVLITE_SAMPLE_RATE must be a number between 0 and 1: %w", err)
+		}
+		cfg.Observability.DevLite.SampleRate = rate
+	}
+	if v := os.Getenv("DEVLITE_FLUSH_INTERVAL"); v != "" {
+		interval, err := time.ParseDuration(v)
+		if err != nil {
+			return cfg, fmt.Errorf("DEVLITE_FLUSH_INTERVAL must be a duration such as 5s: %w", err)
+		}
+		cfg.Observability.DevLite.FlushInterval = interval
+	}
+	if v := os.Getenv("DEVLITE_METRICS_INTERVAL"); v != "" {
+		interval, err := time.ParseDuration(v)
+		if err != nil {
+			return cfg, fmt.Errorf("DEVLITE_METRICS_INTERVAL must be a duration such as 30s: %w", err)
+		}
+		cfg.Observability.DevLite.MetricsInterval = interval
 	}
 
 	cfg.Dev = os.Getenv("HUBCHAT_DEV") == "1"
@@ -544,6 +602,24 @@ func (c Config) Validate() error {
 		problems = append(problems, errors.New("server: at least one role must be enabled"))
 	}
 
+	if c.Observability.DevLite.APIKey != "" {
+		if c.Observability.DevLite.SampleRate < 0 || c.Observability.DevLite.SampleRate > 1 {
+			problems = append(problems, fmt.Errorf("observability: DEVLITE_SAMPLE_RATE must be between 0 and 1 (got %v)", c.Observability.DevLite.SampleRate))
+		}
+		if c.Observability.DevLite.FlushInterval <= 0 {
+			problems = append(problems, errors.New("observability: DEVLITE_FLUSH_INTERVAL must be greater than zero"))
+		}
+		if c.Observability.DevLite.MetricsInterval <= 0 {
+			problems = append(problems, errors.New("observability: DEVLITE_METRICS_INTERVAL must be greater than zero"))
+		}
+		if raw := strings.TrimSpace(c.Observability.DevLite.Endpoint); raw != "" {
+			endpoint, err := url.Parse(raw)
+			if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" {
+				problems = append(problems, errors.New("observability: DEVLITE_ENDPOINT must be an absolute https URL"))
+			}
+		}
+	}
+
 	return errors.Join(problems...)
 }
 
@@ -591,6 +667,7 @@ func (c Config) Redacted() Config {
 	redacted.Storage.S3SecretKey = mask(c.Storage.S3SecretKey)
 	redacted.Email.SMTPPassword = mask(c.Email.SMTPPassword)
 	redacted.OAuth.ClientSecret = mask(c.OAuth.ClientSecret)
+	redacted.Observability.DevLite.APIKey = mask(c.Observability.DevLite.APIKey)
 	return redacted
 }
 
