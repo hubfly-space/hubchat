@@ -735,6 +735,9 @@ func requirePortalSession(deps Deps, w http.ResponseWriter, r *http.Request) (*p
 		httpserver.WriteError(w, r, http.StatusUnauthorized, httpserver.CodeUnauthorized, "Your portal session has expired.")
 		return nil, false
 	}
+	if deps.Telemetry != nil {
+		deps.Telemetry.Identify(r.Context(), session.CustomerID, session.WorkspaceID, "portal_customer")
+	}
 	return session, true
 }
 
