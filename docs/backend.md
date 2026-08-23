@@ -136,6 +136,12 @@ attributes.** A support platform's request bodies are, by definition, other
 people's customer conversations. This is why the request logger records only
 method and path — not query strings, which carry search terms.
 
+When `DEVLITE_API_KEY` is configured, the same accepted `slog` records are
+mirrored to DevLite alongside automatic HTTP timing, panic/error grouping,
+deployment markers, and bounded runtime/database/job metrics. Delivery is
+asynchronous and failure-isolated; bodies, query strings, and headers stay out
+of telemetry, and the API key is redacted from configuration diagnostics.
+
 ## 8. Configuration
 
 `internal/config` resolves defaults → file → environment → flags.
