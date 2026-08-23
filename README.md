@@ -5,6 +5,18 @@ boards, knowledge base, and customer context — in one Go binary.
 
 No Node.js runtime in production. No Redis. No message broker. No AI.
 
+## Product preview
+
+| Widget builder | Reports |
+|---|---|
+| [![Hubchat widget builder with live preview](docs/screenshots/hubchat-widget-builder.png)](docs/screenshots/hubchat-widget-builder.png) | [![Hubchat reports overview](docs/screenshots/hubchat-reports.png)](docs/screenshots/hubchat-reports.png) |
+| Configure branding, behaviour, placement, and the customer experience with a live preview. | Review support volume, response times, SLA compliance, channel mix, and saved reports. |
+
+| Security settings | Member management |
+|---|---|
+| [![Hubchat workspace security settings](docs/screenshots/hubchat-security-settings.png)](docs/screenshots/hubchat-security-settings.png) | [![Hubchat workspace member management](docs/screenshots/hubchat-member-management.png)](docs/screenshots/hubchat-member-management.png) |
+| Control two-factor authentication, organization sign-in, signup restrictions, domains, and network access. | Invite teammates and manage roles, teams, availability, and pending invitations. |
+
 ```
 PostgreSQL  ──▶  hubchat (one binary)  ──▶  browsers
                  · HTTP + REST API
