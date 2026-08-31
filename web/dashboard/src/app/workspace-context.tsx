@@ -259,6 +259,15 @@ const notificationEventTypes = new Set([
 function invalidateNotifications() {
   invalidate(["notifications"]);
   invalidate(["notifications-count"]);
+  // The notification consumer drains the same committed event asynchronously.
+  // A source event can therefore reach this socket a few milliseconds before
+  // its durable notification row exists. Retry invalidation after the consumer
+  // has had a chance to commit; TopBar polling remains the recovery path if a
+  // worker is unusually delayed.
+  window.setTimeout(() => {
+    invalidate(["notifications"]);
+    invalidate(["notifications-count"]);
+  }, 500);
 }
 
 function BootstrapSkeleton() {
