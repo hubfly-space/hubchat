@@ -39,7 +39,7 @@ export function AuthLayout() {
         <div className="relative flex h-full flex-col justify-end p-16">
           <blockquote className="max-w-md">
             <p className="text-xl font-semibold leading-snug tracking-tight text-fg">
-              Live chat, ticketing, portals, feedback, and customer context — in one Go
+              Live chat, ticketing, portals, feedback, and customer context in one Go
               binary you can run yourself.
             </p>
             <footer className="mt-4 flex items-center gap-2 text-xs text-fg-muted">
