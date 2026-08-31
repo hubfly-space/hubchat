@@ -333,6 +333,13 @@ func Load() (Config, error) {
 	if v := os.Getenv("HUBCHAT_SECRET_KEY"); v != "" {
 		cfg.Security.SecretKey = []byte(v)
 	}
+	if v := os.Getenv("HUBCHAT_TRUSTED_PROXIES"); v != "" {
+		for _, entry := range strings.Split(v, ",") {
+			if entry = strings.TrimSpace(entry); entry != "" {
+				cfg.Security.TrustedProxies = append(cfg.Security.TrustedProxies, entry)
+			}
+		}
+	}
 	if v := os.Getenv("HUBCHAT_GEOIP_DATABASE_PATH"); v != "" {
 		cfg.Security.GeoIPDatabasePath = v
 	}
