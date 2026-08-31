@@ -65,6 +65,12 @@ func (r *Resolver) Lookup(address string) Result {
 }
 
 func maskedPrefix(ip netip.Addr) string {
+	// Unspecified addresses identify no visitor. They commonly appear as the
+	// local reverse-proxy peer (`::`) when trusted-proxy configuration is
+	// missing; rendering `::/48` falsely makes that placeholder look useful.
+	if ip.IsUnspecified() {
+		return ""
+	}
 	if ip.Is4() {
 		return netip.PrefixFrom(ip, 24).Masked().String()
 	}

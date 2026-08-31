@@ -130,16 +130,21 @@ func (s *Service) SavePreferences(ctx context.Context, workspaceID, memberID str
 	if err != nil {
 		return nil, err
 	}
-	for _, input := range inputs {
-		if _, err := s.pool.Exec(ctx, `
+	if err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		for _, input := range inputs {
+			if _, err := tx.Exec(ctx, `
 			INSERT INTO notification_preferences(workspace_id,member_id,type,in_app,email,browser,sound)
 			VALUES($1,$2,$3,$4,$5,$6,$7)
 			ON CONFLICT (member_id,type) DO UPDATE SET
 				workspace_id=EXCLUDED.workspace_id,in_app=EXCLUDED.in_app,email=EXCLUDED.email,
 				browser=EXCLUDED.browser,sound=EXCLUDED.sound
-		`, workspaceID, memberID, input.Type, input.InApp, input.Email, input.Browser, input.Sound); err != nil {
-			return nil, fmt.Errorf("notification: save preference: %w", err)
+			`, workspaceID, memberID, input.Type, input.InApp, input.Email, input.Browser, input.Sound); err != nil {
+				return fmt.Errorf("notification: save preference %q: %w", input.Type, err)
+			}
 		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	return s.Preferences(ctx, workspaceID, memberID)
 }
@@ -533,7 +538,17 @@ func (s *Service) processEvent(ctx context.Context, record events.Record) error 
 		if err := json.Unmarshal(record.Data, &message); err != nil {
 			return fmt.Errorf("notification: decode message event: %w", err)
 		}
-		if message.AuthorType != "agent" || strings.TrimSpace(message.Body) == "" {
+		if strings.TrimSpace(message.Body) == "" {
+			return nil
+		}
+		// Customer messages can enter through the widget, portal, email, or a
+		// future channel adapter. Consuming the committed event here keeps agent
+		// alerts independent of which HTTP handler happened to create the reply.
+		if message.AuthorType == "customer" {
+			return s.NotifyConversationMessage(ctx, record.WorkspaceID, message.ConversationID,
+				message.MessageID, message.AuthorType, "", message.Body)
+		}
+		if message.AuthorType != "agent" {
 			return nil
 		}
 		if err := s.NotifyMentions(ctx, record.WorkspaceID, message.ConversationID, record.ActorID, record.ID, message.MentionedMemberIDs); err != nil {
