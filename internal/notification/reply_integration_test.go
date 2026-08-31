@@ -148,6 +148,46 @@ func TestCustomerReplyEmailEventConsumer(t *testing.T) {
 	assertEmailJob(t, ctx, pool, 1, "ada@example.com", "New reply on ticket SUP-1", "Grace Hopper replied")
 }
 
+func TestCustomerMessageEventCreatesAgentNotification(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+
+	ws := seedReplyWorkspace(t, ctx, pool, "agent-alert")
+	var memberID string
+	if err := pool.QueryRow(ctx, `SELECT id FROM workspace_members WHERE workspace_id=$1 LIMIT 1`, ws.id).Scan(&memberID); err != nil {
+		t.Fatalf("find agent: %v", err)
+	}
+	eventLog := events.New(pool)
+	conversationService := conversation.New(pool, eventLog, audit.New(pool))
+	thread, _, err := conversationService.Start(ctx, ws.id, ws.inboxID, "widget", nil, nil, nil, "Visitor", "I need help")
+	if err != nil {
+		t.Fatalf("start conversation: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE conversations SET assignee_id=$1 WHERE workspace_id=$2 AND id=$3`, memberID, ws.id, thread.ID); err != nil {
+		t.Fatalf("assign conversation: %v", err)
+	}
+
+	service := New(pool)
+	messageID := ids.New(ids.PrefixMessage)
+	record := events.Record{ID: "evt-customer-reply", WorkspaceID: ws.id, Type: events.MessageCreated, Data: mustJSON(t, conversation.MessageEvent{
+		ConversationID: thread.ID, MessageID: messageID, Kind: "reply", AuthorType: "customer", Body: "Is anyone there?",
+	})}
+	if err := service.processEvent(ctx, record); err != nil {
+		t.Fatalf("process customer message: %v", err)
+	}
+	if err := service.processEvent(ctx, record); err != nil {
+		t.Fatalf("reprocess customer message: %v", err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE workspace_id=$1 AND member_id=$2 AND type='customer_reply'`, ws.id, memberID).Scan(&count); err != nil {
+		t.Fatalf("count agent notifications: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("agent notifications = %d, want 1", count)
+	}
+}
+
 func TestMentionNotificationEventConsumer(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.Reset(t, pool)
