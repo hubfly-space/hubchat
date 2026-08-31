@@ -46,6 +46,13 @@ func handleSaveNotificationPreferences(deps Deps) http.HandlerFunc {
 			return
 		}
 		if err != nil {
+			if deps.Logger != nil {
+				deps.Logger.Error("could not save notification preferences",
+					"workspace_id", actor.WorkspaceID,
+					"member_id", actor.MemberID,
+					"request_id", httpserver.RequestIDFrom(r.Context()),
+					"error", err)
+			}
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not save notification preferences.")
 			return
 		}
