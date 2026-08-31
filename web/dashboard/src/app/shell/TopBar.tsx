@@ -17,6 +17,7 @@ import {
   useInfinite,
   useMutation,
   useQuery,
+  useToast,
   useTheme,
   type ThemeMode,
   type Paginated,
@@ -50,19 +51,21 @@ export function TopBar({
   const navigate = useNavigate();
   const count = useQuery<{ count: number }>(["notifications-count"], (signal) =>
     api.get("/notifications/count", { signal }),
+    { refetchInterval: 10_000 },
   );
   const notifications = useInfinite<LiveNotification>(["notifications"], (cursor, signal) => {
     const params = new URLSearchParams({ limit: "20" });
     if (cursor) params.set("cursor", cursor);
     return api.get<Paginated<LiveNotification>>(`/notifications?${params.toString()}`, { signal });
-  });
+  }, { refetchInterval: 10_000 });
   const preferences = useQuery<{ data: NotificationPreference[] }>(["notification-preferences"], (signal) =>
     api.get("/notifications/preferences", { signal }),
     { staleTime: 60_000 },
   );
   const { mode, setMode, density, setDensity } = useTheme();
+  const toast = useToast();
 
-  useBrowserNotifications(notifications.items, preferences.data?.data ?? [], preferences.isSuccess, navigate);
+  useLiveNotificationPopups(notifications.items, preferences.data?.data ?? [], preferences.isSuccess, navigate, toast);
 
   return (
     <header className="flex h-topbar shrink-0 items-center gap-3 border-b border-line bg-surface px-3">
@@ -153,9 +156,17 @@ export function TopBar({
   );
 }
 
-type NotificationPreference = { type: string; browser: boolean; sound: boolean };
+type NotificationPreference = { type: string; in_app: boolean; browser: boolean; sound: boolean };
 
-function useBrowserNotifications(items: LiveNotification[], preferences: NotificationPreference[], preferencesReady: boolean, navigate: ReturnType<typeof useNavigate>) {
+const defaultBrowserTypes = new Set(["assignment", "mention", "reply", "sla_warning", "sla_breach"]);
+
+function useLiveNotificationPopups(
+  items: LiveNotification[],
+  preferences: NotificationPreference[],
+  preferencesReady: boolean,
+  navigate: ReturnType<typeof useNavigate>,
+  toast: ReturnType<typeof useToast>,
+) {
   const seen = useRef<Set<string> | null>(null);
   const audioContext = useRef<AudioContext | null>(null);
   useEffect(() => {
@@ -165,23 +176,42 @@ function useBrowserNotifications(items: LiveNotification[], preferences: Notific
     }
     const canBrowserNotify = "Notification" in window && window.Notification.permission === "granted";
     const browserEnabled = new Set(preferences.filter((item) => item.browser).map((item) => item.type));
+    const inAppEnabled = new Set(preferences.filter((item) => item.in_app).map((item) => item.type));
     const soundEnabled = new Set(preferences.filter((item) => item.sound).map((item) => item.type));
+    const savedTypes = new Set(preferences.map((item) => item.type));
     items.forEach((item) => {
       if (seen.current?.has(item.id)) return;
       seen.current?.add(item.id);
       const preferenceType = item.type === "customer_reply" ? "reply" : item.type;
       if (item.read_at !== null) return;
+      const open = () => {
+        if (item.url) navigate(item.url);
+        else if (item.entity_id) navigate(`/inbox?conversation=${encodeURIComponent(item.entity_id)}`);
+      };
+      // In-app popups work without browser permission. Missing preference rows
+      // use the same defaults shown on the notification settings screen.
+      if (inAppEnabled.has(preferenceType) || !savedTypes.has(preferenceType)) {
+        toast.toast({
+          id: `notification_${item.id}`,
+          title: item.title,
+          description: item.body,
+          duration: item.type === "sla_breach" ? 0 : 8000,
+          tone: item.type.startsWith("sla_") ? "warning" : "neutral",
+          action: { label: "Open", onClick: open },
+        });
+      }
       if (soundEnabled.has(preferenceType)) playNotificationSound(audioContext);
-      if (!canBrowserNotify || !browserEnabled.has(preferenceType)) return;
+      const browserAllowed = browserEnabled.has(preferenceType) ||
+        (!savedTypes.has(preferenceType) && defaultBrowserTypes.has(preferenceType));
+      if (!canBrowserNotify || !browserAllowed) return;
       const popup = new window.Notification(item.title, { body: item.body });
       popup.onclick = () => {
         window.focus();
-        if (item.url) navigate(item.url);
-        else if (item.entity_id) navigate(`/inbox?conversation=${encodeURIComponent(item.entity_id)}`);
+        open();
         popup.close();
       };
     });
-  }, [items, preferences, preferencesReady, navigate]);
+  }, [items, preferences, preferencesReady, navigate, toast]);
 }
 
 /**
