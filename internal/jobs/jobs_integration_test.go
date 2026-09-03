@@ -93,6 +93,87 @@ func TestEnqueueDeduplicatesLiveWork(t *testing.T) {
 	}
 }
 
+func TestEnsureScheduledDoesNotStartASecondRecurringChain(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	client := jobs.NewClient(pool)
+
+	if _, err := client.Enqueue(ctx, jobs.Spec{
+		Type: "test.schedule", DedupeKey: "test.schedule:previous-job",
+		RunAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("enqueue existing schedule: %v", err)
+	}
+
+	_, err := client.EnsureScheduled(ctx, jobs.Spec{
+		Type: "test.schedule", DedupeKey: "test.schedule",
+	})
+	if !errors.Is(err, jobs.ErrDuplicate) {
+		t.Fatalf("ensure existing schedule: got %v, want ErrDuplicate", err)
+	}
+	if count := countJobs(t, ctx, pool, "test.schedule"); count != 1 {
+		t.Fatalf("got %d scheduled jobs, want 1", count)
+	}
+}
+
+func TestPruneTerminalBeforeKeepsRecentAndLiveJobs(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+	client := jobs.NewClient(pool)
+
+	workspaceID := seedWorkspace(t, ctx, pool, "prune")
+	oldID, err := client.Enqueue(ctx, jobs.Spec{WorkspaceID: workspaceID, Type: "test.old"})
+	if err != nil {
+		t.Fatalf("enqueue old job: %v", err)
+	}
+	recentID, err := client.Enqueue(ctx, jobs.Spec{WorkspaceID: workspaceID, Type: "test.recent"})
+	if err != nil {
+		t.Fatalf("enqueue recent job: %v", err)
+	}
+	if _, err := client.Enqueue(ctx, jobs.Spec{WorkspaceID: workspaceID, Type: "test.pending"}); err != nil {
+		t.Fatalf("enqueue pending job: %v", err)
+	}
+
+	if _, err := pool.Exec(ctx, `UPDATE jobs SET state='succeeded', finished_at=now()-interval '2 days' WHERE id=$1`, oldID); err != nil {
+		t.Fatalf("finish old job: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE jobs SET state='succeeded', finished_at=now() WHERE id=$1`, recentID); err != nil {
+		t.Fatalf("finish recent job: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO job_attempts (id, job_id, attempt, outcome, started_at)
+		VALUES ($1, $2, 1, 'succeeded', now()-interval '2 days')
+	`, ids.New(ids.PrefixJobAttempt), oldID); err != nil {
+		t.Fatalf("seed old job attempt: %v", err)
+	}
+
+	deleted, err := client.PruneTerminalBefore(ctx, time.Now().Add(-24*time.Hour), 100)
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted %d jobs, want 1", deleted)
+	}
+	if count := countJobs(t, ctx, pool, "test.old"); count != 0 {
+		t.Fatalf("old jobs remaining = %d, want 0", count)
+	}
+	var attempts int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM job_attempts WHERE job_id=$1`, oldID).Scan(&attempts); err != nil {
+		t.Fatalf("count attempts: %v", err)
+	}
+	if attempts != 0 {
+		t.Fatalf("old job attempts remaining = %d, want 0", attempts)
+	}
+	if count := countJobs(t, ctx, pool, "test.recent"); count != 1 {
+		t.Fatalf("recent jobs remaining = %d, want 1", count)
+	}
+	if count := countJobs(t, ctx, pool, "test.pending"); count != 1 {
+		t.Fatalf("pending jobs remaining = %d, want 1", count)
+	}
+}
+
 func TestCancelPendingJobIsWorkspaceScoped(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.Reset(t, pool)
