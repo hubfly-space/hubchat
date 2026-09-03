@@ -137,6 +137,50 @@ func (c *Client) Enqueue(ctx context.Context, spec Spec) (string, error) {
 	return id, nil
 }
 
+// EnsureScheduled enqueues spec only when no live job of the same type exists.
+//
+// Scheduler ticks reschedule themselves with a fresh dedupe key. Checking the
+// type here prevents every process restart from starting another permanent
+// copy of the same recurring schedule. The transaction-scoped advisory lock
+// makes that check atomic across several scheduler processes starting at once.
+func (c *Client) EnsureScheduled(ctx context.Context, spec Spec) (string, error) {
+	if spec.Type == "" {
+		return "", errors.New("jobs: type is required")
+	}
+
+	tx, err := c.pool.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("jobs: begin ensure scheduled: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, "hubchat:schedule:"+spec.Type); err != nil {
+		return "", fmt.Errorf("jobs: lock schedule %s: %w", spec.Type, err)
+	}
+
+	var exists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM jobs
+			WHERE type = $1 AND state IN ('pending', 'running')
+		)
+	`, spec.Type).Scan(&exists); err != nil {
+		return "", fmt.Errorf("jobs: inspect schedule %s: %w", spec.Type, err)
+	}
+	if exists {
+		return "", ErrDuplicate
+	}
+
+	id, err := EnqueueTx(ctx, tx, spec)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("jobs: commit ensure scheduled: %w", err)
+	}
+	return id, nil
+}
+
 // EnqueueTx adds a job inside the caller's transaction, so the work and the
 // state change that justifies it commit together.
 func EnqueueTx(ctx context.Context, tx pgx.Tx, spec Spec) (string, error) {
@@ -329,6 +373,36 @@ func (c *Client) QueueDepth(ctx context.Context) (map[string]int, error) {
 		depths[queue] = count
 	}
 	return depths, rows.Err()
+}
+
+// PruneTerminalBefore removes a bounded batch of completed job history.
+// job_attempts rows follow through their ON DELETE CASCADE foreign key.
+func (c *Client) PruneTerminalBefore(ctx context.Context, before time.Time, limit int) (int64, error) {
+	if limit <= 0 {
+		return 0, errors.New("jobs: prune limit must be positive")
+	}
+
+	var deleted int64
+	err := c.pool.QueryRow(ctx, `
+		WITH expired AS (
+			SELECT id
+			FROM jobs
+			WHERE state IN ('succeeded', 'failed', 'dead', 'cancelled')
+			  AND finished_at < $1
+			ORDER BY finished_at, id
+			LIMIT $2
+		), removed AS (
+			DELETE FROM jobs AS job
+			USING expired
+			WHERE job.id = expired.id
+			RETURNING 1
+		)
+		SELECT count(*) FROM removed
+	`, before, limit).Scan(&deleted)
+	if err != nil {
+		return 0, fmt.Errorf("jobs: prune terminal history: %w", err)
+	}
+	return deleted, nil
 }
 
 func orEmptyObject(payload any) any {
