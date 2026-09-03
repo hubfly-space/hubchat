@@ -519,52 +519,52 @@ func wireAPI(ctx context.Context, cfg config.Config, logger *slog.Logger, observ
 			// Primes the self-perpetuating snooze-wake tick (see JobWakeSnoozed's
 			// doc comment). ErrDuplicate means one is already pending — a restart
 			// racing its own previous tick, not a problem.
-			if _, err := jobClient.Enqueue(ctx, jobs.Spec{
+			if _, err := jobClient.EnsureScheduled(ctx, jobs.Spec{
 				Type: conversation.JobWakeSnoozed, DedupeKey: "wake-snoozed",
 			}); err != nil && !errors.Is(err, jobs.ErrDuplicate) {
 				logger.Warn("could not prime snooze wake job", slog.Any("error", err))
 			}
-			if _, err := jobClient.Enqueue(ctx, jobs.Spec{
+			if _, err := jobClient.EnsureScheduled(ctx, jobs.Spec{
 				Type: emailchannel.JobPollIMAP, DedupeKey: "email-imap-poll",
 			}); err != nil && !errors.Is(err, jobs.ErrDuplicate) {
 				logger.Warn("could not prime IMAP poll job", slog.Any("error", err))
 			}
-			if _, err := jobClient.Enqueue(ctx, jobs.Spec{
+			if _, err := jobClient.EnsureScheduled(ctx, jobs.Spec{
 				Type: customer.JobRetentionSweep, DedupeKey: "retention-sweep",
 			}); err != nil && !errors.Is(err, jobs.ErrDuplicate) {
 				logger.Warn("could not prime retention sweep job", slog.Any("error", err))
 			}
-			if _, err := jobClient.Enqueue(ctx, jobs.Spec{
+			if _, err := jobClient.EnsureScheduled(ctx, jobs.Spec{
 				Type: filemodule.JobCleanupAbandoned, DedupeKey: "file-cleanup-abandoned",
 			}); err != nil && !errors.Is(err, jobs.ErrDuplicate) {
 				logger.Warn("could not prime abandoned upload cleanup job", slog.Any("error", err))
 			}
-			if _, err := jobClient.Enqueue(ctx, jobs.Spec{
+			if _, err := jobClient.EnsureScheduled(ctx, jobs.Spec{
 				Type: portability.JobExpireExports, DedupeKey: "portability-expire-exports",
 			}); err != nil && !errors.Is(err, jobs.ErrDuplicate) {
 				logger.Warn("could not prime expired export cleanup job", slog.Any("error", err))
 			}
-			if _, err := jobClient.Enqueue(ctx, jobs.Spec{
+			if _, err := jobClient.EnsureScheduled(ctx, jobs.Spec{
 				Type: sla.JobEvaluate, DedupeKey: "sla-evaluate",
 			}); err != nil && !errors.Is(err, jobs.ErrDuplicate) {
 				logger.Warn("could not prime SLA evaluation job", slog.Any("error", err))
 			}
-			if _, err := jobClient.Enqueue(ctx, jobs.Spec{
+			if _, err := jobClient.EnsureScheduled(ctx, jobs.Spec{
 				Type: analytics.JobRollup, DedupeKey: "analytics-rollup",
 			}); err != nil && !errors.Is(err, jobs.ErrDuplicate) {
 				logger.Warn("could not prime analytics rollup job", slog.Any("error", err))
 			}
-			if _, err := jobClient.Enqueue(ctx, jobs.Spec{
+			if _, err := jobClient.EnsureScheduled(ctx, jobs.Spec{
 				Type: knowledgebase.JobPublishScheduled, DedupeKey: "knowledgebase-publish-scheduled",
 			}); err != nil && !errors.Is(err, jobs.ErrDuplicate) {
 				logger.Warn("could not prime scheduled knowledge-base publish job", slog.Any("error", err))
 			}
-			if _, err := jobClient.Enqueue(ctx, jobs.Spec{
+			if _, err := jobClient.EnsureScheduled(ctx, jobs.Spec{
 				Type: analytics.JobScheduledReports, DedupeKey: "analytics-scheduled-reports",
 			}); err != nil && !errors.Is(err, jobs.ErrDuplicate) {
 				logger.Warn("could not prime scheduled report job", slog.Any("error", err))
 			}
-			if _, err := jobClient.Enqueue(ctx, jobs.Spec{
+			if _, err := jobClient.EnsureScheduled(ctx, jobs.Spec{
 				Type: automation.JobRunScheduled, DedupeKey: "automation-scheduled-actions",
 			}); err != nil && !errors.Is(err, jobs.ErrDuplicate) {
 				logger.Warn("could not prime scheduled automation job", slog.Any("error", err))
@@ -724,6 +724,10 @@ func registerJobHandlers(
 	})
 
 	worker.Register(customer.JobRetentionSweep, func(ctx context.Context, job *jobs.Job) error {
+		jobsDeleted, err := jobClient.PruneTerminalBefore(ctx, time.Now().UTC().Add(-jobHistoryRetention), jobHistoryRetentionBatchSize)
+		if err != nil {
+			return err
+		}
 		eventsDeleted, sessionsDeleted, err := customerService.RunRetentionSweep(ctx)
 		if err != nil {
 			return err
@@ -744,8 +748,8 @@ func registerJobHandlers(
 		if err != nil {
 			return err
 		}
-		if eventsDeleted > 0 || sessionsDeleted > 0 || webhooksDeleted > 0 || surveysDeleted > 0 || identityNoncesDeleted > 0 || auditDeleted > 0 {
-			logger.Info("retention sweep", "events_deleted", eventsDeleted, "sessions_deleted", sessionsDeleted, "webhooks_deleted", webhooksDeleted, "surveys_deleted", surveysDeleted, "identity_nonces_deleted", identityNoncesDeleted, "audit_deleted", auditDeleted)
+		if jobsDeleted > 0 || eventsDeleted > 0 || sessionsDeleted > 0 || webhooksDeleted > 0 || surveysDeleted > 0 || identityNoncesDeleted > 0 || auditDeleted > 0 {
+			logger.Info("retention sweep", "jobs_deleted", jobsDeleted, "events_deleted", eventsDeleted, "sessions_deleted", sessionsDeleted, "webhooks_deleted", webhooksDeleted, "surveys_deleted", surveysDeleted, "identity_nonces_deleted", identityNoncesDeleted, "audit_deleted", auditDeleted)
 		}
 
 		if _, err := jobClient.Enqueue(ctx, jobs.Spec{
@@ -912,6 +916,10 @@ const wakeSnoozedInterval = 30 * time.Second
 // need for the snooze tick's near-real-time cadence, so this runs far less
 // often.
 const retentionSweepInterval = 1 * time.Hour
+
+const jobHistoryRetention = 24 * time.Hour
+
+const jobHistoryRetentionBatchSize = 100_000
 
 const abandonedUploadAge = 1 * time.Hour
 
