@@ -3,7 +3,7 @@ module github.com/hubchat/hubchat
 go 1.25.0
 
 require (
-	github.com/Ishimwe-Kevin/devlite-go v0.1.3
+	github.com/Ishimwe-Kevin/devlite-go v0.1.4
 	github.com/coder/websocket v1.8.15
 	github.com/emersion/go-imap v1.2.1
 	github.com/emersion/go-message v0.18.2
