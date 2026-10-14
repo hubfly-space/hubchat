@@ -39,6 +39,7 @@ type inboxDetailJSON struct {
 	Description *string  `json:"description"`
 	Channels    []string `json:"channels"`
 	TeamIDs     []string `json:"team_ids"`
+	Visibility  string   `json:"visibility"`
 	IsDefault   bool     `json:"is_default"`
 	SLAPolicyID *string  `json:"sla_policy_id"`
 	OpenCount   int      `json:"open_count"`
@@ -49,7 +50,7 @@ func inboxDetailToJSON(i inbox.Inbox) inboxDetailJSON {
 	return inboxDetailJSON{
 		ID: i.ID, WorkspaceID: i.WorkspaceID, Name: i.Name, Slug: i.Slug,
 		Description: i.Description, Channels: orEmpty(i.Channels), TeamIDs: orEmpty(i.TeamIDs),
-		IsDefault: i.IsDefault, SLAPolicyID: i.SLAPolicyID, OpenCount: i.OpenCount,
+		Visibility: i.Visibility, IsDefault: i.IsDefault, SLAPolicyID: i.SLAPolicyID, OpenCount: i.OpenCount,
 		CreatedAt: i.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }
@@ -110,6 +111,7 @@ func handleGetInbox(deps Deps) http.HandlerFunc {
 }
 
 type inboxPayload struct {
+	Visibility  string   `json:"visibility"`
 	Name        string   `json:"name"`
 	Slug        string   `json:"slug"`
 	Description *string  `json:"description"`
@@ -129,7 +131,7 @@ func handleCreateInbox(deps Deps) http.HandlerFunc {
 
 		i, err := deps.Inbox.Create(
 			r.Context(), actor.WorkspaceID, actor.MemberID,
-			req.Name, req.Slug, req.Description, req.Channels, req.TeamIDs,
+			req.Name, req.Slug, req.Description, req.Channels, req.TeamIDs, req.Visibility,
 		)
 		if err != nil {
 			writeInboxError(w, r, err)
@@ -151,7 +153,7 @@ func handleUpdateInbox(deps Deps) http.HandlerFunc {
 
 		i, err := deps.Inbox.Update(
 			r.Context(), actor.WorkspaceID, actor.MemberID, r.PathValue("id"),
-			req.Name, req.Description, req.Channels, req.TeamIDs,
+			req.Name, req.Description, req.Channels, req.TeamIDs, req.Visibility,
 		)
 		if err != nil {
 			writeInboxError(w, r, err)
@@ -187,7 +189,7 @@ func handleDeleteInbox(deps Deps) http.HandlerFunc {
 
 func writeInboxError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
-	case errors.Is(err, inbox.ErrInvalidName), errors.Is(err, inbox.ErrInvalidSlug), errors.Is(err, inbox.ErrInvalidChannel):
+	case errors.Is(err, inbox.ErrInvalidVisibility), errors.Is(err, inbox.ErrInvalidName), errors.Is(err, inbox.ErrInvalidSlug), errors.Is(err, inbox.ErrInvalidChannel):
 		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, err.Error())
 	case errors.Is(err, inbox.ErrSlugTaken):
 		httpserver.WriteError(w, r, http.StatusConflict, httpserver.CodeConflict, err.Error())
