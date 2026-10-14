@@ -3,6 +3,7 @@ package ticket
 import (
 	"context"
 	"fmt"
+	"github.com/hubchat/hubchat/internal/authorization"
 	"strings"
 	"time"
 )
@@ -53,6 +54,10 @@ func (r *repository) list(ctx context.Context, workspaceID string, filter ListFi
 	}
 
 	where = append(where, "workspace_id = "+arg(workspaceID))
+
+	if ids := authorization.InboxIDs(ctx); ids != nil {
+		where = append(where, "inbox_id = ANY("+arg(ids)+"::text[])")
+	}
 
 	if filter.InboxID != "" {
 		where = append(where, "inbox_id = "+arg(filter.InboxID))
