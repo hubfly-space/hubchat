@@ -286,6 +286,17 @@ func (s *Service) RecordDownload(ctx context.Context, record Record, actorID, re
 // submit one idempotent message containing all selected files. Every lookup is
 // workspace-scoped and the transaction prevents a partial attachment list.
 func (s *Service) AttachToMessage(ctx context.Context, workspaceID, messageID string, fileIDs []string) error {
+	return database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		return s.AttachToMessageTx(ctx, tx, workspaceID, messageID, fileIDs)
+	})
+}
+
+// AttachToMessageTx validates and links files in the transaction creating the
+// message. The caller rolls back the message and its events if linking fails.
+func (s *Service) AttachToMessageTx(ctx context.Context, tx pgx.Tx, workspaceID, messageID string, fileIDs []string) error {
+	if s == nil {
+		return ErrInvalidAttachment
+	}
 	if messageID == "" || len(fileIDs) == 0 {
 		return nil
 	}
@@ -302,14 +313,13 @@ func (s *Service) AttachToMessage(ctx context.Context, workspaceID, messageID st
 		unique = append(unique, id)
 	}
 
-	return database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
-		// A file ID is not an authorization token. In particular, portal and
-		// widget clients may only attach files that belong to this message's
-		// conversation (or its linked ticket). Workspace-scoping alone would
-		// allow a leaked ID from one customer conversation to be reused in
-		// another conversation in the same workspace.
-		var fileCount int
-		if err := tx.QueryRow(ctx, `
+	// A file ID is not an authorization token. In particular, portal and
+	// widget clients may only attach files that belong to this message's
+	// conversation (or its linked ticket). Workspace-scoping alone would
+	// allow a leaked ID from one customer conversation to be reused in
+	// another conversation in the same workspace.
+	var fileCount int
+	if err := tx.QueryRow(ctx, `
 			SELECT count(*)
 			FROM files f
 			JOIN messages target
@@ -335,23 +345,22 @@ func (s *Service) AttachToMessage(ctx context.Context, workspaceID, messageID st
 					))
 				)
 		`, workspaceID, unique, messageID).Scan(&fileCount); err != nil {
-			return fmt.Errorf("file: validate message attachments: %w", err)
-		}
-		if fileCount != len(unique) {
-			return ErrInvalidAttachment
-		}
+		return fmt.Errorf("file: validate message attachments: %w", err)
+	}
+	if fileCount != len(unique) {
+		return ErrInvalidAttachment
+	}
 
-		for position, fileID := range unique {
-			if _, err := tx.Exec(ctx, `
+	for position, fileID := range unique {
+		if _, err := tx.Exec(ctx, `
 				INSERT INTO message_attachments (message_id, file_id, position)
 				VALUES ($1, $2, $3)
 				ON CONFLICT (message_id, file_id) DO UPDATE SET position = EXCLUDED.position
 			`, messageID, fileID, position); err != nil {
-				return fmt.Errorf("file: attach %s: %w", fileID, err)
-			}
+			return fmt.Errorf("file: attach %s: %w", fileID, err)
 		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // MessageAttachments returns committed files in the order selected by the
