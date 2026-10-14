@@ -3,7 +3,8 @@ module github.com/hubchat/hubchat
 go 1.25.0
 
 require (
-	github.com/Ishimwe-Kevin/devlite-go v0.1.3
+	github.com/Ishimwe-Kevin/devlite-go v0.1.5
+	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/coder/websocket v1.8.15
 	github.com/emersion/go-imap v1.2.1
 	github.com/emersion/go-message v0.18.2
@@ -14,7 +15,6 @@ require (
 )
 
 require (
-	github.com/SherClockHolmes/webpush-go v1.4.0 // indirect
 	github.com/emersion/go-sasl v0.0.0-20200509203442-7bfe0ed36a21 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
