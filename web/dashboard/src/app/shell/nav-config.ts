@@ -308,6 +308,7 @@ export const NAV_SECTIONS: NavSection[] = [
           { label: "General", to: "/settings/general", icon: Settings },
           { label: "Branding", to: "/settings/branding", icon: Sparkles },
           { label: "Tags", to: "/settings/tags", icon: Tags },
+          { label: "Customer context", to: "/settings/customer-context", icon: ListChecks },
           { label: "Ticket fields", to: "/settings/fields", icon: ListChecks },
           { label: "Business hours", to: "/settings/hours", icon: Clock },
         ],
