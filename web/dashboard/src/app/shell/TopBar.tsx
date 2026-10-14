@@ -1,5 +1,6 @@
+import { useWorkspace } from "../workspace-context";
 import {
-  Button,
+  hasPushSubscription,  Button,
   Kbd,
   Menu,
   MenuContent,
@@ -49,6 +50,7 @@ export function TopBar({
   connection: ConnectionState;
 }) {
   const navigate = useNavigate();
+  const { viewer, workspace } = useWorkspace();
   const count = useQuery<{ count: number }>(["notifications-count"], (signal) =>
     api.get("/notifications/count", { signal }),
     { refetchInterval: 10_000 },
@@ -65,10 +67,10 @@ export function TopBar({
   const { mode, setMode, density, setDensity } = useTheme();
   const toast = useToast();
 
-  useLiveNotificationPopups(notifications.items, preferences.data?.data ?? [], preferences.isSuccess, navigate, toast);
+  useLiveNotificationPopups(notifications.items, preferences.data?.data ?? [], preferences.isSuccess, navigate, toast, viewer.id, workspace.id);
 
   return (
-    <header className="flex h-topbar shrink-0 items-center gap-3 border-b border-line bg-surface px-3">
+    <header className="flex min-w-0 flex-1 h-topbar shrink-0 items-center gap-3 border-b border-line bg-surface px-3">
       {/* Search is a button, not an input. It opens the palette, and pretending
           otherwise (a fake input that steals focus) is a small lie that costs a
           keystroke every time. */}
@@ -166,6 +168,8 @@ function useLiveNotificationPopups(
   preferencesReady: boolean,
   navigate: ReturnType<typeof useNavigate>,
   toast: ReturnType<typeof useToast>,
+  memberId: string,
+  workspaceId: string,
 ) {
   const seen = useRef<Set<string> | null>(null);
   const audioContext = useRef<AudioContext | null>(null);
@@ -204,6 +208,7 @@ function useLiveNotificationPopups(
       const browserAllowed = browserEnabled.has(preferenceType) ||
         (!savedTypes.has(preferenceType) && defaultBrowserTypes.has(preferenceType));
       if (!canBrowserNotify || !browserAllowed) return;
+      if (hasPushSubscription(memberId, workspaceId)) return;
       const popup = new window.Notification(item.title, { body: item.body });
       popup.onclick = () => {
         window.focus();
@@ -211,7 +216,7 @@ function useLiveNotificationPopups(
         popup.close();
       };
     });
-  }, [items, preferences, preferencesReady, navigate, toast]);
+  }, [items, preferences, preferencesReady, navigate, toast, memberId, workspaceId]);
 }
 
 /**
