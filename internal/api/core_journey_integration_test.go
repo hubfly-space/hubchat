@@ -58,7 +58,7 @@ func TestCoreSupportPortalJourney(t *testing.T) {
 	customerService := customer.New(pool, eventLog, auditLog, config.Default().Limits)
 	customerName := "Journey Customer"
 	customerEmail := "journey-customer@example.com"
-	createdCustomer, err := customerService.Identify(ctx, createdWorkspace.ID, nil, &customerName, &customerEmail, nil, true)
+	createdCustomer, err := customerService.Identify(ctx, createdWorkspace.ID, nil, customer.Identity{Name: &customerName, Email: &customerEmail}, true)
 	if err != nil {
 		t.Fatalf("identify customer: %v", err)
 	}
