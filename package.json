@@ -15,7 +15,9 @@
     "build": "pnpm -r --filter \"./web/*\" build",
     "typecheck": "pnpm -r --filter \"./web/*\" typecheck",
     "lint": "pnpm -r --filter \"./web/*\" lint",
-    "clean": "rm -rf web/*/dist web/*/node_modules node_modules"
+    "clean": "rm -rf web/*/dist web/*/node_modules node_modules",
+    "test:frontend": "pnpm --filter @hubchat/shared test && node --test scripts/check-service-worker.test.mjs",
+    "check:bundles": "node scripts/check-bundle-budgets.mjs"
   },
   "pnpm": {
     "overrides": {
@@ -28,7 +30,9 @@
     "eslint": "^10.9.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.5",
+    "playwright-core": "^1.64.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.68.0"
-  }
+  },
+  "license": "AGPL-3.0-only"
 }
