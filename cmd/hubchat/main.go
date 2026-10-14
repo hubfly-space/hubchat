@@ -26,12 +26,14 @@ import (
 	"syscall"
 	"time"
 
+	webpush "github.com/SherClockHolmes/webpush-go"
 	"github.com/hubchat/hubchat/embedded"
 	"github.com/hubchat/hubchat/internal/analytics"
 	"github.com/hubchat/hubchat/internal/api"
 	"github.com/hubchat/hubchat/internal/apikey"
 	"github.com/hubchat/hubchat/internal/audit"
 	"github.com/hubchat/hubchat/internal/auth"
+	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/automation"
 	"github.com/hubchat/hubchat/internal/config"
 	"github.com/hubchat/hubchat/internal/conversation"
@@ -53,6 +55,7 @@ import (
 	"github.com/hubchat/hubchat/internal/notification"
 	"github.com/hubchat/hubchat/internal/portability"
 	"github.com/hubchat/hubchat/internal/portal"
+	"github.com/hubchat/hubchat/internal/push"
 	"github.com/hubchat/hubchat/internal/realtime"
 	"github.com/hubchat/hubchat/internal/savedview"
 	"github.com/hubchat/hubchat/internal/search"
@@ -110,6 +113,12 @@ func run(args []string) error {
 	}
 
 	switch command {
+	case "push-keys":
+		private, public, err := webpush.GenerateVAPIDKeys()
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(map[string]string{"HUBCHAT_VAPID_PUBLIC_KEY": public, "HUBCHAT_VAPID_PRIVATE_KEY": private})
 	case "serve":
 		return serve(args)
 	case "migrate":
@@ -397,22 +406,59 @@ func wireAPI(ctx context.Context, cfg config.Config, logger *slog.Logger, observ
 		pool.Close()
 		return nil, fmt.Errorf("open GeoIP database: %w", err)
 	}
-	searchService := search.New(conversationService, customerService)
+
 	ticketService := ticket.New(pool, workspaceService, eventLog, auditLog)
 	portalService := portal.New(pool, portal.Options{SessionLifetime: cfg.Security.SessionLifetime})
 	notificationService := notification.New(pool, jobClient)
 	notificationService.SetPublicURL(cfg.Server.PublicURL)
+	authorizeDelivery := func(ctx context.Context, workspaceID, memberID, entityType, entityID string) bool {
+		var userID string
+		if err := pool.QueryRow(ctx, `SELECT user_id FROM workspace_members WHERE workspace_id=$1 AND id=$2 AND deactivated_at IS NULL`, workspaceID, memberID).Scan(&userID); err != nil {
+			return false
+		}
+		actor, err := workspaceService.ActorForUser(ctx, workspaceID, userID)
+		if err != nil {
+			return false
+		}
+		ctx = authorization.WithActor(ctx, actor)
+		switch entityType {
+		case "conversation":
+			if !actor.Can(authorization.ConversationRead) {
+				return false
+			}
+			_, err := conversationService.Get(ctx, workspaceID, entityID)
+			return err == nil
+		case "ticket":
+			if !actor.Can(authorization.TicketManage) {
+				return false
+			}
+			_, err := ticketService.Get(ctx, workspaceID, entityID)
+			return err == nil
+		default:
+			return true
+		}
+	}
+	pushService := push.New(pool, cfg.Security.SecretKey, push.Options{PublicKey: cfg.Push.PublicKey, PrivateKey: cfg.Push.PrivateKey, Subscriber: cfg.Push.Subscriber, Authorize: authorizeDelivery})
+	notificationService.SetPushDispatcher(pushService)
+
 	apiKeyService := apikey.New(pool)
-	webhookService := webhook.New(pool, cfg.Security.SecretKey, jobClient)
+	webhookService := webhook.New(pool, cfg.Security.SecretKey, jobClient, webhook.Options{AllowedPrivateHosts: cfg.Security.WebhookAllowedPrivateHosts})
 	emailChannelService := emailchannel.New(pool, cfg.Security.SecretKey, conversationService, customerService, inboxService, jobClient)
 	emailTemplateService := emailtemplate.New(pool)
 	knowledgebaseService := knowledgebase.New(pool, knowledgebase.Options{Events: eventLog})
 	feedbackService := feedback.New(pool, eventLog, auditLog)
+	searchService := search.New(conversationService, customerService,
+		search.Provider{Kind: "company", Capability: authorization.CustomerRead, Fetch: customerService.SearchCompanies},
+		search.Provider{Kind: "ticket", Capability: authorization.TicketManage, Fetch: ticketService.SearchMatches},
+		search.Provider{Kind: "article", Capability: authorization.KnowledgebaseManage, Fetch: knowledgebaseService.SearchMatches},
+		search.Provider{Kind: "feedback", Capability: authorization.FeedbackModerate, Fetch: feedbackService.SearchMatches})
+
 	surveyService := survey.New(pool, survey.Options{Jobs: jobClient, PublicURL: cfg.Server.PublicURL, Events: eventLog})
 	notificationService.SetSurveyDispatcher(surveyService)
 	slaService := sla.New(pool, eventLog)
 	taskService := task.New(pool)
 	automationService := automation.New(pool, automation.Options{
+		Notification: notificationService,
 		Conversation: conversationService,
 		Ticket:       ticketService,
 		Jobs:         jobClient,
@@ -453,6 +499,7 @@ func wireAPI(ctx context.Context, cfg config.Config, logger *slog.Logger, observ
 	hub := realtime.NewHub(logger, cfg.Realtime.OutboundQueueSize)
 
 	deps := api.Deps{
+		Push:           pushService,
 		Pool:           pool,
 		Logger:         logger,
 		Auth:           authService,
@@ -513,7 +560,7 @@ func wireAPI(ctx context.Context, cfg config.Config, logger *slog.Logger, observ
 
 	if cfg.Jobs.Enabled && (cfg.Server.Has(config.RoleWorker) || cfg.Server.Has(config.RoleScheduler)) {
 		app.Worker = jobs.NewWorker(pool, logger, cfg.Jobs)
-		registerJobHandlers(app.Worker, jobClient, mailer.New(cfg.Email, logger), fileService, emailChannelService, emailTemplateService, portabilityService, automationService, conversationService, customerService, webhookService, surveyService, widgetService, auditLog, slaService, analyticsService, knowledgebaseService, logger)
+		registerJobHandlers(app.Worker, jobClient, mailer.New(cfg.Email, logger), fileService, emailChannelService, emailTemplateService, portabilityService, automationService, conversationService, customerService, webhookService, surveyService, widgetService, auditLog, slaService, analyticsService, knowledgebaseService, logger, workerDeliveryOptions{Pool: pool, Push: pushService, Authorize: authorizeDelivery})
 
 		if cfg.Server.Has(config.RoleScheduler) {
 			// Primes the self-perpetuating snooze-wake tick (see JobWakeSnoozed's
@@ -619,16 +666,57 @@ func openEmailAttachment(ctx context.Context, files *filemodule.Service, workspa
 // Handlers land here as their owning modules are built. Keeping the
 // registrations in one function means "what work can this binary do" is
 // answerable by reading it, rather than by grepping for Register calls.
+type workerDeliveryOptions struct {
+	Pool      *database.Pool
+	Push      *push.Service
+	Authorize func(context.Context, string, string, string, string) bool
+}
+
 func registerJobHandlers(
 	worker *jobs.Worker, jobClient *jobs.Client, sender *mailer.SMTPSender,
-	fileService *filemodule.Service, emailChannelService *emailchannel.Service, emailTemplateService *emailtemplate.Service, portabilityService *portability.Service, automationService *automation.Service, conversationService *conversation.Service, customerService *customer.Service, webhookService *webhook.Service, surveyService *survey.Service, widgetService *widget.Service, auditLog *audit.Log, slaService *sla.Service, analyticsService *analytics.Service, knowledgebaseService *knowledgebase.Service, logger *slog.Logger,
+	fileService *filemodule.Service, emailChannelService *emailchannel.Service, emailTemplateService *emailtemplate.Service, portabilityService *portability.Service, automationService *automation.Service, conversationService *conversation.Service, customerService *customer.Service, webhookService *webhook.Service, surveyService *survey.Service, widgetService *widget.Service, auditLog *audit.Log, slaService *sla.Service, analyticsService *analytics.Service, knowledgebaseService *knowledgebase.Service, logger *slog.Logger, options ...workerDeliveryOptions,
 ) {
+	var pool *database.Pool
+	var pushService *push.Service
+	var authorizeDelivery func(context.Context, string, string, string, string) bool
+	if len(options) > 0 {
+		pool = options[0].Pool
+		pushService = options[0].Push
+		authorizeDelivery = options[0].Authorize
+	}
+
+	worker.Register(push.JobDeliver, func(ctx context.Context, job *jobs.Job) error {
+		var payload push.Delivery
+		if err := job.Decode(&payload); err != nil {
+			return jobs.Permanent(err)
+		}
+		if pushService == nil {
+			return jobs.Permanent(errors.New("push service unavailable"))
+		}
+		return pushService.Deliver(ctx, payload)
+	})
+
 	worker.Register(api.JobEmailSend, func(ctx context.Context, job *jobs.Job) error {
 		var payload api.EmailPayload
 		if err := job.Decode(&payload); err != nil {
 			// A payload that will never parse is not worth five attempts.
 			return jobs.Permanent(err)
 		}
+		if payload.NotificationID != "" {
+			if pool == nil || authorizeDelivery == nil {
+				return jobs.Permanent(errors.New("notification delivery policy unavailable"))
+			}
+			var workspaceID, memberID, entityType, entityID string
+			if err := pool.QueryRow(ctx, `SELECT workspace_id,member_id,entity_type,entity_id FROM notifications WHERE id=$1`, payload.NotificationID).Scan(&workspaceID, &memberID, &entityType, &entityID); errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			} else if err != nil {
+				return err
+			}
+			if !authorizeDelivery(ctx, workspaceID, memberID, entityType, entityID) {
+				return nil
+			}
+		}
+
 		if payload.TemplateKey != "" && payload.WorkspaceID != "" && emailTemplateService != nil {
 			subject, body, renderErr := emailTemplateService.Render(ctx, payload.WorkspaceID, payload.TemplateKey, payload.TemplateData)
 			if renderErr != nil {
@@ -2010,6 +2098,7 @@ Commands:
   admin              Manage owner accounts
   workspace          Export or import a workspace archive
   jobs               Inspect, cancel, retry, and manage background jobs
+  push-keys          Generate a VAPID key pair for background notifications
   version            Print version information
 
 Setup flags:
