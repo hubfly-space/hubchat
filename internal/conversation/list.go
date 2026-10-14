@@ -3,6 +3,7 @@ package conversation
 import (
 	"context"
 	"fmt"
+	"github.com/hubchat/hubchat/internal/authorization"
 	"strings"
 	"time"
 )
@@ -32,9 +33,11 @@ type ListFilter struct {
 	SLAState          string
 	MentionedMemberID string
 
-	Before   time.Time
-	BeforeID string
-	Limit    int
+	Sort           string
+	BeforePriority string
+	Before         time.Time
+	BeforeID       string
+	Limit          int
 }
 
 // List returns one page of conversations matching filter, newest activity
@@ -59,6 +62,10 @@ func (r *repository) list(ctx context.Context, workspaceID string, filter ListFi
 	}
 
 	where = append(where, "c.workspace_id = "+arg(workspaceID))
+
+	if ids := authorization.InboxIDs(ctx); ids != nil {
+		where = append(where, "c.inbox_id = ANY("+arg(ids)+"::text[])")
+	}
 
 	if filter.InboxID != "" {
 		where = append(where, "c.inbox_id = "+arg(filter.InboxID))
@@ -117,11 +124,26 @@ func (r *repository) list(ctx context.Context, workspaceID string, filter ListFi
 		where = append(where, "EXISTS (SELECT 1 FROM notifications n WHERE n.workspace_id = c.workspace_id AND n.member_id = "+arg(filter.MentionedMemberID)+" AND n.type = 'mention' AND n.entity_type = 'conversation' AND n.entity_id = c.id)")
 	}
 
-	before := filter.Before
-	if before.IsZero() {
-		before = time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+	order := "c.last_message_at DESC, c.id DESC"
+	const rankSQL = "CASE c.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END"
+	if filter.Sort == "oldest" {
+		order = "c.last_message_at ASC, c.id ASC"
 	}
-	where = append(where, "(c.last_message_at, c.id) < ("+arg(before)+", "+arg(filter.BeforeID)+")")
+	if filter.Sort == "priority" {
+		order = rankSQL + " ASC, c.last_message_at DESC, c.id DESC"
+	}
+	if filter.BeforeID != "" {
+		at, id := arg(filter.Before), arg(filter.BeforeID)
+		switch filter.Sort {
+		case "oldest":
+			where = append(where, "(c.last_message_at,c.id) > ("+at+","+id+")")
+		case "priority":
+			rank := arg(PriorityRank(filter.BeforePriority))
+			where = append(where, "("+rankSQL+" > "+rank+" OR ("+rankSQL+" = "+rank+" AND (c.last_message_at,c.id) < ("+at+","+id+")))")
+		default:
+			where = append(where, "(c.last_message_at,c.id) < ("+at+","+id+")")
+		}
+	}
 
 	limitPlaceholder := arg(filter.Limit)
 
@@ -134,7 +156,7 @@ func (r *repository) list(ctx context.Context, workspaceID string, filter ListFi
 		       c.last_message_preview, c.last_message_at, c.last_customer_at, c.snoozed_until, c.created_at
 		FROM conversations c
 		WHERE ` + strings.Join(where, " AND ") + `
-		ORDER BY c.last_message_at DESC, c.id DESC
+		ORDER BY ` + order + `
 		LIMIT ` + limitPlaceholder
 
 	rows, err := r.pool.Query(ctx, query, args...)
@@ -152,4 +174,17 @@ func (r *repository) list(ctx context.Context, workspaceID string, filter ListFi
 		out = append(out, *c)
 	}
 	return out, rows.Err()
+}
+
+func PriorityRank(priority string) int {
+	switch priority {
+	case "urgent":
+		return 0
+	case "high":
+		return 1
+	case "normal":
+		return 2
+	default:
+		return 3
+	}
 }
