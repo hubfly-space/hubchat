@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/hubchat/hubchat/internal/audit"
+	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/database"
 	"github.com/hubchat/hubchat/internal/events"
 	"github.com/hubchat/hubchat/internal/ids"
@@ -112,6 +113,29 @@ func (s *Service) recordAudit(ctx context.Context, tx pgx.Tx, entry audit.Entry)
 	return audit.RecordTx(ctx, tx, entry)
 }
 
+// Attachments lets message writes share their transaction with file linking.
+type Attachments struct {
+	IDs   []string
+	Store interface {
+		AttachToMessageTx(context.Context, pgx.Tx, string, string, []string) error
+	}
+}
+
+func attachMessage(ctx context.Context, tx pgx.Tx, workspaceID, messageID string, sets []Attachments) error {
+	for _, set := range sets {
+		if len(set.IDs) == 0 {
+			continue
+		}
+		if set.Store == nil {
+			return errors.New("conversation: attachment storage unavailable")
+		}
+		if err := set.Store.AttachToMessageTx(ctx, tx, workspaceID, messageID, set.IDs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Start creates a new conversation with its opening message in one
 // transaction, so a conversation can never exist without at least one
 // message and vice versa.
@@ -122,7 +146,11 @@ func (s *Service) Start(
 	customerID *string,
 	visitorID *string,
 	authorName, body string,
+	attachments ...Attachments,
 ) (*Conversation, *Message, error) {
+	if !authorization.CanSeeInbox(ctx, inboxID) {
+		return nil, nil, ErrInvalidInbox
+	}
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return nil, nil, ErrEmptyBody
@@ -158,6 +186,10 @@ func (s *Service) Start(
 			conversationID, workspaceID, "reply", authorType, customerID, authorName, body,
 		)
 		if err != nil {
+			return err
+		}
+
+		if err := attachMessage(ctx, tx, workspaceID, message.ID, attachments); err != nil {
 			return err
 		}
 
@@ -216,8 +248,9 @@ func (s *Service) PostMessage(
 	kind, authorType string,
 	authorID *string,
 	authorName, body string,
+	attachments ...Attachments,
 ) (*Message, error) {
-	return s.PostMessageWithMentions(ctx, workspaceID, conversationID, clientID, kind, authorType, authorID, authorName, body, nil)
+	return s.PostMessageWithMentions(ctx, workspaceID, conversationID, clientID, kind, authorType, authorID, authorName, body, nil, attachments...)
 }
 
 // PostMessageWithMentions appends a reply or internal note and records the
@@ -232,6 +265,7 @@ func (s *Service) PostMessageWithMentions(
 	authorID *string,
 	authorName, body string,
 	mentionedMemberIDs []string,
+	attachments ...Attachments,
 ) (*Message, error) {
 	body = strings.TrimSpace(body)
 	if body == "" {
@@ -273,6 +307,10 @@ func (s *Service) PostMessageWithMentions(
 			conversationID, workspaceID, kind, authorType, authorID, authorName, body,
 		)
 		if err != nil {
+			return err
+		}
+
+		if err := attachMessage(ctx, tx, workspaceID, message.ID, attachments); err != nil {
 			return err
 		}
 
@@ -396,6 +434,9 @@ func (s *Service) ConversationIDsForVisitor(ctx context.Context, workspaceID, vi
 // after a given sequence — the same cursor the realtime gateway uses to
 // replay missed events on reconnect (§9).
 func (s *Service) Messages(ctx context.Context, workspaceID, conversationID string, afterSequence int64) ([]Message, error) {
+	if _, err := s.Get(ctx, workspaceID, conversationID); err != nil {
+		return nil, err
+	}
 	return s.repo.listMessages(ctx, workspaceID, conversationID, afterSequence)
 }
 
@@ -403,6 +444,9 @@ func (s *Service) Messages(ctx context.Context, workspaceID, conversationID stri
 // the newest messages; beforeSequence walks toward older history, while
 // afterSequence is reserved for forward realtime replay.
 func (s *Service) ListMessagesPage(ctx context.Context, workspaceID, conversationID string, beforeSequence, afterSequence int64, limit int) ([]Message, bool, error) {
+	if _, err := s.Get(ctx, workspaceID, conversationID); err != nil {
+		return nil, false, err
+	}
 	if beforeSequence > 0 && afterSequence > 0 {
 		return nil, false, errors.New("conversation: before and after cursors are mutually exclusive")
 	}
