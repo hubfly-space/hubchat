@@ -137,14 +137,11 @@ func (s *SMTPSender) Send(ctx context.Context, message Message) error {
 	defer client.Close()
 
 	if s.cfg.Encryption == "starttls" {
-		// Only upgrade when the server advertises it. Demanding STARTTLS from
-		// a local relay that does not offer it — MailHog, a sidecar — would
-		// make the common self-hosted setup fail for no security gain over a
-		// loopback connection.
-		if ok, _ := client.Extension("STARTTLS"); ok {
-			if err := client.StartTLS(&tls.Config{ServerName: s.cfg.SMTPHost}); err != nil {
-				return fmt.Errorf("mailer: starttls: %w", err)
-			}
+		if ok, _ := client.Extension("STARTTLS"); !ok {
+			return errors.New("mailer: SMTP server does not support required STARTTLS; configure encryption=none explicitly for a trusted plaintext relay")
+		}
+		if err := client.StartTLS(&tls.Config{ServerName: s.cfg.SMTPHost, MinVersion: tls.VersionTLS12}); err != nil {
+			return fmt.Errorf("mailer: starttls: %w", err)
 		}
 	}
 
