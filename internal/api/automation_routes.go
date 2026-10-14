@@ -11,6 +11,9 @@ import (
 )
 
 func registerAutomationRoutes(mux *http.ServeMux, deps Deps) {
+	mux.HandleFunc("GET /v1/automation/templates", requireCapability(deps, authorization.AutomationManage, func(w http.ResponseWriter, r *http.Request) {
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": automation.Templates()})
+	}))
 	idempotent := Idempotency(deps)
 	mux.HandleFunc("GET /v1/automation/rules", requireCapability(deps, authorization.AutomationManage, handleListAutomationRules(deps)))
 	mux.HandleFunc("POST /v1/automation/rules", requireCapability(deps, authorization.AutomationManage, Idempotency(deps)(handleCreateAutomationRule(deps))))
