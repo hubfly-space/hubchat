@@ -52,3 +52,17 @@ func TestParseFeedbackCSVRequiresBoardAndTitle(t *testing.T) {
 		t.Fatalf("expected missing board error, got %v", err)
 	}
 }
+
+func TestCSVColumnMappingAndIgnoredColumns(t *testing.T) {
+	mapping := map[string]any{"columns": map[string]any{"Client name": "name", "Mail": "email", "Unused": ""}}
+	rows, err := parseCSVImport([]byte("\ufeffClient name,Mail,Unused\nAda,ada@example.test,ignore\n"), KindCustomersCSV, mapping)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].values["name"] != "Ada" || rows[0].values["email"] != "ada@example.test" {
+		t.Fatalf("mapped rows=%v", rows)
+	}
+	if _, exists := rows[0].values["unused"]; exists {
+		t.Fatal("ignored column remained")
+	}
+}
