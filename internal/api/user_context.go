@@ -164,6 +164,7 @@ const JobEmailSend = "email.send"
 
 // EmailPayload is what the email.send job carries.
 type EmailPayload struct {
+	NotificationID string `json:"notification_id,omitempty"`
 	To             string            `json:"to"`
 	Subject        string            `json:"subject"`
 	Body           string            `json:"body"`
