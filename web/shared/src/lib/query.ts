@@ -47,6 +47,10 @@ type Entry<T = unknown> = {
    * fetches the same thing, so it does not matter which one's closure runs.
    */
   refetch?: () => void;
+  controller?: AbortController;
+  generation: number;
+  invalidated?: boolean;
+  gcTimer?: ReturnType<typeof setTimeout>;
 };
 
 export type QueryState<T> = {
@@ -62,9 +66,19 @@ export type QueryState<T> = {
 };
 
 const cache = new Map<string, Entry>();
+let cacheEpoch = 0;
+
+function workspaceScope(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const value: unknown = JSON.parse(window.localStorage.getItem("hubchat.workspace") ?? '""');
+    return typeof value === "string" ? value : "";
+  } catch { return ""; }
+}
 
 function serialize(key: QueryKey): string {
-  return JSON.stringify(key);
+  // Append scope so logical prefix invalidation still works for every screen.
+  return JSON.stringify([...key, "__workspace", workspaceScope()]);
 }
 
 function entryFor<T>(key: string): Entry<T> {
@@ -73,6 +87,7 @@ function entryFor<T>(key: string): Entry<T> {
     entry = {
       updatedAt: 0,
       fetching: false,
+      generation: 0,
       listeners: new Set(),
       snapshot: {
         data: undefined,
@@ -108,18 +123,25 @@ function publish<T>(entry: Entry<T>) {
   entry.listeners.forEach((listen) => listen());
 }
 
-async function runFetch<T>(key: string, fetcher: () => Promise<T>): Promise<T | undefined> {
+async function runFetch<T>(key: string, fetcher: (signal: AbortSignal) => Promise<T>): Promise<T | undefined> {
   const entry = entryFor<T>(key);
 
   // Another component already started this exact fetch. Share it rather than
   // duplicating the round trip.
-  if (entry.promise) return entry.promise as Promise<T>;
+  if (entry.promise && !entry.controller?.signal.aborted) return entry.promise as Promise<T>;
+  if (entry.controller?.signal.aborted) { entry.generation += 1; entry.promise = undefined; }
 
   entry.fetching = true;
+  entry.invalidated = false;
+  const controller = new AbortController();
+  entry.controller = controller;
+  const generation = entry.generation;
+  const current = () => !controller.signal.aborted && entry.generation === generation && cache.get(key) === entry;
   publish(entry);
 
-  const promise = fetcher()
+  const promise = Promise.resolve().then(() => fetcher(controller.signal))
     .then((data) => {
+      if (!current()) return undefined;
       entry.data = data;
       entry.error = undefined;
       entry.updatedAt = Date.now();
@@ -128,15 +150,19 @@ async function runFetch<T>(key: string, fetcher: () => Promise<T>): Promise<T | 
     .catch((error: unknown) => {
       // A cancelled request is not a failure the user should see — it means
       // the component asking for it went away.
-      if (!(error instanceof AbortedError)) {
+      if (current() && !(error instanceof AbortedError)) {
         entry.error = error;
+        if (error instanceof ApiError && [401,403,404].includes(error.status)) { entry.data=undefined;entry.updatedAt=0; }
       }
       return undefined;
     })
     .finally(() => {
+      if (entry.generation !== generation || cache.get(key) !== entry) return;
       entry.fetching = false;
       entry.promise = undefined;
+      entry.controller = undefined;
       publish(entry);
+      if (entry.invalidated && entry.listeners.size > 0) entry.refetch?.();
     });
 
   entry.promise = promise;
@@ -190,9 +216,20 @@ export function useQuery<T>(
     (onChange: () => void) => {
       if (!serialized) return () => {};
       const entry = entryFor(serialized);
+      if (entry.gcTimer) clearTimeout(entry.gcTimer);
       entry.listeners.add(onChange);
       return () => {
         entry.listeners.delete(onChange);
+        // StrictMode may subscribe again synchronously. Cancel only after the
+        // last observer has actually gone, leaving other observers intact.
+        queueMicrotask(() => {
+          if (entry.listeners.size > 0) return;
+          entry.controller?.abort();
+          entry.refetch = undefined;
+          entry.gcTimer = setTimeout(() => {
+            if (entry.listeners.size === 0 && cache.get(serialized) === entry) cache.delete(serialized);
+          }, 5 * 60_000);
+        });
       };
     },
     [serialized],
@@ -211,8 +248,7 @@ export function useQuery<T>(
       const entry = entryFor<T>(serialized);
       if (!force && entry.updatedAt > 0 && Date.now() - entry.updatedAt < staleTime) return;
 
-      const controller = new AbortController();
-      void runFetch(serialized, () => fetcherRef.current(controller.signal));
+      void runFetch(serialized, (signal) => fetcherRef.current(signal));
     },
     [serialized, active, staleTime],
   );
@@ -245,7 +281,7 @@ export function useQuery<T>(
 
   const refetch = useCallback(() => load(true), [load]);
 
-  return { ...state, refetch };
+  return { ...state, isLoading: active && state.updatedAt === 0 && !state.isError, refetch };
 }
 
 const EMPTY_STATE: QueryState<unknown> = {
@@ -267,18 +303,20 @@ const EMPTY_STATE: QueryState<unknown> = {
  * to include it.
  */
 export function invalidate(prefix: QueryKey) {
-  const needle = serialize(prefix);
+  const needle = JSON.stringify(prefix);
   // Compare against the prefix as a JSON array fragment, so ["a"] matches
   // ["a","b"] but not ["ab"].
   const needlePrefix = needle.slice(0, -1);
 
   for (const [key, entry] of cache) {
-    const matches = key === needle || key.startsWith(needlePrefix + ",");
+    const parts = JSON.parse(key) as unknown[];
+    const matches = parts[parts.length - 1] === workspaceScope() && key.startsWith(needlePrefix + ",");
     if (!matches) continue;
 
     // Marking stale rather than deleting keeps the current data on screen
     // while the refetch runs — invalidation should not blank the UI.
     entry.updatedAt = 0;
+    entry.invalidated = true;
     publish(entry);
 
     // A query with active listeners is on screen right now. Without this, a
@@ -304,6 +342,11 @@ export function peek<T>(key: QueryKey): T | undefined {
 export function setQueryData<T>(key: QueryKey, updater: T | ((current: T | undefined) => T)) {
   const serialized = serialize(key);
   const entry = entryFor<T>(serialized);
+  entry.generation += 1;
+  entry.controller?.abort();
+  entry.controller = undefined;
+  entry.promise = undefined;
+  entry.fetching = false;
   entry.data =
     typeof updater === "function" ? (updater as (c: T | undefined) => T)(entry.data) : updater;
   entry.updatedAt = Date.now();
@@ -312,14 +355,24 @@ export function setQueryData<T>(key: QueryKey, updater: T | ((current: T | undef
 }
 
 /** Empties the cache. Called on sign-out so the next user sees nothing of the last. */
-export function clearQueryCache() {
-  for (const entry of cache.values()) {
+export function clearQueryCache(options: { preserve?: QueryKey[]; refetch?: boolean } = {}) {
+  cacheEpoch += 1;
+  for (const [key, entry] of cache) {
+    const parts = JSON.parse(key) as unknown[];
+    if (options.preserve?.some(prefix => prefix.every((part,index) => parts[index] === part))) continue;
+    entry.generation += 1;
+    entry.controller?.abort();
+    if (entry.gcTimer) clearTimeout(entry.gcTimer);
+    entry.controller = undefined;
+    entry.promise = undefined;
+    entry.fetching = false;
     entry.data = undefined;
     entry.error = undefined;
     entry.updatedAt = 0;
     publish(entry);
+    if (entry.listeners.size === 0) cache.delete(key);
+    else if (options.refetch) entry.refetch?.();
   }
-  cache.clear();
 }
 
 export type UseMutationOptions<TArgs, TResult> = {
@@ -360,6 +413,7 @@ export function useMutation<TArgs, TResult>(
   options: UseMutationOptions<TArgs, TResult> = {},
 ): MutationState<TArgs, TResult> {
   const [isPending, setPending] = useState(false);
+  const pendingCount = useRef(0);
   const [error, setError] = useState<unknown>(undefined);
   const [isSuccess, setSuccess] = useState(false);
 
@@ -371,6 +425,10 @@ export function useMutation<TArgs, TResult>(
   const mutate = useCallback(async (args: TArgs) => {
     const { optimistic, onSuccess, onError, invalidates } = optionsRef.current;
 
+    const scope = workspaceScope();
+    const epoch = cacheEpoch;
+    const current = () => workspaceScope() === scope && cacheEpoch === epoch;
+    pendingCount.current += 1;
     setPending(true);
     setError(undefined);
     setSuccess(false);
@@ -379,6 +437,7 @@ export function useMutation<TArgs, TResult>(
 
     try {
       const result = await mutatorRef.current(args);
+      if (!current()) return result;
       invalidates?.forEach(invalidate);
       setSuccess(true);
       onSuccess?.(result, args);
@@ -386,12 +445,11 @@ export function useMutation<TArgs, TResult>(
     } catch (caught) {
       // Undo the optimistic change before surfacing the error, so the user
       // never sees a message that appears sent alongside a failure notice.
-      rollback?.();
-      setError(caught);
-      onError?.(caught, args);
+      if (current()) { rollback?.(); setError(caught); onError?.(caught, args); }
       throw caught;
     } finally {
-      setPending(false);
+      pendingCount.current -= 1;
+      setPending(pendingCount.current > 0);
     }
   }, []);
 
@@ -404,6 +462,17 @@ export function useMutation<TArgs, TResult>(
 }
 
 /**
+ * Identity for merge purposes. A few lists page over primitives (ticket
+ * children), so this cannot assume `T` is an object; anything without a usable
+ * id falls back to the value itself, which keeps those callers on the previous
+ * replace-everything behaviour.
+ */
+const idOf = <T,>(item: T): string => {
+  const id = (item as { id?: unknown } | null)?.id;
+  return typeof id === "string" ? id : String(item);
+};
+
+/**
  * Cursor pagination (§16).
  *
  * Pages accumulate rather than replace, because every list in this product is
@@ -412,37 +481,65 @@ export function useMutation<TArgs, TResult>(
 export function useInfinite<T>(
   key: QueryKey | null,
   fetchPage: (cursor: string | null, signal: AbortSignal) => Promise<Paginated<T>>,
-  options: UseQueryOptions = {},
+  options: UseQueryOptions & { preserveLoadedPages?: boolean } = {},
 ) {
-  const [pages, setPages] = useState<Paginated<T>[]>([]);
-  const [loadingMore, setLoadingMore] = useState(false);
-
+  const serialized = key === null ? null : serialize(key);
+  const [windowState, setWindowState] = useState<{ key: string | null; pages: Paginated<T>[] }>({ key: serialized, pages: [] });
+  const [loadingKey, setLoadingKey] = useState<string | null>(null);
+  const [pageError, setPageError] = useState<{ key: string | null; error: unknown } | null>(null);
+  const nextController = useRef<AbortController | null>(null);
+  const identity = useRef(serialized);
+  identity.current = serialized;
+  const fetcherRef = useRef(fetchPage);
+  fetcherRef.current = fetchPage;
   const first = useQuery(key, (signal) => fetchPage(null, signal), options);
+  const { preserveLoadedPages } = options;
+  const pages = windowState.key === serialized && first.data !== undefined ? windowState.pages : [];
 
   useEffect(() => {
-    if (first.data) setPages([first.data]);
-  }, [first.data]);
+    return () => { nextController.current?.abort(); nextController.current = null; };
+  }, [serialized]);
+
+  useEffect(() => {
+    if (!first.data) return;
+    const fresh = first.data;
+    setWindowState((previous) => {
+      const current = previous.key === serialized ? previous.pages : [];
+      const previousFirst = current[0];
+      if (!previousFirst || !preserveLoadedPages) return { key: serialized, pages: [fresh] };
+      const present = new Set(fresh.data.map(idOf));
+      const evicted = previousFirst.data.filter((item) => !present.has(idOf(item)));
+      return { key: serialized, pages: [{ ...fresh, data: [...evicted, ...fresh.data] }, ...current.slice(1)] };
+    });
+  }, [first.data, preserveLoadedPages, serialized]);
 
   const last = pages[pages.length - 1];
   const hasMore = last?.has_more ?? false;
+  const loadingMore = serialized !== null && loadingKey === serialized;
 
   const fetchNext = useCallback(async () => {
-    if (!hasMore || loadingMore || !last?.next_cursor) return;
-    setLoadingMore(true);
+    if (!serialized || !hasMore || nextController.current || !last?.next_cursor) return;
+    const controller = new AbortController();
+    nextController.current = controller;
+    setLoadingKey(serialized);
+    setPageError(null);
     try {
-      const controller = new AbortController();
-      const page = await fetchPage(last.next_cursor, controller.signal);
-      setPages((current) => [...current, page]);
+      const page = await fetcherRef.current(last.next_cursor, controller.signal);
+      if (controller.signal.aborted || identity.current !== serialized) return;
+      setWindowState((current) => current.key === serialized
+        ? { key: serialized, pages: [...current.pages, page] } : current);
+    } catch (error) {
+      if (!controller.signal.aborted && identity.current === serialized) setPageError({ key: serialized, error });
     } finally {
-      setLoadingMore(false);
+      if (nextController.current === controller) { nextController.current = null; setLoadingKey(null); }
     }
-  }, [hasMore, loadingMore, last, fetchPage]);
+  }, [serialized, hasMore, last]);
 
   return {
     items: pages.flatMap((page) => page.data),
     isLoading: first.isLoading,
     isFetching: first.isFetching || loadingMore,
-    error: first.error,
+    error: pageError?.key === serialized ? pageError.error : first.error,
     hasMore,
     fetchNext,
     refetch: first.refetch,
