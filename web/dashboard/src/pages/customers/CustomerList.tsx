@@ -1,5 +1,13 @@
 import {
   api,
+  ApiError,
+  Dialog,
+  DialogContent,
+  Field,
+  Input,
+  Callout,
+  useMutation,
+  idempotencyKey,
   Badge,
   BulkActionBar,
   Button,
@@ -64,9 +72,12 @@ function conditionsToParams(conditions: FilterCondition[]): URLSearchParams {
  */
 export default function CustomerList() {
   const navigate = useNavigate();
-  const { members, tags, tagById, workspace } = useWorkspace();
+  const { members, tags, tagById, workspace, can } = useWorkspace();
   const toast = useToast();
 
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newCustomer, setNewCustomer] = useState({ name: "", email: "", phone: "", external_id: "" });
+  const create = useMutation<typeof newCustomer, Customer>((input) => api.post("/customers", input, { idempotencyKey: idempotencyKey() }), { onSuccess: (customer) => { invalidate(["customers"]); setCreateOpen(false); navigate(`/customers/${customer.id}`); } });
   const [query, setQuery] = useState("");
   const [conditions, setConditions] = useState<FilterCondition[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -201,10 +212,21 @@ export default function CustomerList() {
 
   return (
     <Page>
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}><DialogContent title="New customer" description="Agent-entered contact details remain unverified. Existing identities are never merged automatically.">
+        <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void create.mutate(newCustomer).catch(() => {}); }}>
+          <Field label="Name"><Input required value={newCustomer.name} onChange={(event) => setNewCustomer((current) => ({ ...current, name: event.target.value }))} /></Field>
+          <Field label="Email"><Input type="email" value={newCustomer.email} onChange={(event) => setNewCustomer((current) => ({ ...current, email: event.target.value }))} /></Field>
+          <Field label="Phone"><Input value={newCustomer.phone} onChange={(event) => setNewCustomer((current) => ({ ...current, phone: event.target.value }))} /></Field>
+          <Field label="External ID" description="Required if no email is supplied."><Input value={newCustomer.external_id} onChange={(event) => setNewCustomer((current) => ({ ...current, external_id: event.target.value }))} /></Field>
+          {Boolean(create.error) && <Callout tone="danger">{create.error instanceof ApiError ? create.error.message : "Could not create customer."}</Callout>}
+          <Button type="submit" loading={create.isPending} disabled={!newCustomer.name.trim() || (!newCustomer.email.trim() && !newCustomer.external_id.trim())}>Create customer</Button>
+        </form>
+      </DialogContent></Dialog>
       <PageHeader
         title="Customers"
         description="Everyone who has contacted you, identified or not."
-        actions={
+        actions={<>
+          {can("customer.read") && <Button size="sm" onClick={() => { create.reset(); setCreateOpen(true); }}>New customer</Button>}
           <Button
             variant="secondary"
             size="sm"
@@ -212,7 +234,7 @@ export default function CustomerList() {
             onClick={() => void downloadFile(`/customers/export?${filterParams}`, "customers-export.csv", workspace.id).catch((error) => toast.error({ title: "Could not export customers", description: error instanceof Error ? error.message : "Try again." }))}
           >
             Export
-          </Button>
+          </Button></>
         }
       />
 
