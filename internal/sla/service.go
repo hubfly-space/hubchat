@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/hubchat/hubchat/internal/database"
@@ -26,8 +25,6 @@ var priorities = map[string]bool{"low": true, "normal": true, "high": true, "urg
 type Service struct {
 	pool   *database.Pool
 	events *events.Log
-	seenMu sync.Mutex
-	seen   map[string]int64
 }
 type Holiday struct {
 	ID   string `json:"id"`
@@ -91,7 +88,7 @@ func New(pool *database.Pool, eventLog ...*events.Log) *Service {
 	if len(eventLog) > 0 {
 		log = eventLog[0]
 	}
-	return &Service{pool: pool, events: log, seen: make(map[string]int64)}
+	return &Service{pool: pool, events: log}
 }
 
 func (s *Service) CreateCalendar(ctx context.Context, workspaceID string, input CalendarInput) (*CalendarRecord, error) {
