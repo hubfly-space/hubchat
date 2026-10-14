@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/hubchat/hubchat/internal/authorization"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -153,7 +154,11 @@ func (r *repository) byID(ctx context.Context, workspaceID, id string) (*Convers
 	row := r.pool.QueryRow(ctx, `SELECT `+conversationColumns+`
 		FROM conversations WHERE workspace_id = $1 AND id = $2
 	`, workspaceID, id)
-	return scanConversation(row)
+	item, err := scanConversation(row)
+	if err == nil && !authorization.CanSeeInbox(ctx, item.InboxID) {
+		return nil, ErrNotFound
+	}
+	return item, err
 }
 
 // lockConversation takes a row-level lock on the conversation for the
@@ -164,11 +169,14 @@ func (r *repository) byID(ctx context.Context, workspaceID, id string) (*Convers
 // and collide (or worse, silently interleave) instead of one waiting for the
 // other.
 func (r *repository) lockConversation(ctx context.Context, tx pgx.Tx, workspaceID, id string) error {
-	var discard string
+	var discard, inboxID string
 	err := tx.QueryRow(ctx, `
-		SELECT id FROM conversations WHERE workspace_id = $1 AND id = $2 FOR UPDATE
-	`, workspaceID, id).Scan(&discard)
+		SELECT id,inbox_id FROM conversations WHERE workspace_id = $1 AND id = $2 FOR UPDATE
+	`, workspaceID, id).Scan(&discard, &inboxID)
 	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err == nil && !authorization.CanSeeInbox(ctx, inboxID) {
 		return ErrNotFound
 	}
 	return err
@@ -196,6 +204,9 @@ func (r *repository) lockAndLoad(ctx context.Context, tx pgx.Tx, workspaceID, id
 	}
 	if err != nil {
 		return nil, err
+	}
+	if !authorization.CanSeeInbox(ctx, conv.InboxID) {
+		return nil, ErrNotFound
 	}
 	return &conv, nil
 }
