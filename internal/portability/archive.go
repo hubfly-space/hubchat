@@ -29,11 +29,12 @@ type Archive struct {
 }
 
 type TableSummary struct {
-	Name     string `json:"name"`
-	Rows     int    `json:"rows"`
-	Existing int    `json:"existing,omitempty"`
-	New      int    `json:"new,omitempty"`
-	Skipped  int    `json:"skipped,omitempty"`
+	Duplicate int    `json:"duplicate,omitempty"`
+	Name      string `json:"name"`
+	Rows      int    `json:"rows"`
+	Existing  int    `json:"existing,omitempty"`
+	New       int    `json:"new,omitempty"`
+	Skipped   int    `json:"skipped,omitempty"`
 }
 
 // ArchiveInspection is the bounded, side-effect-free summary produced when an
@@ -186,6 +187,7 @@ var tableSpecs = []struct {
 	{name: "sla_instances", where: "workspace_id=$1", direct: true},
 	{name: "automation_rules", where: "workspace_id=$1", direct: true},
 	{name: "automation_executions", where: "workspace_id=$1", direct: true},
+	{name: "customer_context_cards", where: "workspace_id=$1", direct: true},
 	{name: "scheduled_actions", where: "workspace_id=$1", direct: true},
 	{name: "tasks", where: "workspace_id=$1", direct: true},
 	{name: "saved_reports", where: "workspace_id=$1", direct: true},
