@@ -1,6 +1,9 @@
 package conversation
 
-import "context"
+import (
+	"context"
+	"github.com/hubchat/hubchat/internal/authorization"
+)
 
 // Counts is the inbox sidebar's view badges in one round trip — computing
 // these by loading every conversation client-side (or one list call per
@@ -27,6 +30,8 @@ func (s *Service) Counts(ctx context.Context, workspaceID, memberID string) (*Co
 }
 
 func (r *repository) counts(ctx context.Context, workspaceID, memberID string) (*Counts, error) {
+	predicate, extra := authorization.InboxPredicate(ctx, "c.inbox_id", 3)
+	args := append([]any{workspaceID, memberID}, extra...)
 	var c Counts
 	err := r.pool.QueryRow(ctx, `
 		SELECT
@@ -56,8 +61,8 @@ func (r *repository) counts(ctx context.Context, workspaceID, memberID string) (
 			) AND c.state NOT IN ('closed', 'resolved', 'spam'))
 		FROM conversations c
 		LEFT JOIN conversation_followers cf ON cf.conversation_id = c.id AND cf.member_id = $2
-		WHERE c.workspace_id = $1
-	`, workspaceID, memberID).Scan(
+		WHERE c.workspace_id = $1 AND `+predicate+`
+	`, args...).Scan(
 		&c.All, &c.Unassigned, &c.Mine, &c.Following,
 		&c.Mentioned, &c.WaitingOnUs, &c.WaitingOnCustomer, &c.Snoozed, &c.Resolved, &c.Spam,
 		&c.SLAApproaching, &c.SLABreached,
