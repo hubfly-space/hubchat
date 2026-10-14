@@ -13,6 +13,7 @@ import (
 	"github.com/hubchat/hubchat/internal/database"
 	"github.com/hubchat/hubchat/internal/events"
 	"github.com/hubchat/hubchat/internal/ids"
+	"github.com/hubchat/hubchat/internal/searchmodel"
 )
 
 // ErrInvalidBlockKind is returned when kind is not one blocked_contacts accepts.
@@ -96,13 +97,13 @@ func (s *Service) Search(ctx context.Context, workspaceID, query string, limit i
 // SearchPage returns customer matches with deterministic cursor keys. The
 // presence bit keeps NULL last_seen_at values after customers that have been
 // seen, matching the legacy search ordering without an unstable NULL cursor.
-func (s *Service) SearchPage(ctx context.Context, workspaceID, query string, beforeLastSeenPresent bool, hasCursor bool, beforeLastSeen, beforeFirstSeen time.Time, beforeID string, limit int) ([]SearchResult, error) {
+func (s *Service) SearchPage(ctx context.Context, workspaceID, query string, beforeLastSeenPresent bool, hasCursor bool, beforeLastSeen, beforeFirstSeen time.Time, beforeID string, limit int, filters ...searchmodel.Filters) ([]SearchResult, error) {
 	// 101 is allowed internally so callers can request a page plus one
 	// look-ahead row without losing the configured public maximum of 100.
 	if limit <= 0 || limit > 101 {
 		limit = 20
 	}
-	return s.repo.searchPage(ctx, workspaceID, strings.TrimSpace(query), beforeLastSeenPresent, beforeLastSeen, beforeFirstSeen, beforeID, hasCursor, limit)
+	return s.repo.searchPage(ctx, workspaceID, strings.TrimSpace(query), beforeLastSeenPresent, beforeLastSeen, beforeFirstSeen, beforeID, hasCursor, limit, filters...)
 }
 
 // Update changes the editable fields of a customer's profile, under
@@ -134,6 +135,23 @@ func (s *Service) Update(
 	return s.repo.byID(ctx, workspaceID, id)
 }
 
+// Identity is the set of claims a channel asserts about a person it is
+// identifying. Every field is optional and nil means "the caller said
+// nothing", which the write paths translate into a coalesce that leaves the
+// stored value alone.
+//
+// This is a struct rather than three or four adjacent *string parameters
+// because all of these fields share one type: a positional signature
+// compiles perfectly happily when a caller passes email where phone belongs,
+// and the resulting row is silently wrong in a way no test catches unless a
+// test happens to assert on that exact column.
+type Identity struct {
+	Name       *string
+	Email      *string
+	Phone      *string
+	ExternalID *string
+}
+
 // Identify resolves a widget/SDK identify() call to a customer record,
 // creating one if this is the first time this person has been seen.
 //
@@ -155,28 +173,28 @@ func (s *Service) Update(
 func (s *Service) Identify(
 	ctx context.Context, workspaceID string,
 	existingCustomerID *string,
-	name, email, externalID *string,
+	in Identity,
 	verified bool,
 ) (*Customer, error) {
 	if existingCustomerID != nil {
 		if existing, err := s.repo.byID(ctx, workspaceID, *existingCustomerID); err == nil {
-			return s.touchIdentity(ctx, workspaceID, existing, name, email, externalID, verified)
+			return s.touchIdentity(ctx, workspaceID, existing, in, verified)
 		} else if !errors.Is(err, ErrNotFound) {
 			return nil, err
 		}
 	}
 
-	if externalID != nil && *externalID != "" {
-		if found, err := s.repo.byExternalID(ctx, workspaceID, *externalID); err == nil {
-			return s.touchIdentity(ctx, workspaceID, found, name, email, externalID, verified)
+	if in.ExternalID != nil && *in.ExternalID != "" {
+		if found, err := s.repo.byExternalID(ctx, workspaceID, *in.ExternalID); err == nil {
+			return s.touchIdentity(ctx, workspaceID, found, in, verified)
 		} else if !errors.Is(err, ErrNotFound) {
 			return nil, err
 		}
 	}
 
-	if verified && email != nil && *email != "" {
-		if found, err := s.repo.byVerifiedEmail(ctx, workspaceID, *email); err == nil {
-			return s.touchIdentity(ctx, workspaceID, found, name, email, externalID, verified)
+	if verified && in.Email != nil && *in.Email != "" {
+		if found, err := s.repo.byVerifiedEmail(ctx, workspaceID, *in.Email); err == nil {
+			return s.touchIdentity(ctx, workspaceID, found, in, verified)
 		} else if !errors.Is(err, ErrNotFound) {
 			return nil, err
 		}
@@ -191,7 +209,7 @@ func (s *Service) Identify(
 	var created *Customer
 	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
 		var err error
-		created, err = s.repo.insertCustomer(ctx, id, workspaceID, name, email, externalID, verification)
+		created, err = s.repo.insertCustomer(ctx, id, workspaceID, in, verification)
 		if err != nil {
 			return err
 		}
@@ -210,12 +228,12 @@ func (s *Service) Identify(
 // inside a transaction so the customer.identified event commits with it.
 func (s *Service) touchIdentity(
 	ctx context.Context, workspaceID string, existing *Customer,
-	name, email, externalID *string, verified bool,
+	in Identity, verified bool,
 ) (*Customer, error) {
 	var updated *Customer
 	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
 		var err error
-		updated, err = s.repo.touchIdentity(ctx, workspaceID, existing.ID, name, email, externalID, verified)
+		updated, err = s.repo.touchIdentity(ctx, workspaceID, existing.ID, in, verified)
 		if err != nil {
 			return err
 		}
