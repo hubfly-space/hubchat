@@ -31,6 +31,11 @@ type Grant struct {
 	// indicator costs no database round trip.
 	MemberID   string
 	MemberName string
+	// Boundary callbacks are evaluated for live delivery and replay. They may
+	// only narrow the initial grant and also handle role/session revocation.
+	Filter     func(events.Record) (events.Record, bool)
+	AllowTopic func(string) bool
+	Valid      func() bool
 }
 
 // AgentGrant is the grant for an authenticated member: the workspace firehose.
@@ -101,6 +106,9 @@ func newClient(conn *websocket.Conn, workspaceID string, grant Grant, queueSize 
 // exists purely as a presence marker ("I have this open"; see Hub.addViewer),
 // which is exactly why it is safe to allow unconditionally here.
 func (c *client) allows(topic string) bool {
+	if c.grant.AllowTopic != nil && !c.grant.AllowTopic(topic) {
+		return false
+	}
 	for _, allowed := range c.grant.Allowed {
 		if allowed == topic || allowed == TopicWorkspace {
 			return true
