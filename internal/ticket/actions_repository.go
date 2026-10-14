@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/hubchat/hubchat/internal/authorization"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -27,7 +28,11 @@ func (r *repository) lockAndLoad(ctx context.Context, tx pgx.Tx, workspaceID, id
 	row := tx.QueryRow(ctx, `SELECT `+ticketColumns+`
 		FROM tickets WHERE workspace_id = $1 AND id = $2 FOR UPDATE
 	`, workspaceID, id)
-	return scanTicket(row)
+	item, err := scanTicket(row)
+	if err == nil && (item.InboxID == nil || !authorization.CanSeeInbox(ctx, *item.InboxID)) && authorization.InboxIDs(ctx) != nil {
+		return nil, ErrNotFound
+	}
+	return item, err
 }
 
 // The tenancy checks below are read-only EXISTS queries against tables owned
@@ -54,6 +59,9 @@ func (r *repository) teamInWorkspace(ctx context.Context, workspaceID, teamID st
 }
 
 func (r *repository) inboxInWorkspace(ctx context.Context, workspaceID, inboxID string) (bool, error) {
+	if !authorization.CanSeeInbox(ctx, inboxID) {
+		return false, nil
+	}
 	var exists bool
 	err := r.pool.QueryRow(ctx, `
 		SELECT EXISTS (SELECT 1 FROM inboxes WHERE id = $1 AND workspace_id = $2)
