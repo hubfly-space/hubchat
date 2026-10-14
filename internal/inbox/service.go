@@ -67,8 +67,11 @@ func normalizeChannels(channels []string) ([]string, error) {
 // default automatically (bootstrap already guarantees one exists, so this
 // only matters for a workspace's second inbox onward, which never is).
 func (s *Service) Create(
-	ctx context.Context, workspaceID, actorMemberID, name, slug string, description *string, channels, teamIDs []string,
+	ctx context.Context, workspaceID, actorMemberID, name, slug string, description *string, channels, teamIDs []string, visibility ...string,
 ) (*Inbox, error) {
+	if len(visibility) > 0 && visibility[0] != "" && visibility[0] != "workspace" && visibility[0] != "teams" {
+		return nil, ErrInvalidVisibility
+	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, ErrInvalidName
@@ -91,6 +94,12 @@ func (s *Service) Create(
 		if err := s.repo.setTeams(ctx, tx, id, teamIDs); err != nil {
 			return err
 		}
+		if len(visibility) > 0 && visibility[0] != "" {
+			if _, err := tx.Exec(ctx, `UPDATE inboxes SET visibility=$3 WHERE workspace_id=$1 AND id=$2`, workspaceID, id, visibility[0]); err != nil {
+				return err
+			}
+		}
+
 		if err := s.recordAudit(ctx, tx, audit.Entry{
 			WorkspaceID: workspaceID, ActorType: audit.ActorUser, ActorID: actorMemberID,
 			Action: "inbox.created", EntityType: "inbox", EntityID: id,
@@ -114,8 +123,11 @@ func (s *Service) Create(
 }
 
 func (s *Service) Update(
-	ctx context.Context, workspaceID, actorMemberID, id, name string, description *string, channels, teamIDs []string,
+	ctx context.Context, workspaceID, actorMemberID, id, name string, description *string, channels, teamIDs []string, visibility ...string,
 ) (*Inbox, error) {
+	if len(visibility) > 0 && visibility[0] != "" && visibility[0] != "workspace" && visibility[0] != "teams" {
+		return nil, ErrInvalidVisibility
+	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, ErrInvalidName
@@ -132,6 +144,12 @@ func (s *Service) Update(
 		if err := s.repo.setTeams(ctx, tx, id, teamIDs); err != nil {
 			return err
 		}
+		if len(visibility) > 0 && visibility[0] != "" {
+			if _, err := tx.Exec(ctx, `UPDATE inboxes SET visibility=$3 WHERE workspace_id=$1 AND id=$2`, workspaceID, id, visibility[0]); err != nil {
+				return err
+			}
+		}
+
 		if err := s.recordAudit(ctx, tx, audit.Entry{
 			WorkspaceID: workspaceID, ActorType: audit.ActorUser, ActorID: actorMemberID,
 			Action: "inbox.updated", EntityType: "inbox", EntityID: id,
