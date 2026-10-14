@@ -3,6 +3,8 @@ package conversation
 import (
 	"context"
 	"fmt"
+	"github.com/hubchat/hubchat/internal/authorization"
+	"github.com/hubchat/hubchat/internal/searchmodel"
 	"time"
 )
 
@@ -34,17 +36,41 @@ func (s *Service) SearchMessages(ctx context.Context, workspaceID, query string,
 // SearchMessagesPage returns full-text hits in stable relevance order. Rank
 // alone is not a sufficient cursor because several messages can have the
 // same score, so created_at and id provide deterministic tie-breakers.
-func (s *Service) SearchMessagesPage(ctx context.Context, workspaceID, query string, beforeRank float32, beforeCreatedAt time.Time, beforeID string, hasCursor bool, limit int) ([]MessageSearchResult, error) {
+func (s *Service) SearchMessagesPage(ctx context.Context, workspaceID, query string, beforeRank float32, beforeCreatedAt time.Time, beforeID string, hasCursor bool, limit int, filters ...searchmodel.Filters) ([]MessageSearchResult, error) {
 	// 101 is allowed internally so the global search service can request one
 	// look-ahead row for a public page of 100.
 	if limit <= 0 || limit > 101 {
 		limit = 20
 	}
-	return s.repo.searchMessagesPage(ctx, workspaceID, query, beforeRank, beforeCreatedAt, beforeID, hasCursor, limit)
+	return s.repo.searchMessagesPage(ctx, workspaceID, query, beforeRank, beforeCreatedAt, beforeID, hasCursor, limit, filters...)
 }
 
-func (r *repository) searchMessagesPage(ctx context.Context, workspaceID, query string, beforeRank float32, beforeCreatedAt time.Time, beforeID string, hasCursor bool, limit int) ([]MessageSearchResult, error) {
+func (r *repository) searchMessagesPage(ctx context.Context, workspaceID, query string, beforeRank float32, beforeCreatedAt time.Time, beforeID string, hasCursor bool, limit int, filters ...searchmodel.Filters) ([]MessageSearchResult, error) {
 	args := []any{workspaceID, query}
+	var extra string
+	if ids := authorization.InboxIDs(ctx); ids != nil {
+		args = append(args, ids)
+		extra += fmt.Sprintf(" AND c.inbox_id=ANY($%d::text[])", len(args))
+	}
+	if len(filters) > 0 {
+		f := filters[0]
+		if f.Channel != "" {
+			args = append(args, f.Channel)
+			extra += fmt.Sprintf(" AND c.channel=$%d", len(args))
+		}
+		if f.TagID != "" {
+			args = append(args, f.TagID)
+			extra += fmt.Sprintf(" AND EXISTS(SELECT 1 FROM conversation_tags ct WHERE ct.conversation_id=c.id AND ct.tag_id=$%d)", len(args))
+		}
+		if f.After != nil {
+			args = append(args, f.After)
+			extra += fmt.Sprintf(" AND m.created_at >= $%d", len(args))
+		}
+		if f.Before != nil {
+			args = append(args, f.Before)
+			extra += fmt.Sprintf(" AND m.created_at < $%d", len(args))
+		}
+	}
 	statement := `WITH hits AS (
 		SELECT m.conversation_id, m.id, c.subject, m.author_name,
 		       ts_headline('english', m.body, plainto_tsquery('english', $2),
@@ -55,12 +81,12 @@ func (r *repository) searchMessagesPage(ctx context.Context, workspaceID, query 
 		JOIN conversations c ON c.id = m.conversation_id
 		WHERE m.workspace_id = $1
 		  AND m.kind <> 'event' AND m.redacted_at IS NULL
-		  AND to_tsvector('english', m.body) @@ plainto_tsquery('english', $2)
+		  AND to_tsvector('english', m.body) @@ plainto_tsquery('english', $2)` + extra + `
 	)
 	SELECT conversation_id, id, subject, author_name, snippet, created_at, search_rank
 	FROM hits`
 	if hasCursor {
-		statement += ` WHERE (search_rank,created_at,id) < ($3,$4,$5)`
+		statement += fmt.Sprintf(` WHERE (search_rank,created_at,id) < ($%d,$%d,$%d)`, len(args)+1, len(args)+2, len(args)+3)
 		args = append(args, beforeRank, beforeCreatedAt, beforeID)
 	}
 	statement += fmt.Sprintf(` ORDER BY search_rank DESC,created_at DESC,id DESC LIMIT $%d`, len(args)+1)
