@@ -26,3 +26,5 @@ export * from "./Tabs";
 export * from "./Toast";
 export * from "./Toggles";
 export * from "./Tooltip";
+
+export { Markdown } from "./Markdown";
