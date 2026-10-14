@@ -61,7 +61,7 @@ func validCSVFile(record *filemodule.Record) bool {
 	return strings.HasSuffix(name, ".csv") || mime == "text/csv" || mime == "application/csv" || mime == "text/plain"
 }
 
-func (s *Service) readCSVFile(ctx context.Context, workspaceID string, fileID *string, kind string) ([]csvImportRow, error) {
+func (s *Service) readCSVFile(ctx context.Context, workspaceID string, fileID *string, kind string, mapping ...map[string]any) ([]csvImportRow, error) {
 	if fileID == nil || s.files == nil {
 		return nil, errors.New("CSV import file is missing")
 	}
@@ -80,10 +80,10 @@ func (s *Service) readCSVFile(ctx context.Context, workspaceID string, fileID *s
 	if len(body) > maxCSVImportBytes {
 		return nil, errors.New("CSV import exceeds the 100 MiB limit")
 	}
-	return parseCSVImport(body, normalizeImportKind(kind))
+	return parseCSVImport(body, normalizeImportKind(kind), mapping...)
 }
 
-func parseCSVImport(body []byte, kind string) ([]csvImportRow, error) {
+func parseCSVImport(body []byte, kind string, mapping ...map[string]any) ([]csvImportRow, error) {
 	reader := csv.NewReader(bytes.NewReader(body))
 	reader.FieldsPerRecord = -1
 	reader.TrimLeadingSpace = true
@@ -94,10 +94,32 @@ func parseCSVImport(body []byte, kind string) ([]csvImportRow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read CSV header: %w", err)
 	}
+	if len(header) > 200 {
+		return nil, errors.New("CSV supports at most 200 columns")
+	}
 	columns := make([]string, len(header))
 	seen := make(map[string]struct{}, len(header))
 	for index, raw := range header {
+		raw = strings.TrimPrefix(raw, "\ufeff")
 		column := normalizeCSVColumn(raw)
+		if len(mapping) > 0 {
+			if columns, ok := mapping[0]["columns"].(map[string]any); ok {
+				value, exists := columns[raw]
+				if !exists {
+					value, exists = columns[column]
+				}
+				if exists {
+					target, ok := value.(string)
+					if !ok {
+						return nil, errors.New("CSV column mappings must be strings")
+					}
+					column = normalizeCSVColumn(target)
+					if column == "" {
+						continue
+					}
+				}
+			}
+		}
 		if column == "" {
 			return nil, fmt.Errorf("CSV header column %d is empty", index+1)
 		}
@@ -125,6 +147,9 @@ func parseCSVImport(body []byte, kind string) ([]csvImportRow, error) {
 		values := make(map[string]string, len(columns))
 		nonEmpty := false
 		for index, column := range columns {
+			if column == "" {
+				continue
+			}
 			value := ""
 			if index < len(record) {
 				value = strings.TrimSpace(record[index])
@@ -197,7 +222,7 @@ func (s *Service) previewCSVImport(ctx context.Context, workspaceID string, requ
 		return nil, errors.New("portability: feedback import service is unavailable")
 	}
 	if request.Kind == KindFeedbackCSV {
-		rows, err := s.readCSVFile(ctx, workspaceID, request.FileID, request.Kind)
+		rows, err := s.readCSVRequest(ctx, workspaceID, request)
 		if err != nil {
 			return nil, err
 		}
@@ -215,12 +240,32 @@ func (s *Service) previewCSVImport(ctx context.Context, workspaceID string, requ
 	if request.Kind != KindTicketsCSV && request.Kind != KindFeedbackCSV && s.customers == nil {
 		return nil, errors.New("portability: customer import service is unavailable")
 	}
-	rows, err := s.readCSVFile(ctx, workspaceID, request.FileID, request.Kind)
+	rows, err := s.readCSVRequest(ctx, workspaceID, request)
 	if err != nil {
 		return nil, err
 	}
 	existing := 0
+	duplicates := 0
+	seenEmails := map[string]bool{}
+	seenIDs := map[string]bool{}
 	for _, row := range rows {
+		if request.Kind == KindCustomersCSV {
+			email := strings.ToLower(strings.TrimSpace(row.values["email"]))
+			external := strings.TrimSpace(row.values["external_id"])
+			if (email != "" && seenEmails[email]) || (external != "" && seenIDs[external]) {
+				duplicates++
+			} else if email != "" && external == "" {
+				found, err := s.customers.HasEmail(ctx, workspaceID, email)
+				if err != nil {
+					return nil, err
+				}
+				if found {
+					duplicates++
+				}
+			}
+			seenEmails[email] = email != ""
+			seenIDs[external] = external != ""
+		}
 		externalID := strings.TrimSpace(row.values["external_id"])
 		if request.Kind == KindTicketsCSV {
 			if externalID == "" {
@@ -248,7 +293,7 @@ func (s *Service) previewCSVImport(ctx context.Context, workspaceID string, requ
 			return nil, findErr
 		}
 	}
-	return []TableSummary{{Name: request.Kind, Rows: len(rows), Existing: existing, New: len(rows) - existing}}, nil
+	return []TableSummary{{Name: request.Kind, Rows: len(rows), Existing: existing, New: len(rows) - existing, Duplicate: duplicates}}, nil
 }
 
 func (s *Service) runCSVImport(ctx context.Context, id string, request *Request) error {
@@ -261,7 +306,7 @@ func (s *Service) runCSVImport(ctx context.Context, id string, request *Request)
 	if request.Kind != KindTicketsCSV && request.Kind != KindFeedbackCSV && s.customers == nil {
 		return s.failImport(ctx, id, errors.New("portability: customer import service is unavailable"))
 	}
-	rows, err := s.readCSVFile(ctx, request.WorkspaceID, request.FileID, request.Kind)
+	rows, err := s.readCSVRequest(ctx, request.WorkspaceID, request)
 	if err != nil {
 		return s.failImport(ctx, id, err)
 	}
@@ -279,12 +324,34 @@ func (s *Service) runCSVImport(ctx context.Context, id string, request *Request)
 	if request.RequestedBy != nil {
 		actorID = *request.RequestedBy
 	}
+	mapping, err := s.importMapping(ctx, request.WorkspaceID, request.ID)
+	if err != nil {
+		return err
+	}
+	skipDuplicates, _ := mapping["skip_duplicate_emails"].(bool)
+
 	for rowIndex < len(rows) {
 		end := rowIndex + importBatchSize
 		if end > len(rows) {
 			end = len(rows)
 		}
 		for _, row := range rows[rowIndex:end] {
+			if skipDuplicates && request.Kind == KindCustomersCSV && strings.TrimSpace(row.values["external_id"]) == "" && strings.TrimSpace(row.values["email"]) != "" {
+				found, err := s.customers.HasEmail(ctx, request.WorkspaceID, row.values["email"])
+				if err != nil {
+					return err
+				}
+				if found {
+					// A retry must finish the row this import already created.
+					_, ownErr := s.customers.FindByExternalID(ctx, request.WorkspaceID, importRowKey(request.ID, row))
+					if errors.Is(ownErr, customer.ErrNotFound) {
+						continue
+					}
+					if ownErr != nil {
+						return ownErr
+					}
+				}
+			}
 			if err := s.importCSVRow(ctx, request.WorkspaceID, actorID, request.Kind, id, row); err != nil {
 				return s.failImport(ctx, id, fmt.Errorf("CSV row %d: %w", row.line, err))
 			}
@@ -404,15 +471,20 @@ func parseCSVTime(value string) (*time.Time, error) {
 
 func (s *Service) importCustomerRow(ctx context.Context, workspaceID, actorID, externalID string, values map[string]string) error {
 	external := externalID
-	name := optionalCSVString(values["name"])
-	email := optionalCSVString(values["email"])
-	customerRecord, err := s.customers.Identify(ctx, workspaceID, nil, name, email, &external, false)
-	if err != nil {
-		return err
-	}
 	phone := optionalCSVString(values["phone"])
 	language := optionalCSVString(values["language"])
 	timezone := optionalCSVString(values["timezone"])
+	customerRecord, err := s.customers.Identify(ctx, workspaceID, nil, customer.Identity{
+		Name:       optionalCSVString(values["name"]),
+		Email:      optionalCSVString(values["email"]),
+		Phone:      phone,
+		ExternalID: &external,
+	}, false)
+	if err != nil {
+		return err
+	}
+	// Identify coalesces, so the record already carries the imported phone.
+	// Only the fields it did not receive need filling in from the existing row.
 	if phone == nil && language == nil && timezone == nil {
 		return nil
 	}
@@ -461,4 +533,17 @@ func optionalCSVString(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+func (s *Service) importMapping(ctx context.Context, workspaceID, id string) (map[string]any, error) {
+	var mapping map[string]any
+	err := s.pool.QueryRow(ctx, `SELECT mapping FROM import_requests WHERE workspace_id=$1 AND id=$2`, workspaceID, id).Scan(&mapping)
+	return mapping, err
+}
+func (s *Service) readCSVRequest(ctx context.Context, workspaceID string, request *Request) ([]csvImportRow, error) {
+	mapping, err := s.importMapping(ctx, workspaceID, request.ID)
+	if err != nil {
+		return nil, err
+	}
+	return s.readCSVFile(ctx, workspaceID, request.FileID, request.Kind, mapping)
 }
