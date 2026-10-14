@@ -638,7 +638,10 @@ func (s *Service) routeSubmission(ctx context.Context, workspaceID string, form 
 		}
 		name := routedText(routing, values, "name_field", "")
 		email := routedText(routing, values, "email_field", "")
-		created, err := s.targets.Customer.Identify(ctx, workspaceID, optionalInput(input.CustomerID), optionalString(name), optionalString(email), nil, false)
+		created, err := s.targets.Customer.Identify(ctx, workspaceID, optionalInput(input.CustomerID), customer.Identity{
+			Name:  optionalString(name),
+			Email: optionalString(email),
+		}, false)
 		if err != nil {
 			return err
 		}
