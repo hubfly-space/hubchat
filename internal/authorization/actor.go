@@ -23,11 +23,12 @@ import "context"
 // request — a fat context object is how modules end up coupled to each
 // other's shapes.
 type Actor struct {
-	UserID       string
-	MemberID     string
-	WorkspaceID  string
-	Role         string
-	Capabilities map[Capability]bool
+	UserID          string
+	MemberID        string
+	WorkspaceID     string
+	Role            string
+	Capabilities    map[Capability]bool
+	AllowedInboxIDs []string
 }
 
 // Capability is a single, checkable permission (§5.9). The set is closed and
