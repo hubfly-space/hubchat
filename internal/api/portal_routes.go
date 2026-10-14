@@ -446,24 +446,18 @@ func handlePortalTicketReply(deps Deps) http.HandlerFunc {
 		}
 		customerID := session.CustomerID
 		message, err := deps.Conversation.PostMessage(r.Context(), session.WorkspaceID, *ticket.ConversationID,
-			req.ClientID, "reply", "customer", &customerID, session.Customer.Name, req.Body)
+			req.ClientID, "reply", "customer", &customerID, session.Customer.Name, req.Body, conversation.Attachments{IDs: req.FileIDs, Store: deps.File})
 		if err != nil {
+			if errors.Is(err, file.ErrInvalidAttachment) {
+				writeMessageAttachmentError(w, r, err)
+				return
+			}
 			if errors.Is(err, conversation.ErrEmptyBody) {
 				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeValidationError, "Reply cannot be empty.")
 				return
 			}
 			httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Could not send your reply.")
 			return
-		}
-		if deps.File != nil && len(req.FileIDs) > 0 {
-			if attachErr := deps.File.AttachToMessage(r.Context(), session.WorkspaceID, message.ID, req.FileIDs); attachErr != nil {
-				if errors.Is(attachErr, file.ErrInvalidAttachment) {
-					httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, "One or more attachments are not available.")
-				} else {
-					httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "The reply was sent, but its attachments could not be linked.")
-				}
-				return
-			}
 		}
 		if deps.Notification != nil {
 			if notifyErr := deps.Notification.NotifyConversationMessage(r.Context(), session.WorkspaceID, *ticket.ConversationID,
