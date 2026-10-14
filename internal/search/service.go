@@ -5,6 +5,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/hubchat/hubchat/internal/authorization"
+	"github.com/hubchat/hubchat/internal/searchmodel"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/hubchat/hubchat/internal/conversation"
@@ -17,16 +21,7 @@ var ErrBadCursor = errors.New("search: malformed cursor")
 // covering every entity kind search currently knows about. Tickets,
 // articles, and feedback join this union as their modules land; nothing
 // about this shape is conversation- or customer-specific.
-type Result struct {
-	Kind    string // "message" | "customer"
-	Title   string
-	Snippet string
-	// EntityID is the conversation or customer id a client navigates to.
-	EntityID string
-	// ConversationID is set only for message hits, since a message result
-	// links to its conversation, not to itself.
-	ConversationID string
-}
+type Result = searchmodel.Match
 
 // Page is the global search response before the HTTP representation is
 // applied. Messages are ordered before customers to preserve the command
@@ -38,7 +33,9 @@ type Page struct {
 }
 
 type cursor struct {
-	Kind string `json:"kind"`
+	Kind    string `json:"kind"`
+	Query   string `json:"query,omitempty"`
+	ExtraID string `json:"extra_id,omitempty"`
 
 	MessageRank      float32   `json:"message_rank,omitempty"`
 	MessageCreatedAt time.Time `json:"message_created_at,omitempty"`
@@ -56,10 +53,11 @@ type cursor struct {
 type Service struct {
 	conversation *conversation.Service
 	customer     *customer.Service
+	providers    []Provider
 }
 
-func New(conversationService *conversation.Service, customerService *customer.Service) *Service {
-	return &Service{conversation: conversationService, customer: customerService}
+func New(conversationService *conversation.Service, customerService *customer.Service, providers ...Provider) *Service {
+	return &Service{conversation: conversationService, customer: customerService, providers: providers}
 }
 
 // Search runs query against every entity kind currently searchable,
@@ -76,79 +74,153 @@ func (s *Service) Search(ctx context.Context, workspaceID, query string, limitPe
 // SearchPage returns a total-limit page across message and customer hits.
 // The cursor is opaque to callers and carries the last source-specific sort
 // key, so equal full-text ranks and NULL customer timestamps cannot skip rows.
+type Provider struct {
+	Kind       string
+	Capability authorization.Capability
+	Fetch      func(context.Context, string, string, string, int, searchmodel.Filters) ([]Result, error)
+}
+
 func (s *Service) SearchPage(ctx context.Context, workspaceID, query, encodedCursor string, limit int) (Page, error) {
+	return s.SearchFilteredPage(ctx, workspaceID, query, encodedCursor, limit, searchmodel.Filters{})
+}
+
+func (s *Service) SearchFilteredPage(ctx context.Context, workspaceID, query, encodedCursor string, limit int, filters searchmodel.Filters) (Page, error) {
+	query = strings.TrimSpace(query)
 	if query == "" {
 		return Page{Results: []Result{}}, nil
+	}
+	if len(query) > 256 {
+		return Page{}, ErrBadCursor
 	}
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-
 	position, err := decodeCursor(encodedCursor)
 	if err != nil {
 		return Page{}, err
 	}
-	if position.Kind != "" && position.Kind != "messages" && position.Kind != "customers" {
+	binding, _ := json.Marshal(struct {
+		Q string
+		F searchmodel.Filters
+	}{query, filters})
+	if position.Query != "" && position.Query != string(binding) {
 		return Page{}, ErrBadCursor
 	}
-
-	results := make([]Result, 0, limit)
-	if position.Kind != "customers" {
-		messageItems, err := s.conversation.SearchMessagesPage(ctx, workspaceID, query,
-			position.MessageRank, position.MessageCreatedAt, position.MessageID,
-			position.Kind == "messages", limit+1)
-		if err != nil {
-			return Page{}, err
+	actor := authorization.FromContext(ctx)
+	can := func(capability authorization.Capability) bool { return actor == nil || actor.Can(capability) }
+	selected := func(kind string) bool {
+		if len(filters.Kinds) == 0 {
+			return true
 		}
-		if len(messageItems) > limit {
-			messageItems = messageItems[:limit]
-			last := messageItems[len(messageItems)-1]
-			return Page{Results: messageResults(messageItems), NextCursor: encodeCursor(cursor{
-				Kind: "messages", MessageRank: last.Rank, MessageCreatedAt: last.CreatedAt, MessageID: last.MessageID,
-			}), HasMore: true}, nil
+		for _, value := range filters.Kinds {
+			if value == kind {
+				return true
+			}
 		}
-
-		results = append(results, messageResults(messageItems)...)
-		remaining := limit - len(results)
-		if remaining == 0 {
-			// Probe one customer so an exact message-sized page does not claim
-			// to be terminal when the customer half still has matches.
-			customers, err := s.customer.SearchPage(ctx, workspaceID, query, false, false, time.Time{}, time.Time{}, "", 1)
+		return false
+	}
+	providers := []Provider{}
+	if can(authorization.ConversationRead) && selected("message") {
+		providers = append(providers, Provider{Kind: "messages", Fetch: func(ctx context.Context, ws, q, after string, n int, f searchmodel.Filters) ([]Result, error) {
+			items, err := s.conversation.SearchMessagesPage(ctx, ws, q, position.MessageRank, position.MessageCreatedAt, position.MessageID, position.Kind == "messages" && after != "", n, f)
 			if err != nil {
-				return Page{}, err
+				return nil, err
 			}
-			if len(customers) > 0 {
-				return Page{Results: results, NextCursor: encodeCursor(cursor{Kind: "customers"}), HasMore: true}, nil
+			results := messageResults(items)
+			// Keep the precise ranked cursor alongside these message results.
+			if n > 1 && len(items) > 0 {
+				last := items[min(n-2, len(items)-1)]
+				position.MessageRank = last.Rank
+				position.MessageCreatedAt = last.CreatedAt
+				position.MessageID = last.MessageID
 			}
-			return Page{Results: results}, nil
+			return results, nil
+		}})
+	}
+	if can(authorization.CustomerRead) && selected("customer") && filters.Channel == "" && filters.TagID == "" {
+		providers = append(providers, Provider{Kind: "customers", Fetch: func(ctx context.Context, ws, q, after string, n int, f searchmodel.Filters) ([]Result, error) {
+			items, err := s.customer.SearchPage(ctx, ws, q, position.CustomerLastSeenPresent, position.Kind == "customers" && position.CustomerID != "", position.CustomerLastSeen, position.CustomerFirstSeen, position.CustomerID, n, f)
+			if err != nil {
+				return nil, err
+			}
+			results := customerResults(items)
+			if !can(authorization.CustomerReadSensitive) {
+				for i := range results {
+					results[i].Snippet = ""
+				}
+			}
+			if n > 1 && len(items) > 0 {
+				next := customerCursor(items[min(n-2, len(items)-1)])
+				position.CustomerLastSeenPresent = next.CustomerLastSeenPresent
+				position.CustomerLastSeen = next.CustomerLastSeen
+				position.CustomerFirstSeen = next.CustomerFirstSeen
+				position.CustomerID = next.CustomerID
+			}
+			return results, nil
+		}})
+	}
+	for _, provider := range s.providers {
+		if can(provider.Capability) && selected(provider.Kind) {
+			if (filters.Channel != "" || filters.TagID != "") && provider.Kind != "ticket" {
+				continue
+			}
+			providers = append(providers, provider)
 		}
+	}
+	if matched, _ := regexp.MatchString(`^(#[0-9]+|[A-Za-z][A-Za-z0-9]*-[0-9]+)$`, query); matched {
+		for i, provider := range providers {
+			if provider.Kind == "ticket" {
+				providers = append([]Provider{provider}, append(providers[:i], providers[i+1:]...)...)
+				break
+			}
+		}
+	}
 
-		customers, err := s.customer.SearchPage(ctx, workspaceID, query, false, false, time.Time{}, time.Time{}, "", remaining+1)
+	start := 0
+	if position.Kind != "" {
+		found := false
+		for i, p := range providers {
+			if p.Kind == position.Kind {
+				start = i
+				found = true
+				break
+			}
+		}
+		if !found {
+			return Page{}, ErrBadCursor
+		}
+	}
+	results := []Result{}
+	for i := start; i < len(providers); i++ {
+		provider := providers[i]
+		remaining := limit - len(results)
+		after := ""
+		if position.Kind == provider.Kind {
+			after = position.ExtraID
+			if provider.Kind == "messages" {
+				after = position.MessageID
+			}
+		}
+		items, err := provider.Fetch(ctx, workspaceID, query, after, remaining+1, filters)
 		if err != nil {
 			return Page{}, err
 		}
-		if len(customers) > remaining {
-			customers = customers[:remaining]
-			last := customers[len(customers)-1]
-			results = append(results, customerResults(customers)...)
-			return Page{Results: results, NextCursor: encodeCursor(customerCursor(last)), HasMore: true}, nil
+		if len(items) > remaining {
+			items = items[:remaining]
+			results = append(results, items...)
+			if remaining == 0 {
+				position = cursor{}
+			}
+			position.Kind = provider.Kind
+			position.Query = string(binding)
+			if len(items) > 0 {
+				position.ExtraID = items[len(items)-1].EntityID
+			}
+			return Page{Results: results, NextCursor: encodeCursor(position), HasMore: true}, nil
 		}
-		results = append(results, customerResults(customers)...)
-		return Page{Results: results}, nil
+		results = append(results, items...)
 	}
-
-	customerItems, err := s.customer.SearchPage(ctx, workspaceID, query,
-		position.CustomerLastSeenPresent, position.CustomerID != "", position.CustomerLastSeen,
-		position.CustomerFirstSeen, position.CustomerID, limit+1)
-	if err != nil {
-		return Page{}, err
-	}
-	if len(customerItems) > limit {
-		customerItems = customerItems[:limit]
-		last := customerItems[len(customerItems)-1]
-		return Page{Results: customerResults(customerItems), NextCursor: encodeCursor(customerCursor(last)), HasMore: true}, nil
-	}
-	return Page{Results: customerResults(customerItems)}, nil
+	return Page{Results: results}, nil
 }
 
 func messageResults(items []conversation.MessageSearchResult) []Result {
