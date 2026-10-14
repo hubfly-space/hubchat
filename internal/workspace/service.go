@@ -191,11 +191,36 @@ func (s *Service) ActorForUser(ctx context.Context, workspaceID, userID string) 
 		caps[authorization.Capability(capability)] = true
 	}
 
-	return &authorization.Actor{
+	actor := &authorization.Actor{
 		UserID:       userID,
 		MemberID:     member.ID,
 		WorkspaceID:  workspaceID,
 		Role:         member.Role,
 		Capabilities: caps,
-	}, nil
+	}
+	if !actor.Can(authorization.WorkspaceManage) {
+		rows, err := s.pool.Query(ctx, `SELECT i.id,EXISTS(SELECT 1 FROM inboxes restricted WHERE restricted.workspace_id=$1 AND restricted.visibility='teams') FROM inboxes i WHERE i.workspace_id=$1 AND (i.visibility='workspace' OR EXISTS(SELECT 1 FROM inbox_teams it JOIN team_members tm ON tm.team_id=it.team_id JOIN teams t ON t.id=it.team_id AND t.workspace_id=i.workspace_id WHERE it.inbox_id=i.id AND tm.member_id=$2))`, workspaceID, member.ID)
+		if err != nil {
+			return nil, err
+		}
+		actor.AllowedInboxIDs = []string{}
+		hasRestricted := true
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id, &hasRestricted); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			actor.AllowedInboxIDs = append(actor.AllowedInboxIDs, id)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+		if !hasRestricted {
+			actor.AllowedInboxIDs = nil
+		}
+	}
+	return actor, nil
 }
