@@ -209,12 +209,6 @@ func (h *Hub) advanceCursorToLatest(ctx context.Context, workspaceID string, sou
 
 // deliver routes one event to the clients whose topics match it.
 func (h *Hub) deliver(workspaceID string, record events.Record) {
-	payload, err := json.Marshal(record)
-	if err != nil {
-		h.logger.Error("realtime: encoding event failed",
-			slog.String("event_id", record.ID), slog.Any("error", err))
-		return
-	}
 
 	h.mu.RLock()
 	targets := make([]*client, 0, len(h.byWorkspace[workspaceID]))
@@ -228,11 +222,26 @@ func (h *Hub) deliver(workspaceID string, record events.Record) {
 		if !c.wants(topic) {
 			continue
 		}
-		if !visibleTo(c, record) {
+		projected, ok := eventFor(c, record)
+		if !ok {
+			continue
+		}
+		payload, err := json.Marshal(projected)
+		if err != nil {
 			continue
 		}
 		c.send(h, record.Sequence, payload)
 	}
+}
+
+func eventFor(c *client, record events.Record) (events.Record, bool) {
+	if !visibleTo(c, record) {
+		return record, false
+	}
+	if c.grant.Filter != nil {
+		return c.grant.Filter(record)
+	}
+	return record, true
 }
 
 // visibleTo is the one place a visitor connection can see less than the
@@ -277,7 +286,7 @@ func (h *Hub) broadcastTyping(sender *client, conversationID string, typing bool
 
 	isAgent := sender.grant.MemberID != ""
 	topic := "conversation:" + conversationID
-	if !isAgent && !sender.allows(topic) {
+	if !sender.allows(topic) {
 		return
 	}
 
@@ -310,7 +319,7 @@ func (h *Hub) broadcastTyping(sender *client, conversationID string, typing bool
 	h.mu.RUnlock()
 
 	for _, c := range targets {
-		if c.wants(topic) {
+		if c.wants(topic) && c.allows(topic) {
 			c.enqueue(h, payload)
 		}
 	}
@@ -529,7 +538,7 @@ func (h *Hub) broadcastViewers(workspaceID, topic string) {
 	}
 
 	for _, c := range targets {
-		if c.wants(topic) {
+		if c.wants(topic) && c.allows(topic) {
 			c.enqueue(h, payload)
 		}
 	}
@@ -557,11 +566,19 @@ func (h *Hub) writeLoop(ctx context.Context, c *client, done chan<- struct{}) {
 
 	ticker := time.NewTicker(h.pingInterval)
 	defer ticker.Stop()
+	policyTicker := time.NewTicker(time.Second)
+	defer policyTicker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
+
+		case <-policyTicker.C:
+			if c.grant.Valid != nil && !c.grant.Valid() {
+				_ = c.conn.Close(websocket.StatusPolicyViolation, "workspace access revoked")
+				return
+			}
 
 		case payload, ok := <-c.outbound:
 			if !ok {
