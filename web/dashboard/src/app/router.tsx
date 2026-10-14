@@ -123,6 +123,7 @@ const appRoutes: RouteObject[] = [
   { path: "settings/teams", element: page(() => import("../pages/settings/Teams")) },
   { path: "settings/roles", element: page(() => import("../pages/settings/Roles")) },
   { path: "settings/tags", element: page(() => import("../pages/settings/Tags")) },
+  { path: "settings/customer-context", element: page(() => import("../pages/settings/CustomerContextCards")) },
   { path: "settings/fields", element: page(() => import("../pages/settings/TicketFields")) },
   { path: "settings/hours", element: page(() => import("../pages/settings/BusinessHours")) },
   { path: "settings/notifications", element: page(() => import("../pages/settings/Notifications")) },
