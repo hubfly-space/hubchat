@@ -30,6 +30,7 @@ import type { Inbox as InboxRecord, Paginated, Team } from "@hubchat/shared";
 import { useWorkspace } from "../../app/workspace-context";
 
 type InboxPayload = {
+  visibility?: "workspace" | "teams";
   name: string;
   slug: string;
   description: string | null;
@@ -97,7 +98,7 @@ export default function InboxSettings() {
   };
   const save = () => {
     if (!draft) return;
-    void update.mutate({ name: draft.name.trim(), slug: draft.slug, description: draft.description?.trim() || null, channels: draft.channels, team_ids: draft.team_ids }).catch(() => {});
+    void update.mutate({ name: draft.name.trim(), slug: draft.slug, description: draft.description?.trim() || null, channels: draft.channels, team_ids: draft.team_ids, visibility: draft.visibility ?? "workspace" }).catch(() => {});
   };
 
   return (
@@ -127,7 +128,7 @@ export default function InboxSettings() {
               {Boolean(update.error) && <p className="mb-4 text-sm text-danger">{errorMessage(update.error, "Could not save this inbox.")}</p>}
               <Section title="Details"><Card><CardBody className="pt-0"><div className="border-b border-line-subtle py-3"><Field label="Description"><Input value={draft.description ?? ""} onChange={(event) => updateDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Where customer conversations are handled." /></Field></div><div className="flex items-center justify-between gap-4 py-3"><div><p className="text-sm text-fg">Default inbox</p><p className="mt-0.5 text-xs text-fg-muted">New conversations without an explicit destination use this inbox.</p></div><Button variant={draft.is_default ? "secondary" : "ghost"} size="sm" disabled={draft.is_default || setDefault.isPending} onClick={() => void setDefault.mutate(undefined).catch(() => {})}>{draft.is_default ? "Default" : "Make default"}</Button></div></CardBody></Card></Section>
               <Section title="Channels" description="Only selected sources can deliver into this inbox."><Card><CardBody className="grid gap-3 sm:grid-cols-2">{CHANNELS.map((channel) => <label key={channel} className="flex items-center gap-2 text-sm capitalize"><Checkbox checked={draft.channels.includes(channel)} onCheckedChange={() => toggleChannel(channel)} />{channel}</label>)}</CardBody></Card></Section>
-              <Section title="Team access" description="Members outside these teams cannot see this inbox. The server applies this scope to queries."><Card><CardBody className="grid gap-3 sm:grid-cols-2">{teams.length ? teams.map((team: Team) => <label key={team.id} className="flex items-center gap-2 text-sm"><Checkbox checked={draft.team_ids.includes(team.id)} onCheckedChange={() => toggleTeam(team.id)} />{team.name}</label>) : <p className="text-sm text-fg-muted">No teams configured.</p>}</CardBody></Card></Section>
+              <Section title="Team access" description="Restricted inboxes are visible to assigned teams and workspace administrators. Team assignment also controls routing."><Card><CardBody className="grid gap-3 sm:grid-cols-2"><label className="col-span-full flex items-center gap-2 text-sm"><Checkbox checked={draft.visibility === "teams"} onCheckedChange={(checked) => updateDraft((current) => ({ ...current, visibility: checked ? "teams" : "workspace" }))} />Restrict visibility to assigned teams</label>{teams.length ? teams.map((team: Team) => <label key={team.id} className="flex items-center gap-2 text-sm"><Checkbox checked={draft.team_ids.includes(team.id)} onCheckedChange={() => toggleTeam(team.id)} />{team.name}</label>) : <p className="text-sm text-fg-muted">No teams configured.</p>}</CardBody></Card></Section>
               <Section title="Routing"><Callout tone="info">Assign this inbox to one or more teams to route new conversations automatically. The first team follows its configured strategy: team queue, round robin, least active, customer owner, or weighted assignment. Members who are not accepting conversations remain in the queue.</Callout></Section>
               <Section title="SLA policy" description="Attach a policy from the SLA settings area. The current inbox API exposes the active policy as read-only here."><Card><CardBody><span className="text-sm text-fg-secondary">{draft.sla_policy_id ?? "Not configured"}</span></CardBody></Card></Section>
               <Section title="Danger zone"><Card className="border-danger-border"><CardHeader title="Delete this inbox" description={`${draft.open_count} open conversations would need to be moved first. Deleting an inbox does not delete its history.`} actions={<Button variant="danger" size="sm" leading={<Trash2 />} disabled={draft.is_default} onClick={() => setDeleting(draft)}>Delete</Button>} /></Card></Section>
