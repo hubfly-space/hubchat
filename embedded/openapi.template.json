@@ -4,6 +4,7 @@
   "info": {
     "title": "Hubchat API",
     "version": "1.0.0",
+    "license": { "name": "AGPL-3.0-only", "url": "https://www.gnu.org/licenses/agpl-3.0.html" },
     "description": "The versioned, workspace-scoped REST contract for Hubchat. Browser sessions use cookies; server integrations use a workspace-scoped API key as a Bearer token."
   },
   "servers": [{ "url": "/api", "description": "The Hubchat API mounted by the application" }],
