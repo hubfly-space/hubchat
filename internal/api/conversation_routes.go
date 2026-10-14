@@ -17,6 +17,7 @@ import (
 )
 
 func registerConversationRoutes(mux *http.ServeMux, deps Deps) {
+	registerFollowUpRoutes(mux, deps)
 	idempotent := Idempotency(deps)
 
 	// Workspace-scoped, not inbox-scoped: "assigned to me" and "unassigned"
@@ -225,17 +226,47 @@ func handleListConversations(deps Deps) http.HandlerFunc {
 			return
 		}
 
+		sort := query.Get("sort")
+		if sort == "" {
+			sort = "recent"
+		}
+		if sort != "recent" && sort != "oldest" && sort != "priority" {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "sort must be recent, oldest, or priority.")
+			return
+		}
+		priorityCursor := ""
+		if cursor.ID != "" {
+			expected := ""
+			if sort == "oldest" {
+				expected = "oldest"
+			}
+			if sort == "priority" {
+				priorityCursor = strings.TrimPrefix(cursor.Value, "priority:")
+				if priorityCursor != "urgent" && priorityCursor != "high" && priorityCursor != "normal" && priorityCursor != "low" {
+					httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Cursor does not match this sort.")
+					return
+				}
+				expected = "priority:" + priorityCursor
+			}
+			if cursor.Value != expected {
+				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Cursor does not match this sort.")
+				return
+			}
+		}
+
 		filter := conversation.ListFilter{
-			InboxID:    query.Get("inbox_id"),
-			AssigneeID: query.Get("assignee_id"),
-			TeamID:     query.Get("team_id"),
-			Priority:   query.Get("priority"),
-			TagID:      query.Get("tag_id"),
-			FollowerID: query.Get("follower_id"),
-			CustomerID: query.Get("customer_id"),
-			SLAState:   query.Get("sla"),
-			Before:     cursor.At,
-			BeforeID:   cursor.ID,
+			Sort:           sort,
+			BeforePriority: priorityCursor,
+			InboxID:        query.Get("inbox_id"),
+			AssigneeID:     query.Get("assignee_id"),
+			TeamID:         query.Get("team_id"),
+			Priority:       query.Get("priority"),
+			TagID:          query.Get("tag_id"),
+			FollowerID:     query.Get("follower_id"),
+			CustomerID:     query.Get("customer_id"),
+			SLAState:       query.Get("sla"),
+			Before:         cursor.At,
+			BeforeID:       cursor.ID,
 			// Queried at limit+1 so NewPage can tell "there is another page"
 			// from one extra row rather than a second count query.
 			Limit: limit + 1,
@@ -265,7 +296,14 @@ func handleListConversations(deps Deps) http.HandlerFunc {
 		}
 
 		page := NewPage(conversations, limit, func(c conversation.Conversation) Cursor {
-			return Cursor{At: c.LastMessageAt, ID: c.ID}
+			value := ""
+			if sort == "oldest" {
+				value = "oldest"
+			}
+			if sort == "priority" {
+				value = "priority:" + c.Priority
+			}
+			return Cursor{At: c.LastMessageAt, ID: c.ID, Value: value}
 		})
 
 		ids := make([]string, len(page.Data))
@@ -332,16 +370,11 @@ func handleStartConversation(deps Deps) http.HandlerFunc {
 		conv, msg, err := deps.Conversation.Start(
 			r.Context(), actor.WorkspaceID, req.InboxID, req.Channel,
 			req.Subject, req.CustomerID, nil, req.AuthorName, req.Body,
+			conversation.Attachments{IDs: req.FileIDs, Store: deps.File},
 		)
 		if err != nil {
 			writeConversationError(w, r, err)
 			return
-		}
-		if deps.File != nil && len(req.FileIDs) > 0 {
-			if err := deps.File.AttachToMessage(r.Context(), actor.WorkspaceID, msg.ID, req.FileIDs); err != nil {
-				writeMessageAttachmentError(w, r, err)
-				return
-			}
 		}
 
 		httpserver.WriteJSON(w, http.StatusCreated, map[string]any{
@@ -480,16 +513,15 @@ func handlePostMessage(deps Deps) http.HandlerFunc {
 		msg, err := deps.Conversation.PostMessageWithMentions(
 			r.Context(), actor.WorkspaceID, conversationID, clientID,
 			kind, "agent", &memberID, authorName, req.Body, req.MentionedMemberIDs,
+			conversation.Attachments{IDs: req.FileIDs, Store: deps.File},
 		)
 		if err != nil {
-			writeConversationError(w, r, err)
-			return
-		}
-		if deps.File != nil && len(req.FileIDs) > 0 {
-			if err := deps.File.AttachToMessage(r.Context(), actor.WorkspaceID, msg.ID, req.FileIDs); err != nil {
+			if errors.Is(err, file.ErrInvalidAttachment) {
 				writeMessageAttachmentError(w, r, err)
-				return
+			} else {
+				writeConversationError(w, r, err)
 			}
+			return
 		}
 		if deps.Notification != nil {
 			if notifyErr := deps.Notification.NotifyConversationMessage(r.Context(), actor.WorkspaceID, conversationID,
@@ -979,7 +1011,11 @@ func handleLinkConversation(deps Deps) http.HandlerFunc {
 		}
 		link, err := deps.Conversation.Link(r.Context(), actor.WorkspaceID, actor.MemberID, r.PathValue("id"), req.TargetID, req.Relation)
 		if err != nil {
-			writeConversationError(w, r, err)
+			if errors.Is(err, file.ErrInvalidAttachment) {
+				writeMessageAttachmentError(w, r, err)
+			} else {
+				writeConversationError(w, r, err)
+			}
 			return
 		}
 		httpserver.WriteJSON(w, http.StatusCreated, conversationLinkJSON(*link))
