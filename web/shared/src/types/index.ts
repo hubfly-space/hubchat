@@ -189,6 +189,7 @@ export type ChannelType =
   | "manual";
 
 export type Inbox = {
+  visibility?: "workspace" | "teams";
   id: Id;
   workspace_id: Id;
   name: string;
