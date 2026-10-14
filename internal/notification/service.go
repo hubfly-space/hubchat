@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/hubchat/hubchat/internal/conversation"
@@ -23,13 +22,14 @@ var ErrNotFound = errors.New("notification: not found")
 var ErrInvalidPreference = errors.New("notification: invalid preference")
 
 type Service struct {
+	push interface {
+		QueueTx(context.Context, pgx.Tx, string, string, string) error
+	}
 	pool      *database.Pool
 	jobs      *jobs.Client
 	files     *filemodule.Service
 	surveys   SurveyDispatcher
 	publicURL *url.URL
-	seenMu    sync.Mutex
-	seen      map[string]int64
 }
 
 // SurveyDispatcher is deliberately a small boundary so notification delivery
@@ -86,7 +86,7 @@ func New(pool *database.Pool, queue ...*jobs.Client) *Service {
 	if len(queue) > 0 {
 		jobClient = queue[0]
 	}
-	return &Service{pool: pool, jobs: jobClient, seen: make(map[string]int64)}
+	return &Service{pool: pool, jobs: jobClient}
 }
 
 func (s *Service) SetSurveyDispatcher(dispatcher SurveyDispatcher) {
@@ -208,7 +208,7 @@ func (s *Service) NotifyAssignment(ctx context.Context, workspaceID, memberID, a
 		return nil
 	}
 	label := "conversation"
-	url := "/inbox?conversation=" + entityID
+	url := "/inbox/all/" + entityID
 	if entityType == "ticket" {
 		label = "ticket"
 		url = "/tickets/" + entityID
@@ -332,7 +332,7 @@ func (s *Service) NotifySLA(ctx context.Context, workspaceID, entityType, entity
 		if err := rows.Scan(&memberID); err != nil {
 			return err
 		}
-		url := "/inbox?conversation=" + entityID
+		url := "/inbox/all/" + entityID
 		if entityType == "ticket" {
 			url = "/tickets/" + entityID
 		}
@@ -344,9 +344,10 @@ func (s *Service) NotifySLA(ctx context.Context, workspaceID, entityType, entity
 }
 
 func (s *Service) insertForMember(ctx context.Context, workspaceID, memberID, actorID, typ, title, body, url, entityType, entityID, sourceEventID string) error {
-	preferenceType := preferenceTypeFor(typ)
-	var notificationID string
-	err := s.pool.QueryRow(ctx, `
+	return database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		preferenceType := preferenceTypeFor(typ)
+		var notificationID string
+		err := tx.QueryRow(ctx, `
 		INSERT INTO notifications
 			(id,workspace_id,member_id,type,title,body,entity_type,entity_id,url,source_event_id)
 		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,'')
@@ -354,6 +355,13 @@ func (s *Service) insertForMember(ctx context.Context, workspaceID, memberID, ac
 		LEFT JOIN notification_preferences preferences
 			ON preferences.workspace_id=$2 AND preferences.member_id=$3 AND preferences.type=$12
 		WHERE members.workspace_id=$2 AND members.id=$3
+		  AND members.deactivated_at IS NULL
+		  AND ($7 NOT IN ('conversation','ticket') OR EXISTS (
+		    SELECT 1 FROM inboxes visible
+		    WHERE visible.workspace_id=$2
+		      AND visible.id=CASE WHEN $7='conversation' THEN (SELECT inbox_id FROM conversations WHERE workspace_id=$2 AND id=$8) ELSE (SELECT inbox_id FROM tickets WHERE workspace_id=$2 AND id=$8) END
+		      AND (visible.visibility='workspace' OR members.role IN ('owner','admin') OR EXISTS(SELECT 1 FROM inbox_teams it JOIN team_members tm ON tm.team_id=it.team_id WHERE it.inbox_id=visible.id AND tm.member_id=members.id))
+		  ))
 		  AND ($11='' OR members.id<>$11)
 		  AND (preferences.member_id IS NULL OR coalesce(preferences.in_app,false)
 		       OR coalesce(preferences.email,false) OR coalesce(preferences.browser,false)
@@ -366,13 +374,19 @@ func (s *Service) insertForMember(ctx context.Context, workspaceID, memberID, ac
 		ON CONFLICT DO NOTHING
 		RETURNING id
 	`, ids.New(ids.PrefixNotification), workspaceID, memberID, typ, title, body, entityType, entityID, url, sourceEventID, actorID, preferenceType).Scan(&notificationID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("notification: insert event alert: %w", err)
-	}
-	return s.queueEmail(ctx, workspaceID, memberID, notificationID, preferenceType, title, body, url)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("notification: insert event alert: %w", err)
+		}
+		if s.push != nil {
+			if err := s.push.QueueTx(ctx, tx, workspaceID, memberID, notificationID); err != nil {
+				return err
+			}
+		}
+		return s.queueEmailTx(ctx, tx, workspaceID, memberID, notificationID, preferenceType, title, body, url)
+	})
 }
 
 func preferenceTypeFor(notificationType string) string {
@@ -383,22 +397,23 @@ func preferenceTypeFor(notificationType string) string {
 }
 
 type emailPayload struct {
-	To            string            `json:"to"`
-	Subject       string            `json:"subject"`
-	Body          string            `json:"body"`
-	WorkspaceID   string            `json:"workspace_id,omitempty"`
-	AttachmentIDs []string          `json:"attachment_ids,omitempty"`
-	TemplateKey   string            `json:"template_key,omitempty"`
-	TemplateData  map[string]string `json:"template_data,omitempty"`
+	NotificationID string            `json:"notification_id,omitempty"`
+	To             string            `json:"to"`
+	Subject        string            `json:"subject"`
+	Body           string            `json:"body"`
+	WorkspaceID    string            `json:"workspace_id,omitempty"`
+	AttachmentIDs  []string          `json:"attachment_ids,omitempty"`
+	TemplateKey    string            `json:"template_key,omitempty"`
+	TemplateData   map[string]string `json:"template_data,omitempty"`
 }
 
-func (s *Service) queueEmail(ctx context.Context, workspaceID, memberID, notificationID, preferenceType, title, body, url string) error {
+func (s *Service) queueEmailTx(ctx context.Context, tx pgx.Tx, workspaceID, memberID, notificationID, preferenceType, title, body, url string) error {
 	if s.jobs == nil {
 		return nil
 	}
 	var address, name string
 	var enabled bool
-	err := s.pool.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 		SELECT u.email::text,u.name,coalesce(preferences.email,false)
 		FROM workspace_members members
 		JOIN users u ON u.id=members.user_id
@@ -420,11 +435,11 @@ func (s *Service) queueEmail(ctx context.Context, workspaceID, memberID, notific
 	if strings.TrimSpace(url) != "" {
 		message += "\n\nOpen in Hubchat: " + url
 	}
-	_, err = s.jobs.Enqueue(ctx, jobs.Spec{
+	_, err = jobs.EnqueueTx(ctx, tx, jobs.Spec{
 		WorkspaceID: workspaceID,
 		Queue:       "email",
 		Type:        "email.send",
-		Payload:     emailPayload{To: address, Subject: title, Body: message},
+		Payload:     emailPayload{To: address, Subject: title, Body: message, NotificationID: notificationID, WorkspaceID: workspaceID},
 		DedupeKey:   "notification-email:" + notificationID,
 	})
 	if errors.Is(err, jobs.ErrDuplicate) {
@@ -447,52 +462,12 @@ func slaNotification(kind string) (preferenceType, notificationType, title, body
 	}
 }
 
-// RunEventConsumer turns committed assignment and SLA events into durable
-// alerts and optional queued email delivery. It follows the same gap-draining
-// protocol as realtime and automation consumers, while source_event_id makes
-// processing idempotent.
+// RunEventConsumer resumes durable checkpoints and reconciles missed signals.
+// Domain effects are replay-safe; checkpoints advance after successful commits.
 func (s *Service) RunEventConsumer(ctx context.Context, signals <-chan events.Signal, source interface {
 	Since(context.Context, string, int64, int) ([]events.Record, error)
 }) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case signal, ok := <-signals:
-			if !ok {
-				return
-			}
-			s.seenMu.Lock()
-			after, exists := s.seen[signal.WorkspaceID]
-			if !exists {
-				after = signal.Sequence - 1
-			}
-			s.seenMu.Unlock()
-			for {
-				records, err := source.Since(ctx, signal.WorkspaceID, after, 200)
-				if err != nil || len(records) == 0 {
-					break
-				}
-				failed := false
-				for _, record := range records {
-					if err := s.processEvent(ctx, record); err != nil {
-						failed = true
-						break
-					}
-					after = record.Sequence
-				}
-				if failed {
-					break
-				}
-				s.seenMu.Lock()
-				s.seen[signal.WorkspaceID] = after
-				s.seenMu.Unlock()
-				if len(records) < 200 {
-					break
-				}
-			}
-		}
-	}
+	events.Consume(ctx, s.pool, "notification", signals, source, s.processEvent)
 }
 
 func (s *Service) processEvent(ctx context.Context, record events.Record) error {
@@ -945,4 +920,16 @@ func ticketCustomerTemplate(eventType events.Type) string {
 		return "ticket_created"
 	}
 	return "ticket_resolved"
+}
+
+// NotifyFollowUp uses the assignment delivery preferences and a stable source
+// key, so a recovered scheduler lease cannot notify the member twice.
+func (s *Service) NotifyFollowUp(ctx context.Context, workspaceID, memberID, conversationID, body, sourceID string) error {
+	return s.insertForMember(ctx, workspaceID, memberID, "", "assignment", "Follow-up due", body, "/inbox/all/"+conversationID, "conversation", conversationID, "follow-up:"+sourceID)
+}
+
+func (s *Service) SetPushDispatcher(dispatcher interface {
+	QueueTx(context.Context, pgx.Tx, string, string, string) error
+}) {
+	s.push = dispatcher
 }
