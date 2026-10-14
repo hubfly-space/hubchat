@@ -74,6 +74,14 @@ func handleDownloadFile(deps Deps) http.HandlerFunc {
 			httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "File not found.")
 			return
 		}
+		if actor.AllowedInboxIDs != nil {
+			visible, err := deps.File.VisibleToInboxes(r.Context(), record, actor.AllowedInboxIDs)
+			if err != nil || !visible {
+				httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "File not found.")
+				return
+			}
+		}
+
 		if !fileReadableByActor(actor, record) {
 			httpserver.WriteError(w, r, http.StatusForbidden, httpserver.CodeForbidden, "You do not have permission to download this file.")
 			return
