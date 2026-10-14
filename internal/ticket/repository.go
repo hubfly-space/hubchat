@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/hubchat/hubchat/internal/authorization"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -100,14 +101,22 @@ func (r *repository) byID(ctx context.Context, workspaceID, id string) (*Ticket,
 	row := r.pool.QueryRow(ctx, `SELECT `+ticketColumns+`
 		FROM tickets WHERE workspace_id = $1 AND id = $2
 	`, workspaceID, id)
-	return scanTicket(row)
+	item, err := scanTicket(row)
+	if err == nil && (item.InboxID == nil || !authorization.CanSeeInbox(ctx, *item.InboxID)) && authorization.InboxIDs(ctx) != nil {
+		return nil, ErrNotFound
+	}
+	return item, err
 }
 
 func (r *repository) byImportKey(ctx context.Context, workspaceID, importKey string) (*Ticket, error) {
 	row := r.pool.QueryRow(ctx, `SELECT `+ticketColumns+`
 		FROM tickets WHERE workspace_id = $1 AND import_key = $2
 	`, workspaceID, importKey)
-	return scanTicket(row)
+	item, err := scanTicket(row)
+	if err == nil && (item.InboxID == nil || !authorization.CanSeeInbox(ctx, *item.InboxID)) && authorization.InboxIDs(ctx) != nil {
+		return nil, ErrNotFound
+	}
+	return item, err
 }
 
 func (r *repository) byImportKeyTx(ctx context.Context, tx pgx.Tx, workspaceID, importKey string) (*Ticket, error) {
@@ -115,7 +124,11 @@ func (r *repository) byImportKeyTx(ctx context.Context, tx pgx.Tx, workspaceID, 
 		FROM tickets WHERE workspace_id = $1 AND import_key = $2
 		FOR UPDATE
 	`, workspaceID, importKey)
-	return scanTicket(row)
+	item, err := scanTicket(row)
+	if err == nil && (item.InboxID == nil || !authorization.CanSeeInbox(ctx, *item.InboxID)) && authorization.InboxIDs(ctx) != nil {
+		return nil, ErrNotFound
+	}
+	return item, err
 }
 
 func (r *repository) exists(ctx context.Context, workspaceID, id string) (bool, error) {
