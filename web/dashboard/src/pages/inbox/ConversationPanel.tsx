@@ -1,3 +1,4 @@
+import { FollowUpButton } from "./FollowUpButton";
 import {
   api,
   ApiError,
@@ -101,6 +102,11 @@ export function ConversationPanel({
   const messages = useInfinite<Message>(
     ["conversation-messages", conversation.id],
     (cursor, signal) => api.get<Paginated<Message>>(`/conversations/${conversation.id}/messages?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }),
+    // Realtime invalidation refetches this window on every inbound message,
+    // and messages are append-only in sequence order, so older pages the
+    // agent already scrolled into stay valid. Without this, each reply would
+    // collapse the thread back to the newest 100 messages.
+    { preserveLoadedPages: true },
   );
   const customer = useQuery<Customer>(
     conversation.customer_id ? ["customer", conversation.customer_id] : null,
@@ -229,6 +235,7 @@ export function ConversationPanel({
           </div>
 
           <div className="flex shrink-0 items-center gap-1">
+            <FollowUpButton conversationID={conversation.id} />
             <Tooltip content="Hide context panel">
               <Button
                 variant="ghost"
