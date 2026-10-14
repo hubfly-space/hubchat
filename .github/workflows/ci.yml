@@ -24,6 +24,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Build embedded browser assets
         run: make web
+      - run: pnpm test:frontend
+      - run: pnpm check:bundles
       - run: make check
       - run: make build
 
@@ -137,7 +139,13 @@ jobs:
           node-version: 22.x
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - uses: browser-actions/setup-chrome@v2
+        id: chrome
+        with:
+          chrome-version: stable
       - name: Run compiled production binary smoke
         env:
           HUBCHAT_BINARY_DATABASE_URL: postgres://hubchat:hubchat@localhost:5432/hubchat_release?sslmode=disable
+          HUBCHAT_RUN_BROWSER_CHECK: "1"
+          HUBCHAT_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
         run: make production-binary-check
