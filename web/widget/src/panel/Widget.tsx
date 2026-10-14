@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   Book,
@@ -9,8 +9,8 @@ import {
   Paperclip,
   Search,
   Send,
-  Ticket,
   X,
+  Ticket,
 } from "lucide-react";
 import {
   clearSession,
@@ -47,8 +47,10 @@ import {
 } from "../lib/api";
 import { VisitorSocket, type WireEvent } from "../lib/socket";
 import type { WidgetConfig, WidgetMessage } from "../types";
-import { formConditionApplies } from "@hubchat/shared";
+import { formConditionApplies } from "@hubchat/shared/lib/form";
 import { WidgetLocaleProvider, useWidgetText, widgetText } from "./i18n";
+
+const ArticleMarkdown = lazy(() => import("@hubchat/shared/components/Markdown").then(module => ({ default: module.Markdown })));
 
 type Screen = "home" | "chat" | "articles" | "article" | "form" | "feedback";
 
@@ -272,10 +274,11 @@ export function Widget({
           // Only an authoritative ownership/not-found response invalidates
           // the saved thread. A timeout or temporary API outage must never
           // destroy a visitor's ability to resume it later.
-          if (error instanceof WidgetApiError && [401, 403, 404].includes(error.status)) {
-            conversationRef.current = null;
-            clearSession(publicKey);
-            setMessages([]);
+          if (threadUnusable(error)) {
+            // Token included: leaving the rejected one in tokenRef meant
+            // ensureVisitorToken kept replaying it, so the visitor could not
+            // even start a new conversation until the page was reloaded.
+            discardThread();
             setScreen("home");
           }
         });
@@ -406,6 +409,7 @@ export function Widget({
             await apiIdentify(host, publicKey, token, {
               name: typeof payload?.name === "string" ? payload.name : undefined,
               email: typeof payload?.email === "string" ? payload.email : undefined,
+              phone: typeof payload?.phone === "string" ? payload.phone : undefined,
               external_id: typeof payload?.external_id === "string" ? payload.external_id : undefined,
               signed_token: typeof payload?.signed_token === "string" ? payload.signed_token :
                 typeof payload?.token === "string" ? payload.token : undefined,
@@ -481,6 +485,32 @@ export function Widget({
 
   /* --------------------------------------------------------------- sending */
 
+  /**
+   * Forget the current visitor + thread after the server says this browser's
+   * identity cannot reach it (401 expired, 403 not this visitor's
+   * conversation, 404 deleted or never existed).
+   *
+   * The token matters as much as the conversation id, and forgetting it was
+   * the bug: `ensureVisitorToken` returns `tokenRef.current` whenever it is
+   * truthy and never re-issues, so a dead token kept every later request —
+   * including starting a brand-new conversation — failing identically. A
+   * visitor who hit that state could not send anything again until they
+   * reloaded the page, and the generic "message failed" bubble gave no hint
+   * why. Clearing all three here is what makes recovery possible.
+   */
+  const discardThread = useCallback(() => {
+    socketRef.current?.close();
+    socketRef.current = null;
+    tokenRef.current = null;
+    conversationRef.current = null;
+    handledCommandIDsRef.current.clear();
+    clearSession(publicKey);
+    setMessages([]);
+  }, [publicKey]);
+
+  const threadUnusable = (error: unknown) =>
+    error instanceof WidgetApiError && [401, 403, 404].includes(error.status);
+
   const send = () => {
     const body = draft.trim();
     if (!body) return;
@@ -502,47 +532,67 @@ export function Widget({
       setMessages((current) => current.map((item) => (item.id === clientId ? { ...item, delivery } : item)));
 
     void (async () => {
-      try {
-        let token = await ensureVisitorToken();
+      // One retry, and only for an identity the server has rejected. The
+      // first attempt may be posting into a thread this browser can no longer
+      // reach (token rotated, conversation reassigned or deleted); the retry
+      // then starts a fresh conversation with a fresh visitor so the visitor
+      // reaches an agent instead of staring at a failed bubble forever. Any
+      // other failure — offline, 5xx, a rejected attachment — is reported
+      // as-is and retried by the visitor, not silently duplicated.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          let token = await ensureVisitorToken();
 
-        let sentMessageID = "";
-        if (!conversationRef.current) {
-          const result = await startConversation(host, publicKey, token, body);
-          sentMessageID = result.message.id;
-          conversationRef.current = result.conversation_id;
-          // The server mints a fresh token only when the request arrived
-          // without one; otherwise it echoes back an empty string and the
-          // token this browser already holds keeps being the right one.
-          if (result.token) token = result.token;
-          tokenRef.current = token;
-          saveSession(publicKey, { token, conversationId: result.conversation_id });
-          openSocket(token);
-          onEvent("conversation:started", { id: result.conversation_id });
-        } else {
-          const result = await postMessage(host, publicKey, token, conversationRef.current, body);
-          sentMessageID = result.id;
-          saveSession(publicKey, { token, conversationId: conversationRef.current });
-        }
-
-        markDelivery("sent");
-        if (attachments.length > 0 && conversationRef.current && sentMessageID) {
-          setUploading(true);
-          try {
-            const uploaded = [] as { id: string; name: string; url?: string }[];
-            for (const file of attachments) uploaded.push(await uploadFile(host, publicKey, token, conversationRef.current, sentMessageID, file));
-            setMessages((current) => current.map((item) => item.id === clientId ? {
-              ...item,
-              attachments: uploaded.filter((file): file is { id: string; name: string; url: string } => Boolean(file.url)).map((file) => ({ id: file.id, name: file.name, url: file.url })),
-            } : item));
-            setAttachments([]);
-          } catch {
-            setAttachmentError(widgetText(config.language, "attachment_sent_error", "Your message was sent, but an attachment could not be uploaded."));
-          } finally {
-            setUploading(false);
+          let sentMessageID = "";
+          if (!conversationRef.current) {
+            const result = await startConversation(host, publicKey, token, body);
+            sentMessageID = result.message.id;
+            conversationRef.current = result.conversation_id;
+            // The server mints a fresh token only when the request arrived
+            // without one; otherwise it echoes back an empty string and the
+            // token this browser already holds keeps being the right one.
+            if (result.token) token = result.token;
+            tokenRef.current = token;
+            saveSession(publicKey, { token, conversationId: result.conversation_id });
+            openSocket(token);
+            onEvent("conversation:started", { id: result.conversation_id });
+          } else {
+            const result = await postMessage(host, publicKey, token, conversationRef.current, body);
+            sentMessageID = result.id;
+            saveSession(publicKey, { token, conversationId: conversationRef.current });
           }
+
+          markDelivery("sent");
+          if (attachments.length > 0 && conversationRef.current && sentMessageID) {
+            setUploading(true);
+            try {
+              const uploaded = [] as { id: string; name: string; url?: string }[];
+              for (const file of attachments) uploaded.push(await uploadFile(host, publicKey, token, conversationRef.current, sentMessageID, file));
+              setMessages((current) => current.map((item) => item.id === clientId ? {
+                ...item,
+                attachments: uploaded.filter((file): file is { id: string; name: string; url: string } => Boolean(file.url)).map((file) => ({ id: file.id, name: file.name, url: file.url })),
+              } : item));
+              setAttachments([]);
+            } catch {
+              setAttachmentError(widgetText(config.language, "attachment_sent_error", "Your message was sent, but an attachment could not be uploaded."));
+            } finally {
+              setUploading(false);
+            }
+          }
+          return;
+        } catch (error) {
+          if (threadUnusable(error) && attempt === 0) {
+            // setMessages([]) inside discardThread drops the optimistic
+            // bubble too, so re-add it before retrying or the visitor's own
+            // message vanishes on a recovery that succeeded.
+            discardThread();
+            setMessages([message]);
+            setScreen("chat");
+            continue;
+          }
+          markDelivery("failed");
+          return;
         }
-      } catch {
-        markDelivery("failed");
       }
     })();
   };
@@ -701,7 +751,7 @@ export function Widget({
               <div className="p-4">
                 <h2 className="text-md font-semibold tracking-tight text-fg">{article.title}</h2>
                 <p className="mt-2 text-sm leading-relaxed text-fg-secondary">{article.excerpt}</p>
-                {articleLoading ? <p className="mt-4 text-xs text-fg-muted">{widgetText(config.language, "guide_loading", "Loading guide…")}</p> : article.body && <div className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-fg-secondary">{article.body}</div>}
+                {articleLoading ? <p className="mt-4 text-xs text-fg-muted">{widgetText(config.language, "guide_loading", "Loading guide…")}</p> : article.body && <Suspense fallback={<p role="status">Loading article…</p>}><ArticleMarkdown className="mt-4 text-sm leading-relaxed text-fg-secondary">{article.body}</ArticleMarkdown></Suspense>}
                 <a href={`${host}/portal/kb/article/${article.slug}`} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-1.5 text-sm text-accent" style={{ pointerEvents: "auto" }}>
                   Open in help centre <ChevronRight className="size-3.5" />
                 </a>
@@ -1049,7 +1099,22 @@ function ChatScreen({
                         rel="noreferrer"
                         className={mine ? "block truncate text-xs underline" : "block truncate text-xs text-accent underline"}
                       >
-                        <Paperclip className="mr-1 inline size-3" aria-hidden="true" />{attachment.name}
+                        {attachment.mime_type?.startsWith("image/") ? (
+                          <div className="flex flex-col gap-1">
+                            <img
+                              src={`${host}${attachment.url}?${new URLSearchParams({ key: publicKey, url: window.location.href, token: token ?? "" }).toString()}`}
+                              alt={attachment.name}
+                              className="max-h-48 w-full rounded object-contain"
+                              loading="lazy"
+                            />
+                            <span className="truncate text-xs underline">{attachment.name}</span>
+                          </div>
+                        ) : (
+                          <>
+                            <Paperclip className="mr-1 inline size-3" aria-hidden="true" />
+                            {attachment.name}
+                          </>
+                        )}
                       </a>
                     ))}
                   </div>
@@ -1400,7 +1465,48 @@ function Composer({
           {offlineMessage}
         </p>
       )}
-      {files.length > 0 && <p className="mb-2 truncate rounded-md bg-fill px-2.5 py-1.5 text-[11px] text-fg-muted">{uploading ? t("uploading", "Uploading…") : files.map((file) => file.name).join(", ")}</p>}
+      {files.length > 0 && (
+        <div className="mb-2 space-y-2">
+          {uploading && (
+            <p className="rounded-md bg-fill px-2.5 py-1.5 text-[11px] text-fg-muted">{t("uploading", "Uploading…")}</p>
+          )}
+          <div className="flex flex-wrap gap-2">
+            {files.map((file, index) => {
+              const isImage = file.type.startsWith("image/");
+              const url = isImage ? URL.createObjectURL(file) : null;
+              return (
+                <div
+                  key={`${file.name}-${index}`}
+                  className="relative flex items-center gap-2 rounded-md border border-line bg-fill px-2 py-1.5"
+                >
+                  {isImage && url ? (
+                    <img
+                      src={url}
+                      alt={file.name}
+                      className="size-8 rounded object-cover"
+                      onLoad={() => URL.revokeObjectURL(url)}
+                    />
+                  ) : (
+                    <Paperclip className="size-3.5 text-fg-muted" aria-hidden="true" />
+                  )}
+                  <span className="max-w-[120px] truncate text-[11px] text-fg">{file.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = files.filter((_, i) => i !== index);
+                      onChooseFiles(next);
+                    }}
+                    className="ml-1 grid size-4 place-items-center rounded-full text-fg-muted transition-colors hover:bg-fill-hover hover:text-fg"
+                    aria-label="Remove file"
+                  >
+                    <X className="size-3" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       {error && <p className="mb-2 rounded-md bg-danger-subtle px-2.5 py-1.5 text-[11px] text-danger-text">{error}</p>}
 
       <div className="flex items-end gap-1.5 rounded-lg border border-line bg-inset px-2 py-1.5 shadow-1 transition-[border-color,box-shadow] hover:border-line-strong focus-within:border-accent focus-within:shadow-[0_0_0_3px_var(--hc-accent-subtle)]">
