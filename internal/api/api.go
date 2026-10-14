@@ -41,6 +41,7 @@ import (
 	"github.com/hubchat/hubchat/internal/notification"
 	"github.com/hubchat/hubchat/internal/portability"
 	"github.com/hubchat/hubchat/internal/portal"
+	"github.com/hubchat/hubchat/internal/push"
 	"github.com/hubchat/hubchat/internal/realtime"
 	"github.com/hubchat/hubchat/internal/savedview"
 	"github.com/hubchat/hubchat/internal/search"
@@ -71,6 +72,7 @@ type Deps struct {
 	File           *file.Service
 	Portal         *portal.Service
 	Notification   *notification.Service
+	Push           *push.Service
 	Form           *form.Service
 	APIKeys        *apikey.Service
 	Webhook        *webhook.Service
@@ -165,6 +167,7 @@ func New(deps Deps) http.Handler {
 	registerFileRoutes(mux, deps)
 	registerPortalRoutes(mux, deps)
 	registerPortalAdminRoutes(mux, deps)
+	registerPushRoutes(mux, deps)
 	registerNotificationRoutes(mux, deps)
 	registerFormRoutes(mux, deps)
 	registerAPIKeyRoutes(mux, deps)
@@ -239,6 +242,9 @@ func requireActor(deps Deps, next http.HandlerFunc) http.HandlerFunc {
 				if deps.Telemetry != nil {
 					deps.Telemetry.Identify(ctx, principal.KeyID, principal.WorkspaceID, "api_key")
 				}
+				if !enforceEntityScope(deps, w, r, ctx, actor) {
+					return
+				}
 				next(w, r.WithContext(ctx))
 				return
 			}
@@ -295,6 +301,9 @@ func requireActor(deps Deps, next http.HandlerFunc) http.HandlerFunc {
 		if deps.Telemetry != nil {
 			deps.Telemetry.Identify(ctx, user.ID, workspaceID, "agent")
 		}
+		if !enforceEntityScope(deps, w, r, ctx, actor) {
+			return
+		}
 		next(w, r.WithContext(ctx))
 	}
 }
@@ -312,4 +321,22 @@ func requireCapability(deps Deps, capability authorization.Capability, next http
 		}
 		next(w, r)
 	})
+}
+
+func enforceEntityScope(deps Deps, w http.ResponseWriter, r *http.Request, ctx context.Context, actor *authorization.Actor) bool {
+	if actor.AllowedInboxIDs == nil || r.PathValue("id") == "" {
+		return true
+	}
+	var err error
+	if strings.HasPrefix(r.URL.Path, "/v1/conversations/") && deps.Conversation != nil {
+		_, err = deps.Conversation.Get(ctx, actor.WorkspaceID, r.PathValue("id"))
+	}
+	if strings.HasPrefix(r.URL.Path, "/v1/tickets/") && deps.Ticket != nil {
+		_, err = deps.Ticket.Get(ctx, actor.WorkspaceID, r.PathValue("id"))
+	}
+	if err != nil {
+		httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Resource not found.")
+		return false
+	}
+	return true
 }
