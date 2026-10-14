@@ -26,6 +26,7 @@ type identityClaims struct {
 	Issuer  string `json:"iss"` // who signed this — informational, shown back on verification failure
 	Email   string `json:"email"`
 	Name    string `json:"name"`
+	Phone   string `json:"phone,omitempty"`
 	Expiry  int64  `json:"exp"` // unix seconds
 	Nonce   string `json:"nonce"`
 }
