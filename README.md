@@ -214,6 +214,5 @@ should be traceable to a person or a rule.
 
 ## Licence
 
-Not yet chosen. It has to be settled before the first release, along with which
-components are open and whether hosted-only extensions may exist — tracked in
-[docs/adr/README.md](docs/adr/README.md#still-open).
+Hubchat is licensed under the GNU Affero General Public License, version 3
+(AGPL-3.0-only). See [LICENSE](LICENSE) for the complete terms.
