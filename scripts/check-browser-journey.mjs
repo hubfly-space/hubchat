@@ -143,8 +143,6 @@ async function launchChrome() {
     "--no-sandbox",
     "--disable-gpu",
     "--disable-dev-shm-usage",
-    "--disable-web-security",
-    "--ignore-certificate-errors",
     `--user-data-dir=${profile}`,
     `--remote-debugging-address=127.0.0.1`,
     `--remote-debugging-port=${debuggingPort}`,
@@ -331,11 +329,14 @@ export async function runBrowserJourney({
     await browser.page.evaluate(`(() => {
       const textarea = document.querySelector('#hubchat-widget')?.shadowRoot?.querySelector('textarea[aria-label="Message"]');
       if (!textarea) throw new Error('widget message composer is missing');
-      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-      setter?.call(textarea, ${JSON.stringify(persistenceBody)});
-      textarea.dispatchEvent(new Event('input', { bubbles: true }));
-      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+      textarea.focus();
     })()`);
+    await browser.page.send("Input.insertText", { text: persistenceBody });
+    // Use real input tasks so the controlled composer can commit its state
+    // before Enter. Synthetic input+keydown in one JS task can read stale state.
+    await waitFor(() => browser.page.evaluate(`Boolean(document.querySelector('#hubchat-widget')?.shadowRoot?.querySelector('button[aria-label="Send request"]:not(:disabled)'))`), "widget composer accepts input");
+    await browser.page.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+    await browser.page.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
     await waitFor(() => browser.page.evaluate(`(() => {
       const raw = Object.entries(localStorage).find(([key]) => key.startsWith('hubchat.visitor.'))?.[1];
       if (!raw) return false;
@@ -417,6 +418,9 @@ export async function runBrowserJourney({
 
     let dashboardChecked = false;
     if (dashboardCookie) {
+      // The desktop rail is intentionally hidden below lg. Test its menu at
+      // a desktop width, then exercise the separate mobile layout below.
+      await browser.page.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
       const dashboardCookieResult = await browser.page.send("Network.setCookie", {
         name: "hubchat_session",
         value: dashboardCookie,
@@ -427,7 +431,7 @@ export async function runBrowserJourney({
       assert(dashboardCookieResult.success !== false, "Chrome refused the dashboard session cookie");
       await browser.page.navigate(new URL("/app/", baseURL).href);
       await waitFor(
-        () => browser.page.evaluate(`document.querySelector("#main") && document.body.innerText.includes(${JSON.stringify(`Good afternoon, ${workspaceName}`)})`),
+        () => browser.page.evaluate(`document.querySelector("#main") && (document.querySelector('button[aria-label^="Workspace:"]')?.getAttribute("aria-label") ?? "").includes(${JSON.stringify(workspaceName)})`),
         "authenticated dashboard overview",
       );
 
@@ -452,6 +456,34 @@ export async function runBrowserJourney({
 
       await browser.page.navigate(new URL("/app/inbox", baseURL).href);
       await waitFor(() => browser.page.evaluate("location.pathname.endsWith('/app/inbox') && Boolean(document.querySelector('#main'))"), "dashboard inbox navigation");
+
+      // Regression: populate a fresh company cache in B, then switch to A on
+      // the same route. The API and storage change must also change visible rows.
+      const alpha = await browser.page.evaluate(`(async()=>{
+        const response=await fetch('/api/v1/bootstrap',{credentials:'include'});
+        if(!response.ok)throw new Error('bootstrap fixture failed');return (await response.json()).workspace.id;
+      })()`);
+      const unique=Date.now().toString(36);
+      const fixtureRequest=async(path,body,scope)=>fetchJSON(new URL(path,baseURL),{method:'POST',headers:{'Content-Type':'application/json',Origin:baseURL,Cookie:`hubchat_session=${dashboardCookie}`,'Idempotency-Key':`browser-${unique}-${Math.random()}`,...(scope?{'Hubchat-Workspace-Id':scope}:{})},body:JSON.stringify(body)});
+      const beta=await fixtureRequest('/api/v1/workspaces',{name:`Browser Beta ${unique}`,slug:`browser-beta-${unique}`});
+      const alphaName=`ALPHA ONLY ${unique}`;const betaName=`BETA ONLY ${unique}`;
+      await fixtureRequest('/api/v1/companies',{name:alphaName},alpha);
+      await fixtureRequest('/api/v1/companies',{name:betaName},beta.id);
+      await browser.page.evaluate(`localStorage.setItem('hubchat.workspace',JSON.stringify(${JSON.stringify(beta.id)}))`);
+      await browser.page.navigate(new URL('/app/companies',baseURL).href);
+      await waitFor(()=>browser.page.evaluate(`document.querySelector('#main')?.textContent.includes(${JSON.stringify(betaName)})`),'beta company fixture');
+      const clickAt=async(box)=>{assert(box,'browser target not found');await browser.page.send('Input.dispatchMouseEvent',{type:'mousePressed',x:box.x,y:box.y,button:'left',clickCount:1});await browser.page.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:box.x,y:box.y,button:'left',clickCount:1});};
+      await clickAt(await browser.page.evaluate(`(()=>{const node=document.querySelector('button[aria-label^="Workspace:"]');if(!node)return null;const box=node.getBoundingClientRect();return{x:box.x+box.width/2,y:box.y+box.height/2}})()`));
+      await waitFor(()=>browser.page.evaluate(`Boolean([...document.querySelectorAll('[role="menuitem"]')].find(node=>node.textContent?.includes(${JSON.stringify(workspaceName)})))`),'workspace menu');
+      await clickAt(await browser.page.evaluate(`(()=>{const node=[...document.querySelectorAll('[role="menuitem"]')].find(node=>node.textContent?.includes(${JSON.stringify(workspaceName)}));const box=node.getBoundingClientRect();return{x:box.x+box.width/2,y:box.y+box.height/2}})()`));
+      await waitFor(()=>browser.page.evaluate(`(document.querySelector('button[aria-label^="Workspace:"]')?.getAttribute('aria-label')??'').includes(${JSON.stringify(workspaceName)})`),'alpha workspace switch');
+      assert(!await browser.page.evaluate(`document.querySelector('#main')?.textContent.includes(${JSON.stringify(betaName)})`),'previous workspace company remained visible');
+      await waitFor(()=>browser.page.evaluate(`document.querySelector('#main')?.textContent.includes(${JSON.stringify(alphaName)})`),'alpha scoped company');
+      await browser.page.send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
+      await browser.page.navigate(new URL('/app/inbox',baseURL).href);
+      await waitFor(()=>browser.page.evaluate(`Boolean(document.querySelector('button[aria-label="Open navigation"]'))`),'mobile navigation');
+      assert(await browser.page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),'mobile inbox overflows the viewport');
+      await browser.page.send('Emulation.clearDeviceMetricsOverride');
       dashboardChecked = true;
     }
 
