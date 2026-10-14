@@ -88,6 +88,51 @@ func TestGetScopesToWorkspace(t *testing.T) {
 	}
 }
 
+func TestIdentifyCarriesPhoneOnCreateAndOnRepeat(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+
+	svc := newTestService(t, pool)
+	ws, _ := seedWorkspace(t, ctx, pool)
+	external := "acct-1"
+	phone := "+250788555000"
+
+	created, err := svc.Identify(ctx, ws, nil, customer.Identity{
+		ExternalID: &external,
+		Phone:      &phone,
+	}, false)
+	if err != nil {
+		t.Fatalf("first identify: %v", err)
+	}
+	if created.Phone == nil || *created.Phone != phone {
+		t.Fatalf("create: phone = %v, want %s", created.Phone, phone)
+	}
+
+	// A later identify from another browser must land on the same row and
+	// must not blank the phone that the first call recorded.
+	again, err := svc.Identify(ctx, ws, nil, customer.Identity{ExternalID: &external}, false)
+	if err != nil {
+		t.Fatalf("repeat identify: %v", err)
+	}
+	if again.ID != created.ID {
+		t.Fatalf("repeat identify: got %s, want %s", again.ID, created.ID)
+	}
+	if again.Phone == nil || *again.Phone != phone {
+		t.Fatalf("repeat identify: phone = %v, want %s", again.Phone, phone)
+	}
+
+	// And a later identify that does supply a phone updates it.
+	updated := "+250788555111"
+	touched, err := svc.Identify(ctx, ws, nil, customer.Identity{ExternalID: &external, Phone: &updated}, false)
+	if err != nil {
+		t.Fatalf("identify with new phone: %v", err)
+	}
+	if touched.Phone == nil || *touched.Phone != updated {
+		t.Fatalf("identify with new phone: phone = %v, want %s", touched.Phone, updated)
+	}
+}
+
 func TestUpdateRejectsAStaleVersion(t *testing.T) {
 	pool := dbtest.Pool(t)
 	dbtest.Reset(t, pool)
