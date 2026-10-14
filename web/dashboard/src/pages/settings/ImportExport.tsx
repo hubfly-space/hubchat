@@ -2,6 +2,9 @@ import {
   ApiError,
   Badge,
   Button,
+  Select,
+  Field,
+  parseCSVHeader,
   Callout,
   Card,
   CardBody,
@@ -52,7 +55,7 @@ type ImportRequest = {
   created_at: string;
 };
 
-type PreviewSummary = { name: string; rows: number; existing?: number; new?: number };
+type PreviewSummary = { name: string; rows: number; existing?: number; new?: number; duplicate?: number };
 type ExportPreview = { tables: PreviewSummary[]; row_count: number };
 type ExportManifest = {
   export_id: string;
@@ -106,6 +109,13 @@ export default function ImportExport() {
   const [tab, setTab] = useState("export");
   const [exportKind, setExportKind] = useState<ExportKind>("workspace");
   const [importKind, setImportKind] = useState<"workspace" | "customers_csv" | "companies_csv" | "tickets_csv" | "feedback_csv" | "knowledgebase_markdown">("workspace");
+  const [selectedFile,setSelectedFile]=useState<File|null>(null);
+  const [headerColumns,setHeaderColumns]=useState<string[]>([]);
+  const [columnMapping,setColumnMapping]=useState<Record<string,string>>({});
+  const [skipDuplicateEmails,setSkipDuplicateEmails]=useState(true);
+  const [uploadError,setUploadError]=useState("");
+  const selectImportFile=async(file:File)=>{setUploadError("");setSelectedFile(file);setHeaderColumns([]);setColumnMapping({});if(importKind.endsWith("_csv")){const columns=parseCSVHeader(await file.slice(0,65536).text());setHeaderColumns(columns);}};
+
   const [downloadError, setDownloadError] = useState("");
   const [downloadVerified, setDownloadVerified] = useState("");
   const [downloadingID, setDownloadingID] = useState<string | null>(null);
@@ -149,7 +159,7 @@ export default function ImportExport() {
   const previewExport = useMutation<void, ExportPreview>(
     () => api.post("/portability/exports/preview", { kind: exportKind }, { workspaceId }),
   );
-  const createImport = useMutation<{ file_id: string; kind: string }, ImportRequest>(
+  const createImport = useMutation<{ file_id: string; kind: string; mapping: Record<string,unknown> }, ImportRequest>(
     (input) => api.post("/portability/imports", { ...input, auto_start: false }, { workspaceId, idempotencyKey: idempotencyKey() }),
     { invalidates: [["portability-imports", workspaceId]] },
   );
@@ -161,7 +171,7 @@ export default function ImportExport() {
     const form = new FormData();
     form.append("file", selected);
     const uploaded = await api.post<{ id: string }>("/portability/import-files", form, { workspaceId, idempotencyKey: idempotencyKey() });
-    await createImport.mutate({ file_id: uploaded.id, kind: importKind });
+    await createImport.mutate({ file_id: uploaded.id, kind: importKind, mapping:{columns:Object.fromEntries(Object.entries(columnMapping).map(([key,value])=>[key,value==="__skip"?"":value])),skip_duplicate_emails:skipDuplicateEmails} });
   };
   const downloadExport = async (request: ExportRequest) => {
     setDownloadError("");
@@ -209,7 +219,7 @@ export default function ImportExport() {
   const exportRows = exportsQuery.items;
   const importRows = importsQuery.items;
   const activeExports = exportRows.filter((item) => item.state === "pending" || item.state === "running");
-  const uploadError = createImport.error;
+  const requestUploadError = createImport.error;
 
   return (
     <Page>
@@ -271,16 +281,18 @@ export default function ImportExport() {
 
           <TabsContent value="import">
             <Callout tone="warning" className="mb-4">Upload a workspace archive or CSV export to preview conflicts before importing. Preview reads the file without writing tenant records.</Callout>
-            <input ref={fileInput} type="file" accept={importKind === "workspace" ? ".gz,.json,application/gzip,application/json" : importKind === "knowledgebase_markdown" ? ".md,.markdown,text/markdown,text/plain" : ".csv,text/csv"} className="sr-only" onChange={(event) => { const selected = event.target.files?.[0]; event.target.value = ""; if (selected) void uploadAndImport(selected).catch(() => {}); }} />
+            <input ref={fileInput} type="file" accept={importKind === "workspace" ? ".gz,.json,application/gzip,application/json" : importKind === "knowledgebase_markdown" ? ".md,.markdown,text/markdown,text/plain" : ".csv,text/csv"} className="sr-only" onChange={(event) => { const selected = event.target.files?.[0]; event.target.value = ""; if (selected) void selectImportFile(selected).catch(error=>setUploadError(error instanceof Error?error.message:"Could not read file.")); }} />
             <Section title="Import file">
               <Card><CardBody className="flex flex-wrap items-center gap-4"><Upload className="size-5 shrink-0 text-fg-muted" /><div className="min-w-0 flex-1"><p className="text-sm text-fg">Choose an import type and file</p><p className="mt-0.5 text-xs text-fg-muted">Workspace archives, customer, company, ticket, and feedback CSVs plus Markdown articles are processed as resumable jobs.</p></div><select aria-label="Import type" value={importKind} onChange={(event) => setImportKind(event.target.value as typeof importKind)} className="rounded-md border border-line bg-inset px-2.5 py-2 text-sm text-fg"><option value="workspace">Workspace archive</option><option value="customers_csv">Customers CSV</option><option value="companies_csv">Companies CSV</option><option value="tickets_csv">Tickets CSV</option><option value="feedback_csv">Feedback CSV</option><option value="knowledgebase_markdown">Knowledge-base Markdown</option></select><Button variant="secondary" size="sm" leading={<Upload />} loading={createImport.isPending} onClick={() => fileInput.current?.click()}>Choose file</Button></CardBody></Card>
-              {Boolean(uploadError) && <p className="mt-2 text-sm text-danger">{errorMessage(uploadError, "The import could not be started.")}</p>}
+              {Boolean(requestUploadError) && <p className="mt-2 text-sm text-danger">{errorMessage(requestUploadError, "The import could not be started.")}</p>}
             </Section>
+            {selectedFile && <Card className="mb-4"><CardBody><p className="mb-3 text-sm font-medium">{selectedFile.name}</p>{headerColumns.length>0 && <div className="mb-4 grid gap-3 sm:grid-cols-2">{headerColumns.map(column=><Field key={column} label={column}><Select value={columnMapping[column]??"__keep"} onValueChange={value=>setColumnMapping(current=>{const next={...current};if(value==="__keep")delete next[column];else next[column]=value;return next;})} options={[{value:"__keep",label:"Keep original column"},{value:"__skip",label:"Ignore column"},...(["external_id","name","email","phone","title","description","inbox_id","board_id","status","priority","domain","tier","language","timezone","verification"].map(value=>({value,label:value})))]}/></Field>)}</div>}{importKind==="customers_csv" && <label className="mb-4 flex gap-2 text-sm"><input type="checkbox" checked={skipDuplicateEmails} onChange={event=>setSkipDuplicateEmails(event.target.checked)}/>Skip matching emails when no external ID is supplied. Existing identities are never merged.</label>}<Button loading={createImport.isPending} onClick={()=>{setUploadError("");void uploadAndImport(selectedFile).then(()=>setSelectedFile(null)).catch(error=>setUploadError(error instanceof Error?error.message:"Upload failed."));}}>Upload and prepare preview</Button>{uploadError && <p role="alert" className="mt-2 text-sm text-danger">{uploadError}</p>}</CardBody></Card>}
+
             <Section title="Import history">
               <Card><CardBody className="p-0">{importsQuery.isLoading ? <p className="px-4 py-6 text-sm text-fg-muted">Loading import jobs…</p> : importsQuery.error ? <div className="space-y-2 px-4 py-6"><p className="text-sm text-danger">Could not load import jobs.</p><Button variant="secondary" size="sm" leading={<RefreshCw />} onClick={importsQuery.refetch}>Retry</Button></div> : importRows.length === 0 ? <p className="px-4 py-6 text-sm text-fg-muted">Uploaded archives will appear here.</p> : <ul className="divide-y divide-line-subtle">{importRows.map((item) => <li key={item.id} className="flex items-center gap-3 px-4 py-3"><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="truncate font-mono text-xs text-fg">{item.id}</span><Badge tone={statusTone(item.state)}>{statusLabel(item.state)}</Badge></div><p className="mt-1 text-xs text-fg-muted">{item.total_rows === undefined ? "Rows pending" : `${item.total_rows.toLocaleString()} rows`} · {item.processed_rows.toLocaleString()} processed · {item.failed_rows.toLocaleString()} failed · created {displayDate(item.created_at)}</p></div>{item.state === "pending" && <Button variant="ghost" size="sm" loading={preview.isPending} onClick={() => { setPreviewID(item.id); setBackupVerified(false); void preview.mutate(item.id).then((result) => setPreviewRows(result.data)).catch(() => {}); }}>Preview</Button>}</li>)}</ul>}</CardBody></Card>
               <Pagination hasPrevious={false} hasNext={importsQuery.hasMore} onPrevious={() => undefined} onNext={() => void importsQuery.fetchNext()} summary={`${importRows.length} import${importRows.length === 1 ? "" : "s"} loaded`} />
               {Boolean(preview.error) && <p className="mt-2 text-sm text-danger">{errorMessage(preview.error, "The archive preview failed.")}</p>}
-              {previewRows && <Card className="mt-3"><CardBody><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-medium text-fg">Preview result</p><p className="mt-1 text-xs text-fg-muted">Existing rows will be skipped by the idempotent importer. New rows are candidates for insertion.</p></div><Button variant="ghost" size="sm" onClick={() => { setPreviewRows(null); setPreviewID(null); }}>Dismiss</Button></div><div className="mt-3 max-h-64 overflow-auto rounded-md border border-line"><table className="w-full text-left text-xs"><thead className="border-b border-line bg-inset text-fg-muted"><tr><th className="px-3 py-2 font-medium">Table</th><th className="px-3 py-2 text-right font-medium">Rows</th><th className="px-3 py-2 text-right font-medium">Existing</th><th className="px-3 py-2 text-right font-medium">New</th></tr></thead><tbody className="divide-y divide-line-subtle">{previewRows.filter((summary) => summary.rows > 0).map((summary) => <tr key={summary.name}><td className="px-3 py-2 font-mono text-fg-secondary">{summary.name}</td><td className="px-3 py-2 text-right tabular text-fg-secondary">{summary.rows.toLocaleString()}</td><td className="px-3 py-2 text-right tabular text-warning-text">{(summary.existing ?? 0).toLocaleString()}</td><td className="px-3 py-2 text-right tabular text-success-text">{(summary.new ?? summary.rows).toLocaleString()}</td></tr>)}</tbody></table></div><label className="mt-4 flex items-start gap-2 text-sm text-fg"><input type="checkbox" checked={backupVerified} onChange={(event) => setBackupVerified(event.target.checked)} className="mt-0.5" /> <span>I verified a current PostgreSQL and file-storage backup and reviewed the conflict preview.</span></label><div className="mt-3 flex justify-end"><Button variant="primary" loading={confirmImport.isPending} disabled={!backupVerified || !previewID} onClick={() => void confirmImport.mutate({ backup_verified: true }).then(() => { setPreviewRows(null); setPreviewID(null); setBackupVerified(false); }).catch(() => {})}>Confirm and import</Button></div>{Boolean(confirmImport.error) && <p className="mt-2 text-sm text-danger">{errorMessage(confirmImport.error, "The import could not be confirmed.")}</p>}</CardBody></Card>}
+              {previewRows && <Card className="mt-3"><CardBody><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-medium text-fg">Preview result</p><p className="mt-1 text-xs text-fg-muted">Existing rows will be skipped by the idempotent importer. New rows are candidates for insertion.</p></div><Button variant="ghost" size="sm" onClick={() => { setPreviewRows(null); setPreviewID(null); }}>Dismiss</Button></div><div className="mt-3 max-h-64 overflow-auto rounded-md border border-line"><table className="w-full text-left text-xs"><thead className="border-b border-line bg-inset text-fg-muted"><tr><th className="px-3 py-2 font-medium">Table</th><th className="px-3 py-2 text-right font-medium">Rows</th><th className="px-3 py-2 text-right font-medium">Existing</th><th className="px-3 py-2 text-right font-medium">New</th><th className="px-3 py-2 text-right font-medium">Potential duplicates</th></tr></thead><tbody className="divide-y divide-line-subtle">{previewRows.filter((summary) => summary.rows > 0).map((summary) => <tr key={summary.name}><td className="px-3 py-2 font-mono text-fg-secondary">{summary.name}</td><td className="px-3 py-2 text-right tabular text-fg-secondary">{summary.rows.toLocaleString()}</td><td className="px-3 py-2 text-right tabular text-warning-text">{(summary.existing ?? 0).toLocaleString()}</td><td className="px-3 py-2 text-right tabular text-success-text">{(summary.new ?? summary.rows).toLocaleString()}</td><td className="px-3 py-2 text-right tabular">{summary.duplicate ?? 0}</td></tr>)}</tbody></table></div><label className="mt-4 flex items-start gap-2 text-sm text-fg"><input type="checkbox" checked={backupVerified} onChange={(event) => setBackupVerified(event.target.checked)} className="mt-0.5" /> <span>I verified a current PostgreSQL and file-storage backup and reviewed the conflict preview.</span></label><div className="mt-3 flex justify-end"><Button variant="primary" loading={confirmImport.isPending} disabled={!backupVerified || !previewID} onClick={() => void confirmImport.mutate({ backup_verified: true }).then(() => { setPreviewRows(null); setPreviewID(null); setBackupVerified(false); }).catch(() => {})}>Confirm and import</Button></div>{Boolean(confirmImport.error) && <p className="mt-2 text-sm text-danger">{errorMessage(confirmImport.error, "The import could not be confirmed.")}</p>}</CardBody></Card>}
             </Section>
           </TabsContent>
 
