@@ -6,6 +6,7 @@ package ids
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"strings"
 
 	"github.com/oklog/ulid/v2"
@@ -24,6 +25,15 @@ func newULID() ulid.ULID {
 // consistently regardless of where they are printed.
 func New(prefix string) string {
 	return prefix + "_" + strings.ToLower(newULID().String())
+}
+
+// Stable returns an opaque deterministic ID for a durable idempotency key.
+// It is not time-sortable; callers must sort these records by created_at.
+func Stable(prefix, key string) string {
+	hash := sha256.Sum256([]byte(prefix + ":" + key))
+	var id ulid.ULID
+	copy(id[:], hash[:16])
+	return prefix + "_" + strings.ToLower(id.String())
 }
 
 // Prefixes used across the schema. Keeping them named here means a module
