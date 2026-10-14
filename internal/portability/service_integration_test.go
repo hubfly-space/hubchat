@@ -391,9 +391,18 @@ func TestSweepExpiredExportsRemovesArchiveAndRetainsAuditRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	files := filemodule.New(pool, store)
+	var payload bytes.Buffer
+	compressed := gzip.NewWriter(&payload)
+	if _, err := compressed.Write([]byte(`{"archive":"fixture"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := compressed.Close(); err != nil {
+		t.Fatal(err)
+	}
+
 	record, err := files.Create(ctx, "wrk_expired_export", filemodule.UploadInput{
-		Name: "expired.json.gz", MIMEType: "application/gzip", SizeBytes: 3,
-		Body: bytes.NewReader([]byte("zip")), OwnerType: "workspace", OwnerID: "wrk_expired_export", UploadedByType: "system",
+		Name: "expired.json.gz", MIMEType: "application/gzip", SizeBytes: int64(payload.Len()),
+		Body: bytes.NewReader(payload.Bytes()), OwnerType: "workspace", OwnerID: "wrk_expired_export", UploadedByType: "system",
 	})
 	if err != nil {
 		t.Fatal(err)
