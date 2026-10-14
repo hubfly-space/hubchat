@@ -1,6 +1,7 @@
 package file
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/hmac"
@@ -104,6 +105,16 @@ func (s *LocalStore) Save(ctx context.Context, upload Upload) (StoredObject, err
 			return StoredObject{}, ErrMimeNotAllowed
 		}
 	}
+
+	reader := bufio.NewReader(upload.Body)
+	header, readErr := reader.Peek(512)
+	if readErr != nil && readErr != io.EOF {
+		return StoredObject{}, readErr
+	}
+	if err := validateUploadContent(upload, header); err != nil {
+		return StoredObject{}, err
+	}
+	upload.Body = reader
 
 	directory := filepath.Join(s.root, upload.WorkspaceID)
 	if err := os.MkdirAll(directory, 0o750); err != nil {
@@ -244,6 +255,10 @@ func (s *S3Store) Save(ctx context.Context, upload Upload) (StoredObject, error)
 	if int64(len(data)) != upload.SizeBytes {
 		return StoredObject{}, ErrSizeMismatch
 	}
+	if err := validateUploadContent(upload, data[:min(len(data), 512)]); err != nil {
+		return StoredObject{}, err
+	}
+
 	hash := sha256.Sum256(data)
 	key := upload.WorkspaceID + "/" + upload.FileID
 	request, err := s.request(ctx, http.MethodPut, key, data, upload.MIMEType, hash)
