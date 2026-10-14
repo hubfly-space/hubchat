@@ -1,3 +1,4 @@
+import { CustomerContextCards } from "./CustomerContextCards";
 import {
   api,
   Avatar,
@@ -154,9 +155,20 @@ function CustomerContext({ customer }: { customer: Customer }) {
     (signal) => api.get(`/customers/${customer.id}/360`, { signal }),
     { refetchInterval: 15_000 },
   );
-  const currentPage = context.data?.current_page;
-  const currentSession = context.data?.sessions[0];
-  const pageJourney = context.data?.page_journey ?? [];
+  // Read every collection through a null-safe local. `context.data?.companies`
+  // looks guarded but only guards `data`: if the server sends
+  // `companies: null` the `.length` still throws, and because this component
+  // is a child of the inbox route that one bad field unmounts the whole inbox
+ // with "Unexpected Application Error". The server now always sends arrays,
+  // but a panel that is three lines from a blank screen should degrade to a
+  // missing section rather than take the route down.
+  const ctx = context.data;
+  const companies = ctx?.companies ?? [];
+  const events = ctx?.events ?? [];
+  const sessions = ctx?.sessions ?? [];
+  const currentPage = ctx?.current_page;
+  const currentSession = sessions[0];
+  const pageJourney = ctx?.page_journey ?? [];
 
   return (
     <div className="flex flex-col">
@@ -265,17 +277,19 @@ function CustomerContext({ customer }: { customer: Customer }) {
         ) : <p className="text-2xs text-fg-muted">No page visits recorded yet.</p>}
       </section>
 
-      {context.data?.companies.length ? <section className="border-b border-line p-4">
+      <CustomerContextCards customer={customer} />
+
+      {companies.length ? <section className="border-b border-line p-4">
         <Eyebrow className="mb-2">Companies</Eyebrow>
         <ul className="space-y-1.5">
-          {context.data.companies.map((company) => <li key={company.id} className="flex items-center justify-between gap-3 text-xs"><span className="truncate text-fg-secondary">{company.name}</span><span className="shrink-0 text-2xs text-fg-muted">{company.tier || company.domain || "—"}</span></li>)}
+          {companies.map((company) => <li key={company.id} className="flex items-center justify-between gap-3 text-xs"><span className="truncate text-fg-secondary">{company.name}</span><span className="shrink-0 text-2xs text-fg-muted">{company.tier || company.domain || "—"}</span></li>)}
         </ul>
       </section> : null}
 
-      {context.data?.events.length ? <section className="border-b border-line p-4">
+      {events.length ? <section className="border-b border-line p-4">
         <Eyebrow className="mb-2">Recent activity</Eyebrow>
         <ul className="space-y-1.5">
-          {context.data.events.slice(0, 8).map((event) => <li key={event.id} className="flex items-baseline justify-between gap-3"><span className="truncate text-xs text-fg-secondary">{humanEventType(event.type)}</span><span className="shrink-0 text-2xs text-fg-muted">{formatRelativeShort(event.occurred_at, new Date())} ago</span></li>)}
+          {events.slice(0, 8).map((event) => <li key={event.id} className="flex items-baseline justify-between gap-3"><span className="truncate text-xs text-fg-secondary">{humanEventType(event.type)}</span><span className="shrink-0 text-2xs text-fg-muted">{formatRelativeShort(event.occurred_at, new Date())} ago</span></li>)}
         </ul>
       </section> : null}
 
