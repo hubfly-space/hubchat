@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/hubchat/hubchat/internal/authorization"
 	"strings"
 	"time"
 
@@ -57,6 +58,12 @@ func (s *Service) LinksPage(ctx context.Context, workspaceID, conversationID str
 		where += " AND (created_at,id)<($3,$4)"
 		args = append(args, before, beforeID)
 	}
+	if ids := authorization.InboxIDs(ctx); ids != nil {
+		args = append(args, ids)
+		parameter := fmt.Sprint(len(args))
+		where += " AND EXISTS(SELECT 1 FROM conversations visible WHERE visible.workspace_id=$1 AND visible.id=source_id AND visible.inbox_id=ANY($" + parameter + "::text[])) AND EXISTS(SELECT 1 FROM conversations visible WHERE visible.workspace_id=$1 AND visible.id=target_id AND visible.inbox_id=ANY($" + parameter + "::text[]))"
+	}
+
 	args = append(args, limit)
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, workspace_id, source_id, target_id, relation, created_by, created_at
