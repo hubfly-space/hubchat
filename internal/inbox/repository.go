@@ -9,17 +9,19 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/database"
 )
 
 var (
-	ErrNotFound         = errors.New("inbox: not found")
-	ErrInvalidName      = errors.New("inbox: name is required")
-	ErrInvalidSlug      = errors.New("inbox: slug is required")
-	ErrSlugTaken        = errors.New("inbox: a workspace inbox already uses this slug")
-	ErrInvalidChannel   = errors.New("inbox: not a recognised channel")
-	ErrLastInbox        = errors.New("inbox: a workspace must keep at least one inbox")
-	ErrHasConversations = errors.New("inbox: this inbox still has conversations; reassign them first")
+	ErrNotFound          = errors.New("inbox: not found")
+	ErrInvalidVisibility = errors.New("inbox: visibility must be workspace or teams")
+	ErrInvalidName       = errors.New("inbox: name is required")
+	ErrInvalidSlug       = errors.New("inbox: slug is required")
+	ErrSlugTaken         = errors.New("inbox: a workspace inbox already uses this slug")
+	ErrInvalidChannel    = errors.New("inbox: not a recognised channel")
+	ErrLastInbox         = errors.New("inbox: a workspace must keep at least one inbox")
+	ErrHasConversations  = errors.New("inbox: this inbox still has conversations; reassign them first")
 )
 
 // validChannels mirrors the CHECK constraint on conversations.channel
@@ -38,6 +40,7 @@ type Inbox struct {
 	Description *string
 	Channels    []string
 	TeamIDs     []string
+	Visibility  string
 	IsDefault   bool
 	SLAPolicyID *string
 	OpenCount   int
@@ -97,10 +100,10 @@ func (r *repository) setTeams(ctx context.Context, tx pgx.Tx, id string, teamIDs
 		return fmt.Errorf("inbox: clear teams: %w", err)
 	}
 	for _, teamID := range teamIDs {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO inbox_teams (inbox_id, team_id) VALUES ($1, $2)
-		`, id, teamID); err != nil {
+		if result, err := tx.Exec(ctx, `INSERT INTO inbox_teams(inbox_id,team_id) SELECT $1,t.id FROM teams t JOIN inboxes i ON i.id=$1 AND i.workspace_id=t.workspace_id WHERE t.id=$2`, id, teamID); err != nil {
 			return fmt.Errorf("inbox: assign team: %w", err)
+		} else if result.RowsAffected() != 1 {
+			return ErrInvalidVisibility
 		}
 	}
 	return nil
@@ -172,7 +175,7 @@ func (r *repository) delete(ctx context.Context, tx pgx.Tx, workspaceID, id stri
 // screen shows.
 const selectInbox = `
 	SELECT i.id, i.workspace_id, i.name, i.slug::text, i.description, i.channels,
-	       i.is_default, i.sla_policy_id, i.created_at,
+	       i.is_default, i.sla_policy_id, i.created_at, i.visibility,
 	       coalesce(array_agg(it.team_id) FILTER (WHERE it.team_id IS NOT NULL), '{}'),
 	       (SELECT count(*) FROM conversations c
 	        WHERE c.inbox_id = i.id AND c.state NOT IN ('closed', 'spam'))
@@ -186,7 +189,7 @@ func scanInbox(row interface {
 	var i Inbox
 	err := row.Scan(
 		&i.ID, &i.WorkspaceID, &i.Name, &i.Slug, &i.Description, &i.Channels,
-		&i.IsDefault, &i.SLAPolicyID, &i.CreatedAt, &i.TeamIDs, &i.OpenCount,
+		&i.IsDefault, &i.SLAPolicyID, &i.CreatedAt, &i.Visibility, &i.TeamIDs, &i.OpenCount,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -202,7 +205,11 @@ func (r *repository) byID(ctx context.Context, workspaceID, id string) (*Inbox, 
 		WHERE i.workspace_id = $1 AND i.id = $2
 		GROUP BY i.id
 	`, workspaceID, id)
-	return scanInbox(row)
+	item, err := scanInbox(row)
+	if err == nil && !authorization.CanSeeInbox(ctx, item.ID) {
+		return nil, ErrNotFound
+	}
+	return item, err
 }
 
 // memberDisplayName resolves a member id to the user's current name, for
@@ -247,8 +254,12 @@ func (r *repository) listPage(ctx context.Context, workspaceID string, beforeDef
 	}
 	where := "i.workspace_id = $1"
 	args := []any{workspaceID}
+	predicate, extra := authorization.InboxPredicate(ctx, "i.id", 2)
+	where += " AND " + predicate
+	args = append(args, extra...)
+
 	if hasCursor {
-		where += " AND (NOT i.is_default, i.name, i.id) > (NOT $2, $3, $4)"
+		where += fmt.Sprintf(" AND (NOT i.is_default,i.name,i.id) > (NOT $%d,$%d,$%d)", len(args)+1, len(args)+2, len(args)+3)
 		args = append(args, beforeDefault, beforeName, beforeID)
 	}
 	args = append(args, limit)
