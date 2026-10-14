@@ -402,6 +402,8 @@ func handlePublicArticleFeedback(deps Deps) http.HandlerFunc {
 
 func writeKnowledgebaseError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, knowledgebase.ErrConflict):
+		httpserver.WriteError(w, r, http.StatusConflict, httpserver.CodeConflict, err.Error())
 	case errors.Is(err, knowledgebase.ErrNotFound):
 		httpserver.WriteError(w, r, http.StatusNotFound, httpserver.CodeNotFound, "Knowledge-base resource not found.")
 	case errors.Is(err, knowledgebase.ErrInvalidName), errors.Is(err, knowledgebase.ErrInvalidSlug), errors.Is(err, knowledgebase.ErrInvalidState), errors.Is(err, knowledgebase.ErrInvalidLanguage), errors.Is(err, knowledgebase.ErrInvalidArticle), errors.Is(err, knowledgebase.ErrInvalidChangelog):
