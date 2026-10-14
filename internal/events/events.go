@@ -192,6 +192,9 @@ func (l *Log) Append(ctx context.Context, tx pgx.Tx, event Event) (*Record, erro
 	if event.Type == "" {
 		return nil, errors.New("events: type is required")
 	}
+	if event.CausationID == "" {
+		event.CausationID = CausationID(ctx)
+	}
 	if event.ActorType == "" {
 		event.ActorType = ActorSystem
 	}
