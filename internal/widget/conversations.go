@@ -12,7 +12,7 @@ var ErrNoInbox = errors.New("widget: this widget has no destination inbox config
 
 // StartConversation opens a new conversation on the visitor's behalf,
 // routed to the widget's configured inbox.
-func (s *Service) StartConversation(ctx context.Context, workspaceID string, w *Widget, visitor *Visitor, body string) (*conversation.Conversation, *conversation.Message, error) {
+func (s *Service) StartConversation(ctx context.Context, workspaceID string, w *Widget, visitor *Visitor, body string, attachments ...conversation.Attachments) (*conversation.Conversation, *conversation.Message, error) {
 	if !w.Enabled {
 		return nil, nil, ErrDisabled
 	}
@@ -21,20 +21,20 @@ func (s *Service) StartConversation(ctx context.Context, workspaceID string, w *
 	}
 	return s.conversation.Start(
 		ctx, workspaceID, *w.InboxID, "widget", nil,
-		visitor.CustomerID, &visitor.ID, s.visitorAuthorName(ctx, workspaceID, visitor), body,
+		visitor.CustomerID, &visitor.ID, s.visitorAuthorName(ctx, workspaceID, visitor), body, attachments...,
 	)
 }
 
 // PostMessage appends a reply from the visitor to an existing conversation,
 // after confirming it is actually theirs — a visitor token authenticates the
 // visitor, not any conversation id they happen to send.
-func (s *Service) PostMessage(ctx context.Context, workspaceID, conversationID string, visitor *Visitor, body string) (*conversation.Message, error) {
+func (s *Service) PostMessage(ctx context.Context, workspaceID, conversationID string, visitor *Visitor, body string, attachments ...conversation.Attachments) (*conversation.Message, error) {
 	if err := s.checkOwnership(ctx, workspaceID, conversationID, visitor); err != nil {
 		return nil, err
 	}
 	return s.conversation.PostMessage(
 		ctx, workspaceID, conversationID, nil, "reply", "customer",
-		visitor.CustomerID, s.visitorAuthorName(ctx, workspaceID, visitor), body,
+		visitor.CustomerID, s.visitorAuthorName(ctx, workspaceID, visitor), body, attachments...,
 	)
 }
 
