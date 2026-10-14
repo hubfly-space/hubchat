@@ -2,6 +2,9 @@ import {
 	ApiError,
 	api,
   EmptyState,
+  Button,
+  Dialog,
+  DialogContent,
   cn,
 	invalidate,
 	idempotencyKey,
@@ -41,6 +44,9 @@ export default function InboxPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { viewer } = useWorkspace();
   const { preferences, setPreference } = useDashboardPreferences();
+  const [narrow,setNarrow]=useState(()=>window.matchMedia("(max-width: 1279px)").matches);
+  const [contextDrawer,setContextDrawer]=useState(false);
+  useEffect(()=>{const media=window.matchMedia("(max-width: 1279px)");const update=()=>setNarrow(media.matches);media.addEventListener("change",update);return()=>media.removeEventListener("change",update);},[]);
   const [showContext, setShowContext] = useState(preferences.showCustomerContext);
 
   useEffect(() => {
@@ -58,10 +64,20 @@ export default function InboxPage() {
     [viewId, viewer.id, inboxes.items, savedViews.items],
   );
 
+  const sortParam = searchParams.get("sort");
+  const sort = sortParam === "oldest" || sortParam === "priority" ? sortParam : "recent";
+  const setSort = (next: "recent" | "oldest" | "priority") => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (next === "recent") nextParams.delete("sort");
+    else nextParams.set("sort", next);
+    setSearchParams(nextParams, { replace: true });
+  };
+
   const list = useInfinite<Conversation>(
-    inboxes.isLoading ? null : ["conversations", filterParams],
+    inboxes.isLoading ? null : ["conversations", filterParams, sort],
     (cursor, signal) => {
       const params = new URLSearchParams(filterParams);
+      params.set("sort", sort);
       if (cursor) params.set("cursor", cursor);
       return api.get<Paginated<Conversation>>(`/conversations?${params.toString()}`, { signal });
     },
@@ -74,14 +90,7 @@ export default function InboxPage() {
   );
   const conversation = active ?? activeDetail.data;
 
-  const sortParam = searchParams.get("sort");
-  const sort = sortParam === "oldest" || sortParam === "priority" ? sortParam : "recent";
-  const setSort = (next: "recent" | "oldest" | "priority") => {
-    const nextParams = new URLSearchParams(searchParams);
-    if (next === "recent") nextParams.delete("sort");
-    else nextParams.set("sort", next);
-    setSearchParams(nextParams, { replace: true });
-  };
+
 
   const customerIds = useMemo(
     () => [...new Set(list.items.map((item) => item.customer_id).filter((id): id is string => !!id))],
@@ -111,6 +120,7 @@ export default function InboxPage() {
     navigate({ pathname: `/inbox/${viewId}`, search: location.search });
   };
   const toggleContext = () => {
+    if(narrow){setContextDrawer(current=>!current);return;}
     setShowContext((current) => {
       const next = !current;
       setPreference("showCustomerContext", next);
@@ -148,8 +158,11 @@ export default function InboxPage() {
 	const bulkResolve = (ids: string[]) => runBulk(ids, "state", { state: "resolved" });
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="relative flex h-full min-h-0 min-w-0 flex-col lg:flex-row">
+      {conversationId && <Button className="m-2 w-fit shrink-0 lg:hidden" variant="secondary" size="sm" onClick={() => navigate({ pathname: `/inbox/${viewId}`, search: location.search })}>Back to inbox</Button>}
+      <div className={cn("h-full min-w-0 w-full shrink-0 lg:w-auto", conversationId && "hidden lg:block")}>
       <ConversationList
+        key={`${viewId}:${sort}`}
         conversations={list.items}
         customersById={customersById}
         activeId={conversation?.id ?? null}
@@ -164,7 +177,11 @@ export default function InboxPage() {
         hasMore={list.hasMore}
         onLoadMore={() => void list.fetchNext()}
         loadingMore={list.isFetching}
+        isLoading={list.isLoading || inboxes.isLoading}
+        error={list.error ?? inboxes.error}
+        onRetry={() => { list.refetch(); inboxes.refetch(); }}
       />
+      </div>
 
       {conversation ? (
         <ConversationPanel
@@ -175,7 +192,7 @@ export default function InboxPage() {
           markReadOnOpen={preferences.markReadOnOpen}
         />
       ) : (
-        <div className="flex flex-1 items-center justify-center bg-canvas">
+        <div className="hidden flex-1 items-center justify-center bg-canvas lg:flex">
           <EmptyState
             icon={MessagesSquare}
             title="Select a conversation"
@@ -195,6 +212,8 @@ export default function InboxPage() {
           <CustomerContextPanel customerId={conversation.customer_id} visitorId={conversation.visitor_id ?? null} />
         </aside>
       )}
+      {narrow && conversation && <Dialog open={contextDrawer} onOpenChange={setContextDrawer}><DialogContent title="Customer context"><div className="max-h-[70vh] overflow-y-auto"><CustomerContextPanel customerId={conversation.customer_id} visitorId={conversation.visitor_id ?? null}/></div></DialogContent></Dialog>}
+
     </div>
   );
 }
