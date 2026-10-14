@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/hubchat/hubchat/internal/authorization"
 	"net/url"
 	"strings"
 	"time"
@@ -203,7 +204,30 @@ func (s *Service) Customer360(ctx context.Context, workspaceID, customerID strin
 		return nil, err
 	}
 
-	result := &Customer360{}
+	// Every list is seeded as an empty slice rather than left nil. A nil slice
+	// marshals to JSON null, and these fields are declared as required arrays
+	// in the OpenAPI schema (web/shared/src/types/generated-api.ts types them
+	// `Company[]`, not `Company[] | null`) — so "no companies" was serialised
+	// as a contract violation, and the dashboard's inbox panel duly did
+	// `data.companies.length` on it and took the whole screen down. A visitor
+	// with no companies is the *common* case, not an edge case, which is why
+	// this showed up on the first real customer rather than in review.
+	//
+	// `make` with length 0 rather than `[]T{}` purely to keep the literal
+	// readable at this width; both are non-nil.
+	result := &Customer360{
+		Companies:     make([]CompanyReference, 0),
+		Conversations: make([]ConversationReference, 0),
+		Tickets:       make([]TicketReference, 0),
+		Events:        make([]EventReference, 0),
+		PageJourney:   make([]PageVisitReference, 0),
+		Sessions:      make([]SessionReference, 0),
+		Feedback:      make([]FeedbackReference, 0),
+		Surveys:       make([]SurveyReference, 0),
+		Articles:      make([]ArticleReference, 0),
+		Identities:    make([]IdentityReference, 0),
+		Merges:        make([]MergeReference, 0),
+	}
 
 	companyRows, err := s.pool.Query(ctx, `
 		SELECT c.id, c.name, c.domain::text, c.tier
@@ -234,13 +258,20 @@ func (s *Service) Customer360(ctx context.Context, workspaceID, customerID strin
 		result.CompaniesTruncated = true
 	}
 
+	conversationPredicate, conversationScopeArgs := authorization.InboxPredicate(ctx, "inbox_id", 4)
+	if actor := authorization.FromContext(ctx); actor != nil && !actor.Can(authorization.ConversationRead) {
+		conversationPredicate = "FALSE"
+		conversationScopeArgs = nil
+	}
+	conversationArgs := append([]any{workspaceID, customerID, customer360QuerySize}, conversationScopeArgs...)
+
 	conversationRows, err := s.pool.Query(ctx, `
 		SELECT id, subject, state, channel, inbox_id, last_message_preview, last_message_at, created_at
 		FROM conversations
-		WHERE workspace_id=$1 AND customer_id=$2
+		WHERE workspace_id=$1 AND customer_id=$2 AND `+conversationPredicate+`
 		ORDER BY last_message_at DESC, id DESC
 		LIMIT $3
-	`, workspaceID, customerID, customer360QuerySize)
+	`, conversationArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("customer: load 360 conversations: %w", err)
 	}
@@ -250,7 +281,9 @@ func (s *Service) Customer360(ctx context.Context, workspaceID, customerID strin
 			conversationRows.Close()
 			return nil, fmt.Errorf("customer: scan 360 conversation: %w", err)
 		}
-		result.Conversations = append(result.Conversations, item)
+		if authorization.CanSeeInbox(ctx, item.InboxID) {
+			result.Conversations = append(result.Conversations, item)
+		}
 	}
 	if err := conversationRows.Err(); err != nil {
 		conversationRows.Close()
@@ -262,13 +295,19 @@ func (s *Service) Customer360(ctx context.Context, workspaceID, customerID strin
 		result.ConversationsTruncated = true
 	}
 
+	ticketPredicate, ticketScopeArgs := authorization.InboxPredicate(ctx, "inbox_id", 4)
+	if actor := authorization.FromContext(ctx); actor != nil && !actor.Can(authorization.TicketManage) {
+		ticketPredicate = "FALSE"
+		ticketScopeArgs = nil
+	}
+	ticketArgs := append([]any{workspaceID, customerID, customer360QuerySize}, ticketScopeArgs...)
 	ticketRows, err := s.pool.Query(ctx, `
 		SELECT id, number, prefix, title, status, priority, conversation_id, updated_at, created_at
 		FROM tickets
-		WHERE workspace_id=$1 AND customer_id=$2
+		WHERE workspace_id=$1 AND customer_id=$2 AND `+ticketPredicate+`
 		ORDER BY updated_at DESC, id DESC
 		LIMIT $3
-	`, workspaceID, customerID, customer360QuerySize)
+	`, ticketArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("customer: load 360 tickets: %w", err)
 	}
