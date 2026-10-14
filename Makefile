@@ -159,6 +159,12 @@ openapi-check: ## Validate the checked-in public API contract
 widget-sdk-check: ## Validate the public widget SDK command and event contract
 	node scripts/check-widget-sdk.mjs
 
+# Browser harnesses are deliberately opt-in rather than part of `check`: they
+# need a local Chrome, which CI images do not all provide.
+.PHONY: widget-send-recovery-check
+widget-send-recovery-check: ## Prove the visitor widget recovers when the server refuses its thread
+	node scripts/check-widget-send-recovery.mjs
+
 # Deliberately a separate variable from HUBCHAT_DATABASE_URL: these tests
 # truncate tenant data, so pointing them at a database has to be a choice
 # rather than something a stray export does for you.
