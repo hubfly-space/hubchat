@@ -70,8 +70,8 @@ matters. See [security.md](security.md).
 
 | Bundle | Initial JS (gzip) | Enforced by |
 |---|---|---|
-| Widget loader | ~5 KB | Hand-written, no framework |
-| Widget interface | < 70 KB | `chunkSizeWarningLimit` |
+| Widget SDK loader | < 15 KiB | `check-bundle-budgets.mjs` |
+| Widget interface, all static JS dependencies | < 70 KiB | `check-bundle-budgets.mjs` |
 | Portal entry | < 30 KB | Route splitting + `chunkSizeWarningLimit` |
 | Dashboard entry | < 60 KB | Route splitting |
 
@@ -170,3 +170,9 @@ reject wall-clock values skipped by daylight-saving transitions.
 - [ ] No hard-coded colours
 - [ ] No new dependency without a note on why
 - [ ] Bundle budgets still met
+
+The widget uses Preact's React compatibility layer through explicit build aliases.
+Its optional Markdown renderer loads only when an article opens. The gzip gate
+counts every statically imported widget module, rather than just the entry file.
+`pnpm test:frontend` covers cache scoping, cancellation, pagination, Markdown
+safety, and import headers; the release browser journey covers actual rendering.
