@@ -119,7 +119,7 @@ export async function request<T>(
   const resolvedOptions = withDashboardWorkspace(options);
   const key = `${method} ${resolvedOptions.workspaceId ?? ""} ${path} ${body === undefined ? "" : JSON.stringify(body)}`;
 
-  const shareable = method === "GET" && !options.fresh;
+  const shareable = method === "GET" && !options.fresh && !options.signal;
   if (shareable) {
     const existing = inFlight.get(key) as Promise<T> | undefined;
     if (existing) return existing;
@@ -131,9 +131,8 @@ export async function request<T>(
     inFlight.set(key, promise);
     // Clear on settle either way: a failed request must not poison the slot
     // for the retry that follows it.
-    promise.finally(() => {
-      if (inFlight.get(key) === promise) inFlight.delete(key);
-    });
+    const cleanup = () => { if (inFlight.get(key) === promise) inFlight.delete(key); };
+    void promise.then(cleanup, cleanup);
   }
 
   return promise;
