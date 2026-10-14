@@ -664,6 +664,7 @@ type widgetIdentifyRequest struct {
 	widgetVisitorRequest
 	Name        *string        `json:"name"`
 	Email       *string        `json:"email"`
+	Phone       *string        `json:"phone"`
 	ExternalID  *string        `json:"external_id"`
 	SignedToken *string        `json:"signed_token"`
 	Attributes  map[string]any `json:"attributes"`
@@ -682,14 +683,15 @@ func handleWidgetIdentify(deps Deps) http.HandlerFunc {
 			return
 		}
 		cust, err := deps.Widget.Identify(r.Context(), workspaceID, visitor, widget.IdentifyInput{
-			Name: req.Name, Email: req.Email, ExternalID: req.ExternalID, SignedToken: req.SignedToken, Attributes: req.Attributes,
+			Name: req.Name, Email: req.Email, Phone: req.Phone, ExternalID: req.ExternalID,
+			SignedToken: req.SignedToken, Attributes: req.Attributes,
 		})
 		if err != nil {
 			writeWidgetError(w, r, err)
 			return
 		}
 		httpserver.WriteJSON(w, http.StatusOK, map[string]any{
-			"customer": map[string]any{"id": cust.ID, "name": cust.Name, "email": cust.Email},
+			"customer": map[string]any{"id": cust.ID, "name": cust.Name, "email": cust.Email, "phone": cust.Phone},
 		})
 	}
 }
@@ -1128,23 +1130,21 @@ func handleWidgetPostMessage(deps Deps) http.HandlerFunc {
 
 		workspaceID, visitor, err := resolveVisitorRequest(r, deps, req.widgetVisitorRequest)
 		if err != nil {
-			writeWidgetError(w, r, err)
+			if errors.Is(err, file.ErrInvalidAttachment) {
+				writeMessageAttachmentError(w, r, err)
+			} else {
+				writeWidgetError(w, r, err)
+			}
 			return
 		}
-		msg, err := deps.Widget.PostMessage(r.Context(), workspaceID, r.PathValue("id"), visitor, req.Body)
+		msg, err := deps.Widget.PostMessage(r.Context(), workspaceID, r.PathValue("id"), visitor, req.Body, conversation.Attachments{IDs: req.FileIDs, Store: deps.File})
 		if err != nil {
-			writeWidgetError(w, r, err)
+			if errors.Is(err, file.ErrInvalidAttachment) {
+				writeMessageAttachmentError(w, r, err)
+			} else {
+				writeWidgetError(w, r, err)
+			}
 			return
-		}
-		if deps.File != nil && len(req.FileIDs) > 0 {
-			if !widgetMessageBelongsToConversation(r, deps, workspaceID, msg.ID, r.PathValue("id")) {
-				httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, "The message attachment target is invalid.")
-				return
-			}
-			if err := deps.File.AttachToMessage(r.Context(), workspaceID, msg.ID, req.FileIDs); err != nil {
-				httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, "One or more attachments are not available.")
-				return
-			}
 		}
 		httpserver.WriteJSON(w, http.StatusCreated, widgetMessageJSONWithAttachments(r, deps, workspaceID, *msg))
 	}
