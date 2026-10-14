@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/hubchat/hubchat/internal/conversation"
@@ -15,6 +14,7 @@ import (
 	"github.com/hubchat/hubchat/internal/events"
 	"github.com/hubchat/hubchat/internal/ids"
 	"github.com/hubchat/hubchat/internal/jobs"
+	"github.com/hubchat/hubchat/internal/notification"
 	"github.com/hubchat/hubchat/internal/sla"
 	"github.com/hubchat/hubchat/internal/task"
 	"github.com/hubchat/hubchat/internal/ticket"
@@ -38,16 +38,15 @@ var actions = map[string]bool{"assign_member": true, "assign_team": true, "add_t
 const JobRunScheduled = "automation.scheduled_actions"
 
 type Service struct {
-	pool         *database.Pool
-	conversation *conversation.Service
-	ticket       *ticket.Service
-	jobs         *jobs.Client
-	sla          *sla.Service
-	tasks        *task.Service
-	webhook      *webhook.Service
-	maxDepth     int
-	seenMu       sync.Mutex
-	seen         map[string]int64
+	pool          *database.Pool
+	conversation  *conversation.Service
+	ticket        *ticket.Service
+	jobs          *jobs.Client
+	sla           *sla.Service
+	tasks         *task.Service
+	webhook       *webhook.Service
+	maxDepth      int
+	notifications *notification.Service
 }
 
 // Options contains the domain adapters used by live rule execution. The
@@ -60,6 +59,7 @@ type Options struct {
 	SLA          *sla.Service
 	Tasks        *task.Service
 	Webhook      *webhook.Service
+	Notification *notification.Service
 }
 type Action struct {
 	ID     string         `json:"id"`
@@ -117,7 +117,7 @@ func New(pool *database.Pool, options ...Options) *Service {
 	if len(options) > 0 {
 		opts = options[0]
 	}
-	return &Service{pool: pool, conversation: opts.Conversation, ticket: opts.Ticket, jobs: opts.Jobs, sla: opts.SLA, tasks: opts.Tasks, webhook: opts.Webhook, maxDepth: 8, seen: make(map[string]int64)}
+	return &Service{pool: pool, conversation: opts.Conversation, ticket: opts.Ticket, jobs: opts.Jobs, sla: opts.SLA, tasks: opts.Tasks, webhook: opts.Webhook, notifications: opts.Notification, maxDepth: 8}
 }
 func (s *Service) Create(ctx context.Context, workspaceID, memberID string, input Input) (*Rule, error) {
 	if strings.TrimSpace(input.Name) == "" {
@@ -209,88 +209,19 @@ func (s *Service) Update(ctx context.Context, workspaceID, memberID, id string, 
 	return s.Get(ctx, workspaceID, id)
 }
 func (s *Service) Execute(ctx context.Context, workspaceID, ruleID, eventID, subjectType, subjectID, causationID string, depth int, dryRun bool) (*Execution, error) {
-	return s.execute(ctx, workspaceID, ruleID, eventID, subjectType, subjectID, causationID, depth, dryRun, nil)
+	return s.executeWithActor(ctx, workspaceID, ruleID, eventID, subjectType, subjectID, causationID, depth, dryRun, nil, "")
 }
 
 func (s *Service) execute(ctx context.Context, workspaceID, ruleID, eventID, subjectType, subjectID, causationID string, depth int, dryRun bool, subject map[string]any) (*Execution, error) {
-	started := time.Now()
-	rule, err := s.Get(ctx, workspaceID, ruleID)
-	if err != nil {
-		return nil, err
-	}
-	if depth > s.maxDepth {
-		return s.recordExecution(ctx, workspaceID, rule, eventID, subjectType, subjectID, causationID, depth, "depth_exceeded", nil, ErrDepthExceeded, dryRun, started)
-	}
-	if !dryRun && rule.MaxRunsPerHour != nil {
-		var count int
-		if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM automation_executions WHERE workspace_id=$1 AND rule_id=$2 AND outcome='matched' AND dry_run=false AND occurred_at>now()-interval '1 hour'`, workspaceID, ruleID).Scan(&count); err != nil {
-			return nil, err
-		}
-		if count >= *rule.MaxRunsPerHour {
-			return s.recordExecution(ctx, workspaceID, rule, eventID, subjectType, subjectID, causationID, depth, "rate_limited", nil, ErrRateLimited, dryRun, started)
-		}
-	}
-	matched := matchesData(rule.Conditions, subject)
-	if !matched {
-		return s.recordExecution(ctx, workspaceID, rule, eventID, subjectType, subjectID, causationID, depth, "skipped", nil, nil, dryRun, started)
-	}
-	if dryRun {
-		return s.recordExecution(ctx, workspaceID, rule, eventID, subjectType, subjectID, causationID, depth, "matched", rule.Actions, nil, true, started)
-	}
-	applied, actionErr := s.applyActions(ctx, workspaceID, subjectType, subjectID, rule.Actions, "")
-	if actionErr != nil {
-		return s.recordExecution(ctx, workspaceID, rule, eventID, subjectType, subjectID, causationID, depth, "failed", applied, actionErr, false, started)
-	}
-	return s.recordExecution(ctx, workspaceID, rule, eventID, subjectType, subjectID, causationID, depth, "matched", applied, nil, false, started)
+	return s.executeWithActor(ctx, workspaceID, ruleID, eventID, subjectType, subjectID, causationID, depth, dryRun, subject, "")
 }
 
-// RunEventConsumer evaluates enabled rules from committed events. It starts
-// at the first signal it sees so a deployment does not replay the whole event
-// history, then drains every sequence gap. Execution rows are the durable
-// acknowledgement; a restart can safely evaluate an event again because rate
-// limits and action adapters are expected to be idempotent.
+// RunEventConsumer resumes durable checkpoints and reconciles missed signals.
+// Domain effects are replay-safe; checkpoints advance after successful commits.
 func (s *Service) RunEventConsumer(ctx context.Context, signals <-chan events.Signal, source interface {
 	Since(context.Context, string, int64, int) ([]events.Record, error)
 }) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case signal, ok := <-signals:
-			if !ok {
-				return
-			}
-			s.seenMu.Lock()
-			after, exists := s.seen[signal.WorkspaceID]
-			if !exists {
-				after = signal.Sequence - 1
-			}
-			s.seenMu.Unlock()
-			for {
-				records, err := source.Since(ctx, signal.WorkspaceID, after, 200)
-				if err != nil || len(records) == 0 {
-					break
-				}
-				failed := false
-				for _, record := range records {
-					if err := s.processEvent(ctx, record); err != nil {
-						failed = true
-						break
-					}
-					after = record.Sequence
-				}
-				if failed {
-					break
-				}
-				s.seenMu.Lock()
-				s.seen[signal.WorkspaceID] = after
-				s.seenMu.Unlock()
-				if len(records) < 200 {
-					break
-				}
-			}
-		}
-	}
+	events.Consume(ctx, s.pool, "automation", signals, source, s.processEvent)
 }
 
 func (s *Service) processEvent(ctx context.Context, record events.Record) error {
@@ -308,6 +239,12 @@ func (s *Service) processEvent(ctx context.Context, record events.Record) error 
 	subject["event.type"] = string(record.Type)
 	subject["event.entity_type"] = record.EntityType
 	subject["event.entity_id"] = record.EntityID
+	if record.Type == events.MessageCreated {
+		if author, _ := subject["author_type"].(string); author != "customer" {
+			return nil
+		}
+	}
+
 	rules, err := s.List(ctx, record.WorkspaceID)
 	if err != nil {
 		return err
@@ -318,16 +255,32 @@ func (s *Service) processEvent(ctx context.Context, record events.Record) error 
 		}
 		depth := 0
 		if record.CausationID != "" {
-			depth = 1
+			if err := s.pool.QueryRow(ctx, `WITH RECURSIVE chain AS (SELECT id,causation_id,1 AS depth FROM workspace_events WHERE workspace_id=$1 AND id=$2 UNION ALL SELECT e.id,e.causation_id,c.depth+1 FROM workspace_events e JOIN chain c ON e.id=c.causation_id WHERE e.workspace_id=$1 AND c.depth<10) SELECT coalesce(max(depth),0) FROM chain`, record.WorkspaceID, record.CausationID).Scan(&depth); err != nil {
+				return err
+			}
 		}
-		if _, err := s.executeWithActor(ctx, record.WorkspaceID, rule.ID, record.ID, record.EntityType, record.EntityID, record.CausationID, depth, false, subject, record.ActorID); err != nil {
+		result, err := s.executeWithActor(ctx, record.WorkspaceID, rule.ID, record.ID, record.EntityType, record.EntityID, record.CausationID, depth, false, subject, record.ActorID)
+		if err != nil {
 			return err
+		}
+		if result.Outcome == "failed" {
+			return errors.New(result.Error)
 		}
 	}
 	return nil
 }
 
 func (s *Service) executeWithActor(ctx context.Context, workspaceID, ruleID, eventID, subjectType, subjectID, causationID string, depth int, dryRun bool, subject map[string]any, actorID string) (*Execution, error) {
+	if eventID != "" && !dryRun {
+		var completed bool
+		if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM automation_executions WHERE workspace_id=$1 AND rule_id=$2 AND event_id=$3 AND dry_run=false AND outcome<>'failed')`, workspaceID, ruleID, eventID).Scan(&completed); err != nil {
+			return nil, err
+		}
+		if completed {
+			return &Execution{Outcome: "already_processed"}, nil
+		}
+	}
+
 	started := time.Now()
 	rule, err := s.Get(ctx, workspaceID, ruleID)
 	if err != nil {
@@ -351,7 +304,8 @@ func (s *Service) executeWithActor(ctx context.Context, workspaceID, ruleID, eve
 	if dryRun {
 		return s.recordExecution(ctx, workspaceID, rule, eventID, subjectType, subjectID, causationID, depth, "matched", rule.Actions, nil, true, started)
 	}
-	applied, actionErr := s.applyActions(ctx, workspaceID, subjectType, subjectID, rule.Actions, actorID)
+	ctx = events.WithCausation(ctx, eventID)
+	applied, actionErr := s.applyActions(ctx, workspaceID, subjectType, subjectID, rule.Actions, actorID, eventID+":"+ruleID)
 	if actionErr != nil {
 		return s.recordExecution(ctx, workspaceID, rule, eventID, subjectType, subjectID, causationID, depth, "failed", applied, actionErr, false, started)
 	}
@@ -365,9 +319,23 @@ type automationEmailPayload struct {
 	Body        string `json:"body"`
 }
 
-func (s *Service) applyActions(ctx context.Context, workspaceID, subjectType, subjectID string, values []Action, actorID string) ([]Action, error) {
+func (s *Service) applyActions(ctx context.Context, workspaceID, subjectType, subjectID string, values []Action, actorID string, executionKeys ...string) ([]Action, error) {
 	applied := make([]Action, 0, len(values))
-	for _, action := range values {
+	for index, action := range values {
+		actionCtx := ctx
+		key := ""
+		if len(executionKeys) > 0 && !strings.HasPrefix(executionKeys[0], ":") {
+			key = "automation:" + executionKeys[0] + ":" + fmt.Sprint(index)
+			var completed bool
+			if err := s.pool.QueryRow(actionCtx, `SELECT EXISTS(SELECT 1 FROM automation_action_receipts WHERE workspace_id=$1 AND action_key=$2)`, workspaceID, key).Scan(&completed); err != nil {
+				return applied, err
+			}
+			if completed {
+				applied = append(applied, action)
+				continue
+			}
+			actionCtx = events.WithActionKey(actionCtx, key)
+		}
 		params := action.Params
 		if params == nil {
 			params = map[string]any{}
@@ -378,37 +346,37 @@ func (s *Service) applyActions(ctx context.Context, workspaceID, subjectType, su
 			var member string
 			member, err = requiredString(params, "member_id", "assignee_id")
 			if err == nil {
-				err = s.applyAssignee(ctx, workspaceID, actorID, subjectType, subjectID, member)
+				err = s.applyAssignee(actionCtx, workspaceID, actorID, subjectType, subjectID, member)
 			}
 		case "assign_team":
 			var team string
 			team, err = requiredString(params, "team_id")
 			if err == nil {
-				err = s.applyTeam(ctx, workspaceID, actorID, subjectType, subjectID, team)
+				err = s.applyTeam(actionCtx, workspaceID, actorID, subjectType, subjectID, team)
 			}
 		case "move_inbox":
 			var inboxID string
 			inboxID, err = requiredString(params, "inbox_id")
 			if err == nil {
-				err = s.applyInbox(ctx, workspaceID, actorID, subjectType, subjectID, inboxID)
+				err = s.applyInbox(actionCtx, workspaceID, actorID, subjectType, subjectID, inboxID)
 			}
 		case "set_priority":
 			var priority string
 			priority, err = requiredString(params, "priority")
 			if err == nil {
-				err = s.applyPriority(ctx, workspaceID, actorID, subjectType, subjectID, priority)
+				err = s.applyPriority(actionCtx, workspaceID, actorID, subjectType, subjectID, priority)
 			}
 		case "set_state":
 			var state string
 			state, err = requiredString(params, "state", "status")
 			if err == nil {
-				err = s.applyState(ctx, workspaceID, actorID, subjectType, subjectID, state)
+				err = s.applyState(actionCtx, workspaceID, actorID, subjectType, subjectID, state)
 			}
 		case "add_tag", "remove_tag":
 			var tagID string
 			tagID, err = requiredString(params, "tag_id")
 			if err == nil {
-				err = s.applyTag(ctx, workspaceID, actorID, subjectType, subjectID, tagID, action.Type == "add_tag")
+				err = s.applyTag(actionCtx, workspaceID, actorID, subjectType, subjectID, tagID, action.Type == "add_tag")
 			}
 		case "set_field":
 			key, keyErr := requiredString(params, "key", "field")
@@ -417,7 +385,7 @@ func (s *Service) applyActions(ctx context.Context, workspaceID, subjectType, su
 			} else if s.ticket == nil || subjectType != "ticket" {
 				err = errors.New("automation: set_field requires a ticket subject")
 			} else {
-				err = s.ticket.SetFieldValue(ctx, workspaceID, "ticket", subjectID, key, params["value"])
+				err = s.ticket.SetFieldValue(actionCtx, workspaceID, "ticket", subjectID, key, params["value"])
 			}
 		case "send_message":
 			body, bodyErr := requiredString(params, "body", "message")
@@ -430,25 +398,30 @@ func (s *Service) applyActions(ctx context.Context, workspaceID, subjectType, su
 				if actorID != "" {
 					authorID = &actorID
 				}
-				_, err = s.conversation.PostMessage(ctx, workspaceID, subjectID, nil, "reply", "automation", authorID, "Automation", body)
+				_, err = s.conversation.PostMessage(actionCtx, workspaceID, subjectID, optionalString(key), "reply", "automation", authorID, "Automation", body)
 			}
 		case "send_email":
-			err = s.queueEmail(ctx, workspaceID, params)
+			err = s.queueEmail(actionCtx, workspaceID, params)
 		case "invoke_webhook":
-			err = s.invokeWebhook(ctx, workspaceID, params)
+			err = s.invokeWebhook(actionCtx, workspaceID, params)
 		case "start_sla":
-			err = s.startSLA(ctx, workspaceID, subjectType, subjectID)
+			err = s.startSLA(actionCtx, workspaceID, subjectType, subjectID)
 		case "pause_sla":
-			err = s.pauseSLA(ctx, workspaceID, subjectType, subjectID, params)
+			err = s.pauseSLA(actionCtx, workspaceID, subjectType, subjectID, params)
 		case "close_after_inactivity":
-			err = s.scheduleClose(ctx, workspaceID, subjectType, subjectID, actorID, params)
+			err = s.scheduleClose(actionCtx, workspaceID, subjectType, subjectID, actorID, params)
 		case "create_task":
-			err = s.createTask(ctx, workspaceID, subjectType, subjectID, actorID, params)
+			err = s.createTask(actionCtx, workspaceID, subjectType, subjectID, actorID, params)
 		default:
 			err = fmt.Errorf("automation: action %q is not executable", action.Type)
 		}
 		if err != nil {
 			return applied, err
+		}
+		if key != "" {
+			if _, err := s.pool.Exec(ctx, `INSERT INTO automation_action_receipts(workspace_id,action_key) VALUES($1,$2) ON CONFLICT DO NOTHING`, workspaceID, key); err != nil {
+				return applied, err
+			}
 		}
 		applied = append(applied, action)
 	}
@@ -547,8 +520,13 @@ func (s *Service) queueEmail(ctx context.Context, workspaceID string, params map
 	if err != nil {
 		return err
 	}
-	_, err = s.jobs.Enqueue(ctx, jobs.Spec{WorkspaceID: workspaceID, Queue: "email", Type: "email.send", Payload: automationEmailPayload{WorkspaceID: workspaceID, To: to, Subject: subject, Body: body}})
-	return err
+	return database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		_, err := jobs.EnqueueTx(ctx, tx, jobs.Spec{WorkspaceID: workspaceID, Queue: "email", Type: "email.send", Payload: automationEmailPayload{WorkspaceID: workspaceID, To: to, Subject: subject, Body: body}, DedupeKey: events.ActionKey(ctx)})
+		if err != nil && !errors.Is(err, jobs.ErrDuplicate) {
+			return err
+		}
+		return events.CompleteActionTx(ctx, tx, workspaceID)
+	})
 }
 
 func (s *Service) invokeWebhook(ctx context.Context, workspaceID string, params map[string]any) error {
@@ -621,8 +599,17 @@ func (s *Service) scheduleClose(ctx context.Context, workspaceID, subjectType, s
 	if minutes <= 0 {
 		return errors.New("automation: close_after_inactivity requires positive after_minutes")
 	}
-	_, err := s.pool.Exec(ctx, `INSERT INTO scheduled_actions(id,workspace_id,kind,subject_type,subject_id,payload,scheduled_for,created_by) VALUES($1,$2,'close_after_inactivity',$3,$4,$5::jsonb,now()+make_interval(mins=>$6),NULLIF($7,''))`, ids.New(ids.PrefixScheduledAction), workspaceID, subjectType, subjectID, `{"inactive_minutes":`+fmt.Sprint(minutes)+`}`, minutes, actorID)
-	return err
+	id := ids.New(ids.PrefixScheduledAction)
+	if key := events.ActionKey(ctx); key != "" {
+		id = ids.Stable(ids.PrefixScheduledAction, key)
+	}
+	return database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO scheduled_actions(id,workspace_id,kind,subject_type,subject_id,payload,scheduled_for,created_by) VALUES($1,$2,'close_after_inactivity',$3,$4,$5::jsonb,now()+make_interval(mins=>$6),NULLIF($7,'')) ON CONFLICT (id) DO NOTHING`, id, workspaceID, subjectType, subjectID, `{"inactive_minutes":`+fmt.Sprint(minutes)+`}`, minutes, actorID)
+		if err != nil {
+			return err
+		}
+		return events.CompleteActionTx(ctx, tx, workspaceID)
+	})
 }
 
 // RunScheduledActions claims due domain actions atomically, then applies them
@@ -630,7 +617,7 @@ func (s *Service) scheduleClose(ctx context.Context, workspaceID, subjectType, s
 // from closing the same subject; a failed action is made visible and does not
 // disappear into an unbounded retry loop.
 func (s *Service) RunScheduledActions(ctx context.Context) (executed, failed int, err error) {
-	rows, err := s.pool.Query(ctx, `SELECT id,workspace_id,kind,subject_type,subject_id,payload,coalesce(created_by,'') FROM scheduled_actions WHERE state='pending' AND scheduled_for<=now() ORDER BY scheduled_for,id LIMIT 100`)
+	rows, err := s.pool.Query(ctx, `SELECT id,workspace_id,kind,subject_type,subject_id,payload,coalesce(created_by,'') FROM scheduled_actions WHERE (state='pending' AND scheduled_for<=now()) OR (state='running' AND lease_until<now()) ORDER BY scheduled_for,id LIMIT 100`)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -652,15 +639,18 @@ func (s *Service) RunScheduledActions(ctx context.Context) (executed, failed int
 	}
 	for _, item := range items {
 		var claimed bool
-		if err := s.pool.QueryRow(ctx, `UPDATE scheduled_actions SET state='executed',executed_at=now() WHERE id=$1 AND state='pending' RETURNING true`, item.id).Scan(&claimed); errors.Is(err, pgx.ErrNoRows) {
+		if err := s.pool.QueryRow(ctx, `UPDATE scheduled_actions SET state='running',lease_until=now()+interval '5 minutes',attempts=attempts+1 WHERE id=$1 AND ((state='pending' AND scheduled_for<=now()) OR (state='running' AND lease_until<now())) RETURNING true`, item.id).Scan(&claimed); errors.Is(err, pgx.ErrNoRows) {
 			continue
 		} else if err != nil {
 			return executed, failed, err
 		}
 		if err := s.executeScheduled(ctx, item); err != nil {
 			failed++
-			_, _ = s.pool.Exec(ctx, `UPDATE scheduled_actions SET state='failed' WHERE id=$1`, item.id)
+			_, _ = s.pool.Exec(ctx, `UPDATE scheduled_actions SET state=CASE WHEN attempts>=5 THEN 'failed' ELSE 'pending' END,lease_until=NULL,scheduled_for=now()+interval '1 minute' WHERE id=$1 AND state='running'`, item.id)
 			continue
+		}
+		if _, err := s.pool.Exec(ctx, `UPDATE scheduled_actions SET state='executed',executed_at=now(),lease_until=NULL WHERE id=$1 AND state='running'`, item.id); err != nil {
+			return executed, failed, err
 		}
 		executed++
 	}
@@ -671,6 +661,19 @@ func (s *Service) executeScheduled(ctx context.Context, item struct {
 	id, workspaceID, kind, subjectType, subjectID, createdBy string
 	payload                                                  []byte
 }) error {
+	if item.kind == "follow_up" {
+		if s.notifications == nil {
+			return errors.New("automation: notification service unavailable")
+		}
+		var payload struct {
+			Body string `json:"body"`
+		}
+		if err := json.Unmarshal(item.payload, &payload); err != nil {
+			return err
+		}
+		return s.notifications.NotifyFollowUp(ctx, item.workspaceID, item.createdBy, item.subjectID, payload.Body, item.id)
+	}
+
 	if item.kind != "close_after_inactivity" || item.subjectType != "conversation" || s.conversation == nil {
 		return fmt.Errorf("automation: scheduled action %q is not executable", item.kind)
 	}
@@ -961,4 +964,11 @@ func compareCondition(actual any, exists bool, operator string, expected any) bo
 	default:
 		return false
 	}
+}
+
+func optionalString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
