@@ -110,7 +110,7 @@ conversation history, which is unrecoverable once it has happened.
 
 | Secret | At rest |
 |---|---|
-| Passwords | Argon2id |
+| Passwords | bcrypt, cost 12 |
 | Session tokens | SHA-256 hash only |
 | API keys | Hash only; full key shown once, at creation |
 | Webhook signing secrets | Encrypted with the deployment key |
@@ -120,8 +120,9 @@ conversation history, which is unrecoverable once it has happened.
 - **Never logged.** Not at debug level, not in a panic, not in an error message.
 - `config check` and `doctor` print the **redacted** configuration, because that
   output gets pasted into issue reports.
-- Rotation is supported for API keys and webhook secrets, with an overlap window
-  so a rotation does not drop events mid-deploy.
+- API keys can be replaced and revoked. Webhook secret rotation replaces the
+  previous secret immediately; update the receiver during a coordinated rotation.
+  There is no automatic overlap window.
 
 ## 6. Web security
 
@@ -179,3 +180,41 @@ immediately and dropped from the index on the next rebuild.
 Do not open a public issue. Email `security@hubchat.dev` with reproduction
 steps. We acknowledge within 72 hours and aim to ship a fix or a mitigation
 within 14 days for anything that crosses a tenant boundary.
+
+## Runtime policy and inbox visibility
+
+Agent WebSockets use the session, membership, conversation-read, and workspace
+SSO checks used by REST. Delivery and replay recheck access. A revoked session,
+membership, or conversation-read grant closes the connection. Events from other
+domains require the corresponding capability; basic customer readers receive
+invalidation records instead of raw customer event payloads.
+
+Inboxes default to workspace visibility. `teams` visibility grants operational
+conversation/ticket access to the assigned teams and workspace administrators.
+Lists, counts, searches, parent subresources, customer history references,
+attachments, and realtime delivery enforce this scope. Customer profiles are
+workspace-shared and keep their separate sensitive-data capabilities. Workspace
+aggregate reports require `report.read`; the drilldown endpoint computes visible
+conversation cohorts.
+
+Webhook delivery checks resolved IPs and dials the checked address. Redirects
+are rejected. Loopback, private, link-local, and other restricted destinations
+require an exact deployment allowlist via `HUBCHAT_WEBHOOK_PRIVATE_HOSTS`; a
+workspace member cannot change this policy. No wildcard exception is supported.
+
+Web Push subscriptions are opt-in, cookie-session owned, encrypted with a key
+derived from `HUBCHAT_SECRET_KEY`, and isolated by workspace and member. Delivery
+rechecks recipient access. Push payloads contain a generic alert and an internal
+navigation URL; notification text remains in the authenticated dashboard.
+
+Uploads validate signatures for recognized binary formats and reject mismatched
+extensions or declared image/binary types. Text attachments remain supported and
+are served with attachment disposition and `nosniff`. No malware scanner is
+included. SMTP `starttls` fails if TLS is unavailable; use `none` explicitly for
+a deliberately trusted plaintext relay. Theme initialization uses an external
+script, allowing dashboard/portal CSP to remove inline script permission.
+
+The workspace-wide 2FA, IP/domain restriction, and visitor tracking/consent
+settings identified in the review still require separate enforcement work.
+`require_sso` is enforced. Saving the other settings does not establish that
+those protections are active.
