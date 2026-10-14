@@ -1,4 +1,4 @@
-import { api, useDashboardPreferences, useHotkey, useQuery, type Paginated, type Conversation } from "@hubchat/shared";
+import { Button, Dialog, DialogContent, api, useDashboardPreferences, useHotkey, useQuery, type Paginated, type Conversation } from "@hubchat/shared";
 import { useEffect, useRef, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useWorkspace } from "../workspace-context";
@@ -20,6 +20,7 @@ import { sectionForPath } from "./nav-config";
  * app-wide hotkeys. It never knows what a page contains.
  */
 export function AppShell() {
+  const [mobileNav,setMobileNav]=useState(false);
   const { pathname } = useLocation();
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -48,17 +49,15 @@ export function AppShell() {
         Skip to content
       </a>
 
-      <NavRail unreadCount={unreadCount} />
+      <div className="hidden lg:flex"><NavRail unreadCount={unreadCount} /></div>
+
+      <Dialog open={mobileNav} onOpenChange={setMobileNav}><DialogContent title="Navigation"><div className="flex max-h-[70vh] gap-2 overflow-auto" onClick={event=>{if((event.target as Element).closest("a"))setMobileNav(false);}}><NavRail unreadCount={unreadCount}/>{section?.id==="inbox"?<InboxSidebar/>:section?<SectionSidebar section={section}/>:null}</div></DialogContent></Dialog>
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-[var(--hc-float-radius)] border border-transparent bg-canvas shadow-[var(--hc-float-shadow)] transition-[border-color,border-radius,box-shadow] duration-base ease-out compact:border-line">
-        <TopBar onOpenSearch={() => setSearchOpen(true)} connection={isLive ? "connected" : "reconnecting"} />
+        <div className="flex shrink-0 border-b border-line bg-surface"><Button variant="ghost" size="sm" className="m-2 lg:hidden" onClick={()=>setMobileNav(true)} aria-label="Open navigation">Menu</Button><TopBar onOpenSearch={() => setSearchOpen(true)} connection={isLive ? "connected" : "reconnecting"} /></div>
 
         <div className="flex min-h-0 flex-1 gap-[var(--hc-shell-gap)] transition-[gap] duration-base ease-out">
-          {section?.id === "inbox" ? (
-            <InboxSidebar />
-          ) : section ? (
-            <SectionSidebar section={section} />
-          ) : null}
+          <div className="hidden lg:flex">{section?.id === "inbox" ? <InboxSidebar /> : section ? <SectionSidebar section={section} /> : null}</div>
 
           <main id="main" className="min-w-0 flex-1 overflow-hidden">
             <Outlet />
