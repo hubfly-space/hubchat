@@ -200,10 +200,11 @@ func (h *Hub) resume(ctx context.Context, c *client, afterSequence int64) {
 			if !c.wants(topicFor(record)) {
 				continue
 			}
-			if !visibleTo(c, record) {
+			projected, ok := eventFor(c, record)
+			if !ok {
 				continue
 			}
-			payload, err := json.Marshal(record)
+			payload, err := json.Marshal(projected)
 			if err != nil {
 				continue
 			}
