@@ -2,10 +2,12 @@ package api
 
 import (
 	"errors"
+	"github.com/hubchat/hubchat/internal/searchmodel"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
-	"github.com/hubchat/hubchat/internal/authorization"
 	"github.com/hubchat/hubchat/internal/httpserver"
 	"github.com/hubchat/hubchat/internal/search"
 )
@@ -13,7 +15,7 @@ import (
 // registerSearchRoutes mounts the CommandPalette's one query endpoint.
 func registerSearchRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /v1/search",
-		requireCapability(deps, authorization.ConversationRead, handleSearch(deps)))
+		requireActor(deps, handleSearch(deps)))
 }
 
 func handleSearch(deps Deps) http.HandlerFunc {
@@ -37,7 +39,28 @@ func handleSearch(deps Deps) http.HandlerFunc {
 			limit = 100
 		}
 
-		page, err := deps.Search.SearchPage(r.Context(), actor.WorkspaceID, query.Get("q"), query.Get("cursor"), limit)
+		filters := searchmodel.Filters{Channel: query.Get("channel"), TagID: query.Get("tag_id")}
+		if kind := query.Get("kind"); kind != "" {
+			filters.Kinds = strings.Split(kind, ",")
+			for _, value := range filters.Kinds {
+				if value != "message" && value != "customer" && value != "company" && value != "ticket" && value != "article" && value != "feedback" {
+					httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Unknown search kind.")
+					return
+				}
+			}
+		}
+		for key, destination := range map[string]**time.Time{"after": &filters.After, "before": &filters.Before} {
+			if value := query.Get(key); value != "" {
+				at, err := time.Parse(time.RFC3339, value)
+				if err != nil {
+					httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Search dates must use RFC3339.")
+					return
+				}
+				*destination = &at
+			}
+		}
+
+		page, err := deps.Search.SearchFilteredPage(r.Context(), actor.WorkspaceID, query.Get("q"), query.Get("cursor"), limit, filters)
 		if err != nil {
 			if errors.Is(err, search.ErrBadCursor) {
 				httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed search cursor.")
