@@ -3,6 +3,7 @@
 package customer_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/hubchat/hubchat/internal/database/dbtest"
@@ -118,4 +119,48 @@ func TestCustomer360CombinesRelatedRecordsAndPreservesTenantIsolation(t *testing
 		t.Fatal("customer 360 returned a foreign customer")
 	}
 
+}
+
+// A customer with nothing attached is the common case for a brand-new
+// website visitor, not an edge case. Every list in this payload is declared
+// as a required array in the OpenAPI schema, so an empty section has to
+// serialise as [] — a nil slice marshals to null, and the dashboard inbox
+// panel crashed on `data.companies.length` because of it.
+func TestCustomer360SerialisesEmptyListsAsArraysNotNull(t *testing.T) {
+	pool := dbtest.Pool(t)
+	dbtest.Reset(t, pool)
+	ctx := dbtest.Context(t)
+
+	svc := newTestService(t, pool)
+	workspaceID, _ := seedWorkspace(t, ctx, pool)
+	customerID := seedCustomer(t, ctx, pool, workspaceID, "Bare Visitor")
+
+	result, err := svc.Customer360(ctx, workspaceID, customerID)
+	if err != nil {
+		t.Fatalf("customer 360: %v", err)
+	}
+
+	payload, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal customer 360: %v", err)
+	}
+
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("decode customer 360: %v", err)
+	}
+
+	for _, field := range []string{
+		"companies", "conversations", "tickets", "events", "page_journey",
+		"sessions", "feedback", "surveys", "articles", "identities", "merges",
+	} {
+		raw, ok := decoded[field]
+		if !ok {
+			t.Errorf("%s missing from the 360 payload", field)
+			continue
+		}
+		if string(raw) != "[]" {
+			t.Errorf("%s = %s, want [] (null breaks every client that trusts the schema)", field, raw)
+		}
+	}
 }
