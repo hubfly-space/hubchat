@@ -123,9 +123,14 @@ func (s *Service) WidgetForOrigin(ctx context.Context, publicKey, pageURL, origi
 		return nil, err
 	}
 
+	// A page URL is caller-controlled. In a browser the Origin header is the
+	// authority; never let a claimed URL replace it (including Origin: null).
 	hostname := hostnameOf(pageURL)
-	if hostname == "" {
+	if originHeader != "" {
 		hostname = hostnameOf(originHeader)
+		if hostname == "" || (pageURL != "" && hostnameOf(pageURL) != hostname) {
+			return nil, ErrOriginNotAllowed
+		}
 	}
 	if hostname == "" {
 		return nil, ErrOriginNotAllowed
