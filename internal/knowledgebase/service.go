@@ -21,6 +21,7 @@ import (
 )
 
 var (
+	ErrConflict                = errors.New("knowledgebase: article changed; reload before saving")
 	ErrNotFound                = errors.New("knowledgebase: not found")
 	ErrInvalidName             = errors.New("knowledgebase: name is required")
 	ErrInvalidSlug             = errors.New("knowledgebase: slug must contain lowercase letters, numbers, and hyphens")
@@ -135,6 +136,7 @@ type CollectionInput struct {
 	Position    int     `json:"position"`
 }
 type ArticleInput struct {
+	ExpectedVersion *int           `json:"expected_version,omitempty"`
 	KnowledgeBaseID string         `json:"knowledge_base_id"`
 	CollectionID    *string        `json:"collection_id"`
 	Title           string         `json:"title"`
@@ -574,6 +576,9 @@ func (s *Service) SaveArticle(ctx context.Context, workspaceID, authorID, id str
 		}
 		if err != nil {
 			return err
+		}
+		if input.ExpectedVersion != nil && *input.ExpectedVersion != oldVersion {
+			return ErrConflict
 		}
 		version := oldVersion + 1
 		if _, err := tx.Exec(ctx, `UPDATE articles SET knowledge_base_id=$3,collection_id=$4,title=$5,slug=$6,excerpt=$7,body=$8,state=$9,language=$10,seo=$11,scheduled_at=$12,version=$13,published_at=CASE WHEN $9='published' THEN coalesce(published_at,now()) ELSE published_at END,updated_at=now() WHERE workspace_id=$1 AND id=$2`, workspaceID, id, input.KnowledgeBaseID, input.CollectionID, input.Title, strings.ToLower(input.Slug), input.Excerpt, input.Body, input.State, input.Language, seoJSON, input.ScheduledAt, version); err != nil {
