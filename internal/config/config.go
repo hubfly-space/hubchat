@@ -22,6 +22,7 @@ import (
 // Config is the fully-resolved runtime configuration. It is immutable once
 // Load returns; nothing reloads it while the process is running.
 type Config struct {
+	Push          struct{ PublicKey, PrivateKey, Subscriber string }
 	Server        Server
 	Database      Database
 	Storage       Storage
@@ -152,7 +153,8 @@ type Security struct {
 	CookieSecure    bool
 	CSRFEnabled     bool
 
-	TrustedProxies []string
+	TrustedProxies             []string
+	WebhookAllowedPrivateHosts []string
 	// GeoIPDatabasePath points to a local MaxMind-compatible country/city DB.
 	// Empty disables lookup while still allowing masked prefixes to be stored.
 	GeoIPDatabasePath string
@@ -344,6 +346,14 @@ func Load() (Config, error) {
 		cfg.Security.GeoIPDatabasePath = v
 	}
 
+	if v := os.Getenv("HUBCHAT_WEBHOOK_PRIVATE_HOSTS"); v != "" {
+		for _, host := range strings.Split(v, ",") {
+			if host = strings.TrimSpace(host); host != "" {
+				cfg.Security.WebhookAllowedPrivateHosts = append(cfg.Security.WebhookAllowedPrivateHosts, host)
+			}
+		}
+	}
+
 	if v := os.Getenv("HUBCHAT_DATA_DIR"); v != "" {
 		cfg.Storage.LocalPath = v
 	}
@@ -372,6 +382,23 @@ func Load() (Config, error) {
 		cfg.Storage.S3SecretKey = v
 	}
 	cfg.Storage.S3PathStyle = os.Getenv("HUBCHAT_S3_PATH_STYLE") == "1"
+
+	if v := os.Getenv("HUBCHAT_SMTP_ENCRYPTION"); v != "" {
+		if v != "starttls" && v != "tls" && v != "none" {
+			return cfg, errors.New("HUBCHAT_SMTP_ENCRYPTION must be starttls, tls, or none")
+		}
+		cfg.Email.Encryption = v
+	}
+
+	cfg.Push.PublicKey = os.Getenv("HUBCHAT_VAPID_PUBLIC_KEY")
+	cfg.Push.PrivateKey = os.Getenv("HUBCHAT_VAPID_PRIVATE_KEY")
+	cfg.Push.Subscriber = os.Getenv("HUBCHAT_VAPID_SUBSCRIBER")
+	if (cfg.Push.PublicKey == "") != (cfg.Push.PrivateKey == "") {
+		return cfg, errors.New("both VAPID keys must be configured")
+	}
+	if cfg.Push.PublicKey != "" && cfg.Push.Subscriber == "" {
+		return cfg, errors.New("HUBCHAT_VAPID_SUBSCRIBER is required when push is enabled")
+	}
 
 	if v := os.Getenv("HUBCHAT_SMTP_HOST"); v != "" {
 		cfg.Email.Enabled = true
@@ -672,6 +699,7 @@ func (c Config) Redacted() Config {
 	redacted.Security.SecretKey = nil
 	redacted.Storage.S3AccessKey = mask(c.Storage.S3AccessKey)
 	redacted.Storage.S3SecretKey = mask(c.Storage.S3SecretKey)
+	redacted.Push.PrivateKey = mask(c.Push.PrivateKey)
 	redacted.Email.SMTPPassword = mask(c.Email.SMTPPassword)
 	redacted.OAuth.ClientSecret = mask(c.OAuth.ClientSecret)
 	redacted.Observability.DevLite.APIKey = mask(c.Observability.DevLite.APIKey)
