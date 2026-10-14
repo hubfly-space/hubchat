@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hubchat/hubchat/internal/database"
+	"github.com/hubchat/hubchat/internal/events"
 	"github.com/hubchat/hubchat/internal/ids"
 	"github.com/jackc/pgx/v5"
 )
@@ -143,17 +144,27 @@ func (s *Service) create(ctx context.Context, workspaceID, actorID string, input
 			return nil, ErrInvalidAssignee
 		}
 	}
+	id := ids.New(ids.PrefixTask)
+	if key := events.ActionKey(ctx); key != "" {
+		id = ids.Stable(ids.PrefixTask, workspaceID+":"+key)
+	}
 	var task Task
-	err := s.pool.QueryRow(ctx, `
+	err := database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `
 		INSERT INTO tasks(id,workspace_id,title,description,subject_type,subject_id,assignee_id,due_at,created_by)
 		VALUES($1,$2,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),$8,NULLIF($9,''))
+		ON CONFLICT (id) DO UPDATE SET id=EXCLUDED.id
 		RETURNING id,workspace_id,title,description,state,coalesce(subject_type,''),coalesce(subject_id,''),
 		          coalesce(assignee_id,''),due_at,coalesce(created_by,''),completed_at,created_at,updated_at
-	`, ids.New(ids.PrefixTask), workspaceID, title, input.Description, subjectType, subjectID, assignee, input.DueAt, actorID).Scan(
-		&task.ID, &task.WorkspaceID, &task.Title, &task.Description, &task.State,
-		&task.SubjectType, &task.SubjectID, &task.AssigneeID, &task.DueAt,
-		&task.CreatedBy, &task.CompletedAt, &task.CreatedAt, &task.UpdatedAt,
-	)
+	`, id, workspaceID, title, input.Description, subjectType, subjectID, assignee, input.DueAt, actorID).Scan(
+			&task.ID, &task.WorkspaceID, &task.Title, &task.Description, &task.State,
+			&task.SubjectType, &task.SubjectID, &task.AssigneeID, &task.DueAt,
+			&task.CreatedBy, &task.CompletedAt, &task.CreatedAt, &task.UpdatedAt,
+		); err != nil {
+			return err
+		}
+		return events.CompleteActionTx(ctx, tx, workspaceID)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("task: create: %w", err)
 	}
