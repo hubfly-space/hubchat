@@ -46,8 +46,13 @@ func (s *Service) ResolveVisitor(ctx context.Context, workspaceID, token string)
 // IdentifyInput is what the widget SDK's identify() call carries, whether or
 // not it includes a signed token.
 type IdentifyInput struct {
-	Name       *string
-	Email      *string
+	Name  *string
+	Email *string
+	// Phone is the contact number the host page already knows. It fills the
+	// customer record's own phone column, which is what the inbox sidebar
+	// renders; attributes cannot stand in for it because they are a separate
+	// key/value store shown as their own rows.
+	Phone      *string
 	ExternalID *string
 	// Attributes are validated against the workspace metadata schema before
 	// they are merged. The browser may suggest values, but it cannot bypass
@@ -67,7 +72,7 @@ func (s *Service) Identify(ctx context.Context, workspaceID string, visitor *Vis
 			return nil, err
 		}
 	}
-	name, email, externalID := in.Name, in.Email, in.ExternalID
+	name, email, phone, externalID := in.Name, in.Email, in.Phone, in.ExternalID
 	verified := false
 	method := "manual"
 
@@ -89,6 +94,9 @@ func (s *Service) Identify(ctx context.Context, workspaceID string, visitor *Vis
 		if claims.Name != "" {
 			name = &claims.Name
 		}
+		if claims.Phone != "" {
+			phone = &claims.Phone
+		}
 	}
 
 	var existingCustomerID *string
@@ -96,7 +104,9 @@ func (s *Service) Identify(ctx context.Context, workspaceID string, visitor *Vis
 		existingCustomerID = visitor.CustomerID
 	}
 
-	found, err := s.customer.Identify(ctx, workspaceID, existingCustomerID, name, email, externalID, verified)
+	found, err := s.customer.Identify(ctx, workspaceID, existingCustomerID, customer.Identity{
+		Name: name, Email: email, Phone: phone, ExternalID: externalID,
+	}, verified)
 	if err != nil {
 		return nil, err
 	}
