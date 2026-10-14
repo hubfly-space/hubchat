@@ -32,6 +32,11 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      "react/jsx-runtime": fileURLToPath(import.meta.resolve("preact/jsx-runtime")),
+      "react/jsx-dev-runtime": fileURLToPath(import.meta.resolve("preact/jsx-dev-runtime")),
+      "react-dom/client": fileURLToPath(import.meta.resolve("preact/compat/client")),
+      "react-dom": fileURLToPath(import.meta.resolve("preact/compat")),
+      "react": fileURLToPath(import.meta.resolve("preact/compat")),
       "@": fileURLToPath(new URL("./src", import.meta.url)),
       "@hubchat/shared": fileURLToPath(new URL("../shared/src", import.meta.url)),
     },
@@ -41,26 +46,18 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: true,
     cssCodeSplit: false,
-    // A hard ceiling, not a suggestion. If the widget crosses this, something
-    // was imported that belongs in the dashboard.
+    // Developer warning only; check-bundle-budgets.mjs enforces gzip sizes.
     chunkSizeWarningLimit: 220,
-    // Library mode, not an application build: v1.js loads this file with a
-    // dynamic `import()` and reads `module.mount` off the result (see
-    // main.tsx's exported `mount`). An application build does not preserve
-    // an entry's exports in its output — Rollup only keeps them for a
-    // declared library entry — so without this, the import resolves to an
-    // empty namespace object and `module.mount is not a function` at the one
-    // moment a visitor actually opens the widget.
-    lib: {
-      entry: fileURLToPath(new URL("./src/main.tsx", import.meta.url)),
-      formats: ["es"],
-      fileName: () => "app.js",
-      cssFileName: "app",
-    },
+    // A browser module with a stable mount export. Application minification
+    // plus Preact's React compatibility layer keeps the interface below its
+    // compressed budget; the dashboard and portal use their own build configs.
     rollupOptions: {
+      input: fileURLToPath(new URL("./src/main.tsx", import.meta.url)),
+      preserveEntrySignatures: "strict",
       output: {
+        entryFileNames: "app.js",
         chunkFileNames: "[name]-[hash].js",
-        assetFileNames: "[name][extname]",
+        assetFileNames: (asset) => asset.names?.some((name) => name.endsWith(".css")) ? "app.css" : "[name][extname]",
       },
     },
   },
