@@ -1,5 +1,6 @@
 import {
   api,
+  clearQueryCache,
   ApiError,
   invalidate,
   QueryError,
@@ -17,8 +18,8 @@ import {
   type Workspace,
   type FormatOptions,
 } from "@hubchat/shared";
-import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
-import { Navigate } from "react-router-dom";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import { Navigate, useNavigate, useLocation } from "react-router-dom";
 
 /**
  * Workspace scope for the whole dashboard.
@@ -84,21 +85,48 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   // Persisted so a reload returns to the workspace the agent was working in
   // rather than their first membership. Empty means "let the server choose",
   // which is right immediately after signup.
+  const navigate=useNavigate();
+  const routerLocation=useLocation();
+  const previousPermissions=useRef("");
+  const wasConnected=useRef(false);
   const [activeId, setActiveId] = useLocalStorage<string>("hubchat.workspace", "");
 
+  const requestedWorkspace = new URLSearchParams(window.location.search).get("workspace_id");
+  const scopedId = requestedWorkspace || activeId;
+  useEffect(() => {
+    if (!requestedWorkspace || requestedWorkspace === activeId) return;
+    try { localStorage.setItem("hubchat.workspace",JSON.stringify(requestedWorkspace)); } catch { /* optional */ }
+    clearQueryCache(); setActiveId(requestedWorkspace);
+  }, [requestedWorkspace,activeId,setActiveId]);
+  useEffect(() => {
+    const receive = (event: MessageEvent) => { if(event.data?.type==="hubchat:notification")invalidateNotifications(); };
+    navigator.serviceWorker?.addEventListener("message",receive);
+    return () => navigator.serviceWorker?.removeEventListener("message",receive);
+  }, []);
   const bootstrap = useQuery<Bootstrap>(
-    ["bootstrap", activeId],
-    (signal) => api.get<Bootstrap>("/bootstrap", { workspaceId: activeId || undefined, signal }),
+    ["bootstrap", scopedId],
+    (signal) => api.get<Bootstrap>("/bootstrap", { workspaceId: scopedId || undefined, signal }),
     // The bootstrap payload changes rarely, and the pieces that do change
     // (presence, tags) arrive over the socket. A long stale time here avoids
     // refetching the whole workspace every time the tab regains focus.
     { staleTime: 5 * 60_000 },
   );
 
-  const connection = useRealtimeConnection(bootstrap.data?.workspace.id);
+  const connection = useRealtimeConnection(bootstrap.data?.viewer.capabilities.includes("conversation.read") ? bootstrap.data.workspace.id : undefined);
+  const permissionSignature = bootstrap.data ? JSON.stringify([bootstrap.data.workspace.id,bootstrap.data.viewer.id,bootstrap.data.viewer.role,[...bootstrap.data.viewer.capabilities].sort(),bootstrap.data.inboxes.map(inbox=>inbox.id).sort()]) : "";
+  useLayoutEffect(()=>{
+    if(!permissionSignature)return;
+    if(previousPermissions.current && previousPermissions.current!==permissionSignature)clearQueryCache({preserve:[["bootstrap"]],refetch:true});
+    previousPermissions.current=permissionSignature;
+  },[permissionSignature]);
+  useEffect(()=>{
+    if(connection==="open")wasConnected.current=true;
+    else if(connection==="closed" && wasConnected.current){wasConnected.current=false;invalidate(["bootstrap"]);}
+  },[connection]);
   useWorkspaceInvalidation();
 
   const switchWorkspace = useCallback((id: string) => {
+    const url=new URL(window.location.href);url.searchParams.delete("workspace_id");navigate({pathname:routerLocation.pathname,search:url.search,hash:routerLocation.hash},{replace:true});
     // Persist synchronously so requests started by the next route render are
     // scoped correctly; the storage hook's effect remains the fallback for
     // browsers where localStorage is unavailable.
@@ -107,8 +135,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     } catch {
       /* private browsing or quota errors leave this as a session-only switch */
     }
+    clearQueryCache();
     setActiveId(id);
-  }, [setActiveId]);
+  }, [setActiveId,navigate,routerLocation]);
 
   const can = useCallback(
     (capability: Capability) => bootstrap.data?.viewer.capabilities.includes(capability) ?? false,
@@ -171,7 +200,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     );
   }
 
-  return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
+  return <WorkspaceContext.Provider key={permissionSignature} value={value}>{children}</WorkspaceContext.Provider>;
 }
 
 /**
@@ -190,6 +219,11 @@ function useWorkspaceInvalidation() {
     // The server could not replay everything we missed. Nothing on screen can
     // be trusted, so drop it all rather than leaving stale rows that look
     // current.
+    if (event.type === "workspace.visibility_changed") {
+      invalidate(["bootstrap"]);
+      clearQueryCache({preserve:[["bootstrap"]],refetch:true});
+      return;
+    }
     if (event.type === "hub.desynchronised") {
       invalidate(["conversations"]);
       invalidate(["tickets"]);
@@ -207,7 +241,25 @@ function useWorkspaceInvalidation() {
     switch (event.entity_type) {
       case "conversation":
         invalidate(["conversations"]);
+        invalidate(["conversation-counts"]);
+        invalidate(["shell", "conversations"]);
         if (event.entity_id) invalidate(["conversation", event.entity_id]);
+        // The open thread is its own cache, keyed separately from the row that
+        // lists it, and ["conversation", id] does not reach it: keys are
+        // prefix-matched, so "conversation-messages" is a sibling namespace,
+        // not a child of "conversation". Without this line an inbound visitor
+        // message updated the sidebar preview and fired a notification while
+        // the conversation the agent was reading stayed frozen until they
+        // reloaded or navigated away.
+        if (event.entity_id && messageWindowEventTypes.has(event.type)) {
+          invalidate(["conversation-messages", event.entity_id]);
+        }
+        // A merge moves messages out of the source thread as well as into the
+        // target, so the source's window is stale too.
+        if (event.type === "conversation.merged") {
+          const source = (event.data as { source_id?: string } | undefined)?.source_id;
+          if (source) invalidate(["conversation-messages", source]);
+        }
         break;
       case "ticket":
         invalidate(["tickets"]);
@@ -227,6 +279,12 @@ function useWorkspaceInvalidation() {
       case "company":
         invalidate(["companies"]);
         if (event.entity_id) invalidate(["company", event.entity_id]);
+        break;
+      case "inbox":
+        invalidate(["inboxes"]);
+        invalidate(["bootstrap"]);
+        invalidate(["conversations"]);
+        invalidate(["conversation-counts"]);
         break;
       case "member":
       case "team":
@@ -248,6 +306,16 @@ function useWorkspaceInvalidation() {
 // notification consumer. Keeping this mapping beside the other realtime
 // invalidation rules means the bell converges from the same event stream as
 // the inbox, rather than waiting for focus or a stale-time refresh.
+// Events that change what a conversation's message window *contains*. Keyed
+// by event type rather than folded into the entity switch above because the
+// list and the detail are different questions: a conversation being assigned
+// or resolved changes the sidebar row, but adds nothing to the thread.
+const messageWindowEventTypes = new Set([
+  "message.created",
+  "message.edited",
+  "message.redacted",
+]);
+
 const notificationEventTypes = new Set([
   "conversation.assigned",
   "message.created",
