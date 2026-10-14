@@ -19,12 +19,16 @@ it belongs here.
 
 Recorded here so they are not forgotten:
 
-- **Licence and edition strategy.** Which components are open, and whether
-  hosted-only extensions may exist. Must be settled before the first release.
-- **Custom roles.** The capability model already supports them; the interface
-  and migration path do not exist yet.
+- **Edition strategy.** The core is licensed under AGPL-3.0-only. Whether
+  hosted-only extensions may exist remains a product decision.
 - **Search backend.** PostgreSQL full-text search is the decision for now. The
   trigger for revisiting it should be a measurement, not a hunch.
+
+## Resolved implementation items
+
+- **Licence:** AGPL-3.0-only, with the complete text in [LICENSE](../../LICENSE).
+- **Custom roles:** workspace-scoped role administration, capability selection,
+  lifecycle checks, and the migration path are implemented.
 
 ## Format
 
