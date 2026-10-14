@@ -14,6 +14,7 @@ import (
 )
 
 func registerAnalyticsRoutes(mux *http.ServeMux, deps Deps) {
+	mux.HandleFunc("GET /v1/analytics/drilldown", requireCapability(deps, authorization.ReportRead, handleAnalyticsDrilldown(deps)))
 	mux.HandleFunc("GET /v1/analytics/metrics", requireCapability(deps, authorization.ReportRead, handleListAnalyticsMetrics(deps)))
 	mux.HandleFunc("GET /v1/analytics/summary", requireCapability(deps, authorization.ReportRead, handleAnalyticsSummary(deps)))
 	mux.HandleFunc("GET /v1/analytics/rollups", requireCapability(deps, authorization.ReportRead, handleListAnalyticsRollups(deps)))
@@ -385,4 +386,26 @@ func writeAnalyticsInternal(w http.ResponseWriter, r *http.Request) {
 
 func writeAnalyticsTimezone(w http.ResponseWriter, timezone string) {
 	w.Header().Set("X-Hubchat-Analytics-Timezone", timezone)
+}
+
+func handleAnalyticsDrilldown(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		from, to, timezone, err := analyticsWindow(r)
+		if err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, err.Error())
+			return
+		}
+		q := r.URL.Query()
+		filter := analytics.DrilldownFilter{GroupBy: q.Get("group_by"), InboxID: q.Get("inbox_id"), TeamID: q.Get("team_id"), Channel: q.Get("channel"), TagID: q.Get("tag_id")}
+		if filter.GroupBy != "" && filter.GroupBy != "inbox" && filter.GroupBy != "team" && filter.GroupBy != "channel" && filter.GroupBy != "tag" {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Unknown report grouping.")
+			return
+		}
+		rows, err := deps.Analytics.Drilldown(r.Context(), actorFromRequest(r).WorkspaceID, from, to, filter)
+		if err != nil {
+			writeAnalyticsInternal(w, r)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusOK, map[string]any{"data": rows, "from": from, "to": to, "timezone": timezone, "previous_from": from.Add(-to.Sub(from)), "previous_to": from})
+	}
 }
