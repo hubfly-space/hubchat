@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Hubchat design system, primitives, and cross-surface utilities. Consumed as TypeScript source — no build step.",
+  "description": "Hubchat design system, primitives, and cross-surface utilities. Consumed as TypeScript source \u2014 no build step.",
   "//sideEffects": "Every module here is pure: components and helpers only, no top-level registration or mutation. Declaring that lets bundlers drop the ~30 components a given app does not import, which is what keeps the portal off the dashboard's weight. Stylesheets are excluded because importing one *is* the side effect.",
   "sideEffects": [
     "*.css"
@@ -17,7 +17,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src --max-warnings 0"
+    "lint": "eslint src --max-warnings 0",
+    "test": "vitest run"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.11",
@@ -43,6 +44,8 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "lucide-react": "^1.34.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.3.1"
   },
   "peerDependencies": {
@@ -52,7 +55,9 @@
   "devDependencies": {
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
+    "jsdom": "^30.1.2",
     "tailwindcss": "^4.1.14",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
   }
 }
