@@ -19,7 +19,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -46,13 +45,11 @@ var (
 )
 
 type Service struct {
-	pool   *database.Pool
-	jobs   *jobs.Client
-	key    []byte
-	client *http.Client
-
-	mu   sync.Mutex
-	seen map[string]int64
+	pool    *database.Pool
+	jobs    *jobs.Client
+	key     []byte
+	client  *http.Client
+	network networkPolicy
 }
 
 type Endpoint struct {
@@ -106,12 +103,16 @@ type deliveryPayload struct {
 	DeliveryID string `json:"delivery_id"`
 }
 
-func New(pool *database.Pool, secretKey []byte, queue *jobs.Client) *Service {
+func New(pool *database.Pool, secretKey []byte, queue *jobs.Client, options ...Options) *Service {
+	policy := newNetworkPolicy(Options{})
+	if len(options) > 0 {
+		policy = newNetworkPolicy(options[0])
+	}
 	hash := sha256.Sum256(append([]byte("hubchat/webhook-secrets:"), secretKey...))
 	return &Service{
 		pool: pool, jobs: queue, key: hash[:],
-		client: &http.Client{Timeout: 10 * time.Second},
-		seen:   make(map[string]int64),
+		client:  policy.client(),
+		network: policy,
 	}
 }
 
@@ -139,7 +140,7 @@ func (s *Service) RetentionSweep(ctx context.Context) (int64, error) {
 }
 
 func (s *Service) Create(ctx context.Context, workspaceID, memberID string, input Input) (*Created, error) {
-	endpointURL, err := validateURL(input.URL)
+	endpointURL, err := s.validateURL(input.URL)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +231,7 @@ func (s *Service) Get(ctx context.Context, workspaceID, id string) (*Endpoint, e
 }
 
 func (s *Service) Update(ctx context.Context, workspaceID, id string, input Input) (*Endpoint, error) {
-	endpointURL, err := validateURL(input.URL)
+	endpointURL, err := s.validateURL(input.URL)
 	if err != nil {
 		return nil, err
 	}
@@ -362,14 +363,29 @@ func (s *Service) EnqueueAction(ctx context.Context, workspaceID, endpointID str
 		return err
 	}
 	defer tx.Rollback(ctx)
+	id := ids.New(ids.PrefixWebhookDelivery)
+	if key := events.ActionKey(ctx); key != "" {
+		id = ids.Stable(ids.PrefixWebhookDelivery, workspaceID+":"+key)
+	}
+
 	var deliveryID string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO webhook_deliveries (id,workspace_id,endpoint_id,event_type,payload,max_attempts,next_attempt_at)
-		SELECT $1,e.workspace_id,'automation.action',$3,$4,$5,now()
+		SELECT $1,e.workspace_id,e.id,'automation.action',$3,$4,now()
 		FROM webhook_endpoints e
 		WHERE e.workspace_id=$2 AND e.id=$5 AND e.enabled AND e.auto_disabled_at IS NULL
-		RETURNING id`, ids.New(ids.PrefixWebhookDelivery), workspaceID, body, maxAttempts, endpointID).Scan(&deliveryID)
+		ON CONFLICT (id) DO NOTHING RETURNING id`, id, workspaceID, body, maxAttempts, endpointID).Scan(&deliveryID)
 	if errors.Is(err, pgx.ErrNoRows) {
+		var exists bool
+		if checkErr := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM webhook_deliveries WHERE workspace_id=$1 AND id=$2)`, workspaceID, id).Scan(&exists); checkErr != nil {
+			return checkErr
+		}
+		if exists {
+			if err := events.CompleteActionTx(ctx, tx, workspaceID); err != nil {
+				return err
+			}
+			return tx.Commit(ctx)
+		}
 		return ErrNotFound
 	}
 	if err != nil {
@@ -378,57 +394,18 @@ func (s *Service) EnqueueAction(ctx context.Context, workspaceID, endpointID str
 	if _, err := jobs.EnqueueTx(ctx, tx, jobs.Spec{WorkspaceID: workspaceID, Queue: "webhooks", Type: JobDeliver, Payload: deliveryPayload{DeliveryID: deliveryID}, MaxAttempts: maxAttempts, DedupeKey: "webhook-delivery:" + deliveryID}); err != nil {
 		return err
 	}
+	if err := events.CompleteActionTx(ctx, tx, workspaceID); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
-// RunEventConsumer follows committed event signals. The first signal starts
-// at that event, avoiding a startup burst of historical deliveries; subsequent
-// signals drain every gap. Delivery uniqueness makes restarts harmless.
+// RunEventConsumer resumes durable checkpoints and reconciles missed signals.
+// Domain effects are replay-safe; checkpoints advance after successful commits.
 func (s *Service) RunEventConsumer(ctx context.Context, signals <-chan events.Signal, source interface {
 	Since(context.Context, string, int64, int) ([]events.Record, error)
 }) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case signal, ok := <-signals:
-			if !ok {
-				return
-			}
-			s.mu.Lock()
-			after, exists := s.seen[signal.WorkspaceID]
-			if !exists {
-				after = signal.Sequence - 1
-			}
-			s.mu.Unlock()
-			for {
-				records, err := source.Since(ctx, signal.WorkspaceID, after, maxEvents)
-				if err != nil {
-					break
-				}
-				if len(records) == 0 {
-					break
-				}
-				dispatchFailed := false
-				for _, record := range records {
-					if err := s.DispatchRecord(ctx, record); err != nil {
-						dispatchFailed = true
-						break
-					}
-					after = record.Sequence
-				}
-				if dispatchFailed {
-					break
-				}
-				s.mu.Lock()
-				s.seen[signal.WorkspaceID] = after
-				s.mu.Unlock()
-				if len(records) < maxEvents {
-					break
-				}
-			}
-		}
-	}
+	events.Consume(ctx, s.pool, "webhook", signals, source, s.DispatchRecord)
 }
 
 func (s *Service) Deliver(ctx context.Context, deliveryID string) error {
