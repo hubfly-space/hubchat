@@ -23,7 +23,6 @@ import (
 	"net/mail"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/hubchat/hubchat/internal/conversation"
@@ -59,8 +58,6 @@ type Service struct {
 	key          []byte
 	jobs         *jobs.Client
 	files        *filemodule.Service
-	seenMu       sync.Mutex
-	seen         map[string]int64
 }
 
 type Mailbox struct {
@@ -209,58 +206,19 @@ func New(pool *database.Pool, secretKey []byte, conversationService *conversatio
 	if len(queue) > 0 {
 		jobClient = queue[0]
 	}
-	return &Service{pool: pool, key: key[:], conversation: conversationService, customer: customerService, inbox: inboxService, jobs: jobClient, seen: make(map[string]int64)}
+	return &Service{pool: pool, key: key[:], conversation: conversationService, customer: customerService, inbox: inboxService, jobs: jobClient}
 }
 
 func (s *Service) SetFileService(files *filemodule.Service) {
 	s.files = files
 }
 
-// RunEventConsumer queues one durable outbound email for each agent reply in
-// an email conversation. The event log is the source of truth; the unique
-// RFC message id and job dedupe key make a replay harmless.
+// RunEventConsumer resumes durable checkpoints and reconciles missed signals.
+// Domain effects are replay-safe; checkpoints advance after successful commits.
 func (s *Service) RunEventConsumer(ctx context.Context, signals <-chan events.Signal, source interface {
 	Since(context.Context, string, int64, int) ([]events.Record, error)
 }) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case signal, ok := <-signals:
-			if !ok {
-				return
-			}
-			s.seenMu.Lock()
-			after, exists := s.seen[signal.WorkspaceID]
-			if !exists {
-				after = signal.Sequence - 1
-			}
-			s.seenMu.Unlock()
-			for {
-				records, err := source.Since(ctx, signal.WorkspaceID, after, maxEventBatch)
-				if err != nil || len(records) == 0 {
-					break
-				}
-				failed := false
-				for _, record := range records {
-					if err := s.processEvent(ctx, record); err != nil {
-						failed = true
-						break
-					}
-					after = record.Sequence
-				}
-				if failed {
-					break
-				}
-				s.seenMu.Lock()
-				s.seen[signal.WorkspaceID] = after
-				s.seenMu.Unlock()
-				if len(records) < maxEventBatch {
-					break
-				}
-			}
-		}
-	}
+	events.Consume(ctx, s.pool, "emailchannel", signals, source, s.processEvent)
 }
 
 func (s *Service) processEvent(ctx context.Context, record events.Record) error {
@@ -917,7 +875,10 @@ func (s *Service) resolveCustomer(ctx context.Context, workspaceID, address stri
 	if parsed != nil && strings.TrimSpace(parsed.Name) != "" {
 		name = strings.TrimSpace(parsed.Name)
 	}
-	created, err := s.customer.Identify(ctx, workspaceID, nil, &name, &address, nil, false)
+	created, err := s.customer.Identify(ctx, workspaceID, nil, customer.Identity{
+		Name:  &name,
+		Email: &address,
+	}, false)
 	if err != nil {
 		return "", "", err
 	}
