@@ -89,6 +89,8 @@ const child = spawn(binary, ["serve", "--roles=http,realtime,worker,scheduler"],
     HUBCHAT_LISTEN: `127.0.0.1:${port}`,
     HUBCHAT_SECRET_KEY: secretKey,
     HUBCHAT_SLA_EVALUATION_INTERVAL: "1s",
+    // The journey owns a loopback HTTP receiver; production defaults stay closed.
+    HUBCHAT_WEBHOOK_PRIVATE_HOSTS: "127.0.0.1",
     HUBCHAT_DEV: "0",
     HUBCHAT_MIGRATE: "verify",
   },
@@ -129,7 +131,12 @@ try {
     ...childEnv,
     HUBCHAT_JOURNEY_BASE_URL: baseURL,
   };
-  if (process.env.HUBCHAT_RUN_BROWSER_CHECK === "1") journeyEnv.HUBCHAT_JOURNEY_BROWSER = "1";
+  if (process.env.HUBCHAT_RUN_BROWSER_CHECK === "1") {
+    journeyEnv.HUBCHAT_JOURNEY_BROWSER = "1";
+    // Needs the same real browser: an agent watches an open thread while a
+    // visitor replies, and the message must appear without any reload.
+    await runNodeScript("scripts/check-live-inbox-realtime.mjs", journeyEnv);
+  }
   await runNodeScript("scripts/check-production-journey.mjs", journeyEnv);
   await runNodeScript("scripts/check-production-load.mjs", childEnv);
 
