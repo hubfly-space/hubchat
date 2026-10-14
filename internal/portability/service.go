@@ -248,7 +248,7 @@ func (s *Service) CreateImport(ctx context.Context, workspaceID, memberID, fileI
 		if !validCSVFile(fileRecord) {
 			return nil, errors.New("portability: CSV import file must be a CSV document")
 		}
-		if _, err := s.readCSVFile(ctx, workspaceID, &fileRecord.ID, kind); err != nil {
+		if _, err := s.readCSVFile(ctx, workspaceID, &fileRecord.ID, kind, mapping); err != nil {
 			return nil, fmt.Errorf("portability: validate CSV: %w", err)
 		}
 	}
@@ -695,8 +695,15 @@ func (s *Service) RunImport(ctx context.Context, id string) error {
 			return err
 		}
 		if done {
-			_, err = s.pool.Exec(ctx, `UPDATE import_requests SET state='completed',processed_rows=$2,failed_rows=0,completed_at=now(),errors='[]'::jsonb WHERE id=$1`, id, processed)
-			return err
+			return database.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+				// Historical imported events are data, not fresh commands.
+				_, err := tx.Exec(ctx, `INSERT INTO event_consumer_cursors(consumer,workspace_id,last_sequence) SELECT consumer,$1,coalesce((SELECT next_sequence-1 FROM workspace_event_sequences WHERE workspace_id=$1),0) FROM (VALUES('webhook'),('automation'),('notification'),('emailchannel'),('sla')) consumers(consumer) ON CONFLICT(consumer,workspace_id) DO UPDATE SET last_sequence=GREATEST(event_consumer_cursors.last_sequence,EXCLUDED.last_sequence),updated_at=now()`, request.WorkspaceID)
+				if err != nil {
+					return err
+				}
+				_, err = tx.Exec(ctx, `UPDATE import_requests SET state='completed',processed_rows=$2,failed_rows=0,completed_at=now(),errors='[]'::jsonb WHERE id=$1`, id, processed)
+				return err
+			})
 		}
 		tableIndex, rowIndex = nextTable, nextRow
 	}
