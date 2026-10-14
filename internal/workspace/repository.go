@@ -137,7 +137,9 @@ func (r *repository) listInboxes(ctx context.Context, workspaceID string) ([]Inb
 		); err != nil {
 			return nil, err
 		}
-		out = append(out, i)
+		if authorization.CanSeeInbox(ctx, i.ID) {
+			out = append(out, i)
+		}
 	}
 	return out, rows.Err()
 }
