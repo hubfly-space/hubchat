@@ -295,7 +295,7 @@ export function identify(
   host: string,
   publicKey: string,
   token: string,
-  payload: { name?: string; email?: string; external_id?: string; signed_token?: string; attributes?: Record<string, unknown> },
+  payload: { name?: string; email?: string; phone?: string; external_id?: string; signed_token?: string; attributes?: Record<string, unknown> },
 ): Promise<{ customer: { id: string; name: string | null; email: string | null } }> {
   return post(host, "/identify", { public_key: publicKey, url: location.href, token, ...payload });
 }
