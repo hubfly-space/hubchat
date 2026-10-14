@@ -19,7 +19,9 @@ import (
 // ingestion and timeline, contact sessions, export/delete, and identity
 // merge (§6.9, §6.10, §26.3, §26.4).
 func registerCustomerRoutes(mux *http.ServeMux, deps Deps) {
+	registerContextCardRoutes(mux, deps)
 	idempotent := Idempotency(deps)
+	mux.HandleFunc("POST /v1/customers", requireCapability(deps, authorization.CustomerRead, idempotent(handleCreateCustomer(deps))))
 	mux.HandleFunc("GET /v1/customers",
 		requireCapability(deps, authorization.CustomerRead, handleSearchCustomers(deps)))
 	mux.HandleFunc("GET /v1/customers/{id}",
@@ -873,6 +875,10 @@ func handleBlockContact(deps Deps) http.HandlerFunc {
 
 func writeCustomerError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, customer.ErrDuplicateCustomer):
+		httpserver.WriteError(w, r, http.StatusConflict, httpserver.CodeConflict, err.Error())
+	case errors.Is(err, customer.ErrInvalidContextCard), errors.Is(err, customer.ErrInvalidCustomer):
+		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, err.Error())
 	case errors.Is(err, customer.ErrNotFound),
 		errors.Is(err, customer.ErrCompanyNotFound),
 		errors.Is(err, customer.ErrAttrNotFound),
@@ -903,5 +909,22 @@ func writeCustomerError(w http.ResponseWriter, r *http.Request, err error) {
 		httpserver.WriteError(w, r, http.StatusUnprocessableEntity, httpserver.CodeValidationError, err.Error())
 	default:
 		httpserver.WriteError(w, r, http.StatusInternalServerError, httpserver.CodeInternalError, "Something went wrong.")
+	}
+}
+
+func handleCreateCustomer(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var input customer.ManualInput
+		if err := httpserver.DecodeJSON(r, &input); err != nil {
+			httpserver.WriteError(w, r, http.StatusBadRequest, httpserver.CodeBadRequest, "Malformed customer.")
+			return
+		}
+		actor := actorFromRequest(r)
+		created, err := deps.Customer.CreateManual(r.Context(), actor.WorkspaceID, actor.MemberID, input)
+		if err != nil {
+			writeCustomerError(w, r, err)
+			return
+		}
+		httpserver.WriteJSON(w, http.StatusCreated, loadCustomerJSON(r, deps, actor.WorkspaceID, *created))
 	}
 }
