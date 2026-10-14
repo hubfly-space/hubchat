@@ -9,6 +9,8 @@ export interface HubchatBootOptions {
 export interface HubchatIdentifyOptions {
   name?: string;
   email?: string;
+  /** Contact number, stored on the customer record itself (not an attribute). */
+  phone?: string;
   external_id?: string;
   /** A signed identity token issued by the workspace's backend. */
   signed_token?: string;
