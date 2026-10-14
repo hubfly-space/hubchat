@@ -128,7 +128,7 @@ func SecurityHeaders(surface Surface) func(http.Handler) http.Handler {
 				header.Set("X-Frame-Options", "DENY")
 				header.Set("Content-Security-Policy", strings.Join([]string{
 					"default-src 'self'",
-					"script-src 'self' 'unsafe-inline'", // inline theme bootstrap; nonce in production
+					"script-src 'self'",
 					"style-src 'self' 'unsafe-inline'",
 					"img-src 'self' data: blob: https:",
 					"connect-src 'self' ws: wss:",
@@ -143,7 +143,7 @@ func SecurityHeaders(surface Surface) func(http.Handler) http.Handler {
 				header.Set("X-Frame-Options", "SAMEORIGIN")
 				header.Set("Content-Security-Policy", strings.Join([]string{
 					"default-src 'self'",
-					"script-src 'self' 'unsafe-inline'",
+					"script-src 'self'",
 					"style-src 'self' 'unsafe-inline'",
 					"img-src 'self' data: https:",
 					"connect-src 'self' ws: wss:",
