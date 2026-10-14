@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/hubchat/hubchat/internal/authorization"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -41,6 +42,9 @@ func (r *repository) lockAndLoadFull(ctx context.Context, tx pgx.Tx, workspaceID
 	if err != nil {
 		return nil, err
 	}
+	if !authorization.CanSeeInbox(ctx, c.InboxID) {
+		return nil, ErrNotFound
+	}
 	return &c, nil
 }
 
@@ -65,6 +69,9 @@ func (r *repository) teamInWorkspace(ctx context.Context, workspaceID, teamID st
 }
 
 func (r *repository) inboxInWorkspace(ctx context.Context, workspaceID, inboxID string) (bool, error) {
+	if !authorization.CanSeeInbox(ctx, inboxID) {
+		return false, nil
+	}
 	var exists bool
 	err := r.pool.QueryRow(ctx, `
 		SELECT EXISTS (SELECT 1 FROM inboxes WHERE id = $1 AND workspace_id = $2)
