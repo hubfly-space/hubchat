@@ -83,6 +83,7 @@ func Reset(t *testing.T, pool *database.Pool) {
 	for _, stmt := range []string{
 		`DELETE FROM workspaces`,
 		`DELETE FROM users`,
+		`DELETE FROM jobs WHERE workspace_id IS NULL`,
 	} {
 		if _, err := pool.Exec(ctx, stmt); err != nil {
 			t.Fatalf("reset test database (%s): %v", stmt, err)
