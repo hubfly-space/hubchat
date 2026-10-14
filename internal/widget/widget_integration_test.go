@@ -225,6 +225,15 @@ func TestResolveConfigEnforcesOriginAllowlist(t *testing.T) {
 		t.Fatalf("expected the bootstrap owner (presence=online, accepting_conversations=true) to read as online")
 	}
 
+	for _, origin := range []string{"https://evil.test", "null", "https://other.example.com"} {
+		if _, err := h.Widget.ResolveConfig(ctx, w.PublicKey, "https://shop.example.com/cart", origin); !errors.Is(err, widget.ErrOriginNotAllowed) {
+			t.Fatalf("claimed page URL bypassed Origin %q: %v", origin, err)
+		}
+	}
+	if _, err := h.Widget.ResolveConfig(ctx, w.PublicKey, "https://shop.example.com/cart", "https://shop.example.com"); err != nil {
+		t.Fatalf("matching browser origin denied: %v", err)
+	}
+
 	// The apex itself needs its own entry — a subdomain wildcard does not
 	// implicitly cover it.
 	if _, err := h.Widget.ResolveConfig(ctx, w.PublicKey, "https://example.com/", ""); !errors.Is(err, widget.ErrOriginNotAllowed) {
