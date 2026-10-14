@@ -9,12 +9,12 @@
  * shared token layer is imported rather than the shared entry point: the
  * dashboard's `@source` scanning and base resets do not apply here.
  */
-@import "tailwindcss";
+@import "tailwindcss" source("./");
 @import "../../shared/src/styles/tokens.css";
 @import "../../shared/src/styles/theme.css";
 
 @source "./";
-@source "../../shared/src/components";
+
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
