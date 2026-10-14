@@ -1,6 +1,7 @@
 import {
   Button,
   EmptyState,
+  QueryError,
   Menu,
   MenuContent,
   MenuLabel,
@@ -24,7 +25,7 @@ import {
   Rows3,
   UserPlus,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { ConversationRow } from "./ConversationRow";
 
 export type SortKey = "recent" | "oldest" | "priority";
@@ -51,6 +52,9 @@ export function ConversationList({
   hasMore,
   onLoadMore,
   loadingMore,
+  isLoading,
+  error,
+  onRetry,
 }: {
   conversations: Conversation[];
   customersById: Map<string, Customer>;
@@ -66,6 +70,9 @@ export function ConversationList({
   hasMore: boolean;
   onLoadMore: () => void;
   loadingMore: boolean;
+  isLoading: boolean;
+  error: unknown;
+  onRetry: () => void;
 }) {
   const { density, setDensity } = useTheme();
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -81,18 +88,7 @@ export function ConversationList({
     });
   };
 
-  const sorted = useMemo(() => [...conversations].sort((a, b) => {
-    switch (sort) {
-      case "oldest":
-        return a.last_message_at.localeCompare(b.last_message_at);
-      case "priority": {
-        const rank = { urgent: 0, high: 1, normal: 2, low: 3 };
-        return rank[a.priority] - rank[b.priority];
-      }
-      default:
-        return b.last_message_at.localeCompare(a.last_message_at);
-    }
-  }), [conversations, sort]);
+  const sorted = conversations;
   const itemSize = density === "compact" ? 96 : 112;
   const { ref, onScroll, items, totalSize, scrollToIndex } = useFixedVirtualList(sorted.length, itemSize);
 
@@ -102,7 +98,7 @@ export function ConversationList({
   }, [activeId, scrollToIndex, sorted]);
 
   return (
-    <div className="flex h-full min-h-0 w-list shrink-0 flex-col border-r border-line bg-surface">
+    <div className="flex h-full min-h-0 w-full shrink-0 lg:w-list flex-col border-r border-line bg-surface">
       <header className="flex h-topbar shrink-0 items-center justify-between gap-2 border-b border-line px-3">
         {selectionMode ? (
           <>
@@ -196,6 +192,7 @@ export function ConversationList({
         )}
       </header>
 
+      {Boolean(error) && sorted.length > 0 && <div className="p-3"><QueryError error={error} retry={onRetry} /></div>}
       {bulkError && (
         <div role="alert" className="border-b border-danger-border bg-danger-subtle px-3 py-2 text-xs text-danger">
           {bulkError} The selection was kept so you can retry.
@@ -209,7 +206,7 @@ export function ConversationList({
         aria-label={`${viewName} conversations`}
         className={cn("min-h-0 flex-1 overflow-y-auto overscroll-contain")}
       >
-        {sorted.length === 0 ? (
+        {isLoading && sorted.length === 0 ? <p role="status" className="p-4 text-sm text-fg-muted">Loading conversations…</p> : error && sorted.length === 0 ? <div className="p-3"><QueryError error={error} retry={onRetry} /></div> : sorted.length === 0 ? (
           <EmptyState
             icon={Inbox}
             size="sm"
