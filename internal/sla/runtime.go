@@ -709,53 +709,12 @@ func contains(values []string, value string) bool {
 	return false
 }
 
-// RunEventConsumer turns durable domain events into timer changes. The first
-// signal starts at its own sequence, while later signals close every gap.
+// RunEventConsumer resumes durable checkpoints and reconciles missed signals.
+// Domain effects are replay-safe; checkpoints advance after successful commits.
 func (s *Service) RunEventConsumer(ctx context.Context, signals <-chan events.Signal, source interface {
 	Since(context.Context, string, int64, int) ([]events.Record, error)
 }) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case signal, ok := <-signals:
-			if !ok {
-				return
-			}
-			s.seenMu.Lock()
-			after, exists := s.seen[signal.WorkspaceID]
-			if !exists {
-				after = signal.Sequence - 1
-			}
-			s.seenMu.Unlock()
-			for {
-				records, err := source.Since(ctx, signal.WorkspaceID, after, 200)
-				if err != nil {
-					break
-				}
-				if len(records) == 0 {
-					break
-				}
-				failed := false
-				for _, record := range records {
-					if err := s.processEvent(ctx, record); err != nil {
-						failed = true
-						break
-					}
-					after = record.Sequence
-				}
-				if failed {
-					break
-				}
-				s.seenMu.Lock()
-				s.seen[signal.WorkspaceID] = after
-				s.seenMu.Unlock()
-				if len(records) < 200 {
-					break
-				}
-			}
-		}
-	}
+	events.Consume(ctx, s.pool, "sla", signals, source, s.processEvent)
 }
 
 func (s *Service) processEvent(ctx context.Context, record events.Record) error {
