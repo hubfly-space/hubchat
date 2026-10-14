@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/hubchat/hubchat/internal/database"
+	"github.com/hubchat/hubchat/internal/searchmodel"
 )
 
 var (
@@ -163,7 +164,7 @@ func (r *repository) exists(ctx context.Context, workspaceID, id string) (bool, 
 
 // search matches the customers_search trigram index verbatim (migration
 // 0002): name and email, case-insensitive, substring-tolerant.
-func (r *repository) searchPage(ctx context.Context, workspaceID, query string, beforeLastSeenPresent bool, beforeLastSeen, beforeFirstSeen time.Time, beforeID string, hasCursor bool, limit int) ([]SearchResult, error) {
+func (r *repository) searchPage(ctx context.Context, workspaceID, query string, beforeLastSeenPresent bool, beforeLastSeen, beforeFirstSeen time.Time, beforeID string, hasCursor bool, limit int, filters ...searchmodel.Filters) ([]SearchResult, error) {
 	args := []any{workspaceID, query}
 	statement := `SELECT ` + customerColumns + `,
 			(last_seen_at IS NOT NULL)
@@ -186,6 +187,18 @@ func (r *repository) searchPage(ctx context.Context, workspaceID, query string, 
 		)`
 		args = append(args, beforeLastSeenPresent, beforeLastSeen, beforeFirstSeen, beforeID)
 	}
+	if len(filters) > 0 {
+		f := filters[0]
+		if f.After != nil {
+			args = append(args, f.After)
+			statement += fmt.Sprintf(" AND first_seen_at >= $%d", len(args))
+		}
+		if f.Before != nil {
+			args = append(args, f.Before)
+			statement += fmt.Sprintf(" AND first_seen_at < $%d", len(args))
+		}
+	}
+
 	statement += fmt.Sprintf(` ORDER BY (last_seen_at IS NOT NULL) DESC,last_seen_at DESC NULLS LAST,first_seen_at DESC,id DESC LIMIT $%d`, len(args)+1)
 	args = append(args, limit)
 	rows, err := r.pool.Query(ctx, statement, args...)
@@ -341,12 +354,12 @@ func (r *repository) byVerifiedEmail(ctx context.Context, workspaceID, email str
 // calls this after failing to find an existing match.
 func (r *repository) insertCustomer(
 	ctx context.Context, id, workspaceID string,
-	name, email, externalID *string, verification string,
+	in Identity, verification string,
 ) (*Customer, error) {
 	row := r.pool.QueryRow(ctx, `
-		INSERT INTO customers (id, workspace_id, name, email, external_id, verification)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING `+customerColumns, id, workspaceID, name, email, externalID, verification)
+		INSERT INTO customers (id, workspace_id, name, email, phone, external_id, verification)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING `+customerColumns, id, workspaceID, in.Name, in.Email, in.Phone, in.ExternalID, verification)
 	return scanCustomer(row)
 }
 
@@ -356,17 +369,18 @@ func (r *repository) insertCustomer(
 // strengthens here, never weakens, so a later unsigned identify() call cannot
 // downgrade a customer a signed token already vouched for.
 func (r *repository) touchIdentity(
-	ctx context.Context, workspaceID, id string, name, email, externalID *string, verified bool,
+	ctx context.Context, workspaceID, id string, in Identity, verified bool,
 ) (*Customer, error) {
 	row := r.pool.QueryRow(ctx, `
 		UPDATE customers SET
 			name = coalesce($3, name),
 			email = coalesce($4, email),
-			external_id = coalesce($5, external_id),
-			verification = CASE WHEN $6 THEN 'verified' ELSE verification END,
+			phone = coalesce($5, phone),
+			external_id = coalesce($6, external_id),
+			verification = CASE WHEN $7 THEN 'verified' ELSE verification END,
 			last_seen_at = now()
 		WHERE workspace_id = $1 AND id = $2
-		RETURNING `+customerColumns, workspaceID, id, name, email, externalID, verified)
+		RETURNING `+customerColumns, workspaceID, id, in.Name, in.Email, in.Phone, in.ExternalID, verified)
 	return scanCustomer(row)
 }
 
